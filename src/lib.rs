@@ -1,9 +1,9 @@
 #[macro_use]
 mod macros;
 
-mod common; // common to both
-mod protocol; // hans' stuff
-mod runtime; // chris' stuff
+mod common;
+mod protocol;
+mod runtime;
 
 #[cfg(test)]
 mod test;
