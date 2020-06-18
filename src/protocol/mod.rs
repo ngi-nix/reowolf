@@ -1,3 +1,4 @@
+mod arena;
 mod ast;
 mod eval;
 pub mod inputsource;
@@ -95,7 +96,7 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ComponentStateImpl {
     prompt: Prompt,
 }

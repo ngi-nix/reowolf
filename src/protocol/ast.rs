@@ -2,7 +2,7 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Index, IndexMut};
 
-use id_arena::{Arena, Id};
+use super::arena::{Arena, Id};
 
 use crate::protocol::inputsource::*;
 
@@ -39,7 +39,7 @@ impl ExternalIdentifierId {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TypeAnnotationId(Id<TypeAnnotation>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct VariableId(Id<Variable>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,7 +60,7 @@ impl LocalId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct DefinitionId(Id<Definition>);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,7 +99,7 @@ impl PrimitiveId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct StatementId(Id<Statement>);
 
 #[derive(Debug, Clone, Copy, PartialEq)]

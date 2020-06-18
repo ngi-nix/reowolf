@@ -61,6 +61,9 @@ pub struct Configured {
 pub struct Connected {
     native_interface: Vec<(Port, Polarity)>,
     sync_batches: Vec<SyncBatch>,
+    // controller is cooperatively scheduled with the native application
+    // (except for transport layer behind Endpoints, which are managed by the OS)
+    // control flow is passed to the controller during methods on Connector (primarily, connect and sync).
     controller: Controller,
 }
 
@@ -301,7 +304,8 @@ impl<T> Default for Arena<T> {
 impl<T> Arena<T> {
     pub fn alloc(&mut self, t: T) -> Port {
         self.storage.push(t);
-        Port::from_raw(self.storage.len() - 1)
+        let l: u32 = self.storage.len().try_into().unwrap();
+        Port::from_raw(l - 1u32)
     }
     pub fn get(&self, key: Port) -> Option<&T> {
         self.storage.get(key.to_raw() as usize)
@@ -319,7 +323,7 @@ impl<T> Arena<T> {
         self.storage.len()
     }
     pub fn keyspace(&self) -> impl Iterator<Item = Port> {
-        (0..self.storage.len()).map(Port::from_raw)
+        (0u32..self.storage.len().try_into().unwrap()).map(Port::from_raw)
     }
 }
 

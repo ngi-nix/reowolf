@@ -35,6 +35,18 @@ pub struct PortId {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
+impl serde::Serialize for Payload {
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<<S as serde::Serializer>::Ok, <S as serde::Serializer>::Error>
+    where
+        S: serde::Serializer,
+    {
+        let inner: &Vec<u8> = &self.0;
+        inner.serialize(serializer)
+    }
+}
 
 /// This is a unique identifier for a channel (i.e., port).
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd)]
@@ -49,9 +61,9 @@ pub enum Polarity {
     Getter, // input port (from the perspective of the component)
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone, serde::Serialize)]
 #[repr(C)]
-pub struct Port(pub usize); // ports are COPY
+pub struct Port(pub u32); // ports are COPY
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum MainComponentErr {
@@ -157,10 +169,10 @@ impl Debug for Port {
     }
 }
 impl Port {
-    pub fn from_raw(raw: usize) -> Self {
+    pub fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
-    pub fn to_raw(self) -> usize {
+    pub fn to_raw(self) -> u32 {
         self.0
     }
     pub fn to_token(self) -> mio::Token {

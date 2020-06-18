@@ -28,7 +28,7 @@ trait ValueImpl {
     fn is_type_compatible(&self, t: &Type) -> bool;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Value {
     Input(InputValue),
     Output(OutputValue),
@@ -885,7 +885,7 @@ impl Display for Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct InputValue(pub Port);
 
 impl Display for InputValue {
@@ -910,7 +910,7 @@ impl ValueImpl for InputValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OutputValue(pub Port);
 
 impl Display for OutputValue {
@@ -935,7 +935,7 @@ impl ValueImpl for OutputValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MessageValue(pub Option<Payload>);
 
 impl Display for MessageValue {
@@ -970,7 +970,7 @@ impl ValueImpl for MessageValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BooleanValue(bool);
 
 impl Display for BooleanValue {
@@ -999,7 +999,7 @@ impl ValueImpl for BooleanValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ByteValue(i8);
 
 impl Display for ByteValue {
@@ -1027,7 +1027,7 @@ impl ValueImpl for ByteValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ShortValue(i16);
 
 impl Display for ShortValue {
@@ -1054,7 +1054,7 @@ impl ValueImpl for ShortValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IntValue(i32);
 
 impl Display for IntValue {
@@ -1080,7 +1080,7 @@ impl ValueImpl for IntValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LongValue(i64);
 
 impl Display for LongValue {
@@ -1105,7 +1105,7 @@ impl ValueImpl for LongValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct InputArrayValue(Vec<InputValue>);
 
 impl Display for InputArrayValue {
@@ -1139,7 +1139,7 @@ impl ValueImpl for InputArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OutputArrayValue(Vec<OutputValue>);
 
 impl Display for OutputArrayValue {
@@ -1173,7 +1173,7 @@ impl ValueImpl for OutputArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MessageArrayValue(Vec<MessageValue>);
 
 impl Display for MessageArrayValue {
@@ -1207,7 +1207,7 @@ impl ValueImpl for MessageArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BooleanArrayValue(Vec<BooleanValue>);
 
 impl Display for BooleanArrayValue {
@@ -1241,7 +1241,7 @@ impl ValueImpl for BooleanArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ByteArrayValue(Vec<ByteValue>);
 
 impl Display for ByteArrayValue {
@@ -1275,7 +1275,7 @@ impl ValueImpl for ByteArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ShortArrayValue(Vec<ShortValue>);
 
 impl Display for ShortArrayValue {
@@ -1309,7 +1309,7 @@ impl ValueImpl for ShortArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IntArrayValue(Vec<IntValue>);
 
 impl Display for IntArrayValue {
@@ -1343,7 +1343,7 @@ impl ValueImpl for IntArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LongArrayValue(Vec<LongValue>);
 
 impl Display for LongArrayValue {
@@ -1377,7 +1377,7 @@ impl ValueImpl for LongArrayValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct Store {
     map: HashMap<VariableId, Value>,
 }
@@ -1610,7 +1610,7 @@ pub enum EvalContinuation {
     Put(Value, Value),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Prompt {
     definition: DefinitionId,
     store: Store,
