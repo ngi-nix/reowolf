@@ -24,6 +24,7 @@ impl<T> Hash for Id<T> {
     }
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Arena<T> {
     store: Vec<T>,
 }

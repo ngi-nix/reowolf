@@ -6,19 +6,19 @@ use super::arena::{Arena, Id};
 
 use crate::protocol::inputsource::*;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct RootId(Id<Root>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct PragmaId(Id<Pragma>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ImportId(Id<Import>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct IdentifierId(Id<Identifier>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct SourceIdentifierId(IdentifierId);
 
 impl SourceIdentifierId {
@@ -27,7 +27,7 @@ impl SourceIdentifierId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ExternalIdentifierId(IdentifierId);
 
 impl ExternalIdentifierId {
@@ -36,13 +36,13 @@ impl ExternalIdentifierId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct TypeAnnotationId(Id<TypeAnnotation>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct VariableId(Id<Variable>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ParameterId(VariableId);
 
 impl ParameterId {
@@ -51,7 +51,7 @@ impl ParameterId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct LocalId(VariableId);
 
 impl LocalId {
@@ -63,7 +63,7 @@ impl LocalId {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DefinitionId(Id<Definition>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ComponentId(DefinitionId);
 
 impl ComponentId {
@@ -72,7 +72,7 @@ impl ComponentId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct FunctionId(DefinitionId);
 
 impl FunctionId {
@@ -81,7 +81,7 @@ impl FunctionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CompositeId(ComponentId);
 
 impl CompositeId {
@@ -90,7 +90,7 @@ impl CompositeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct PrimitiveId(ComponentId);
 
 impl PrimitiveId {
@@ -102,7 +102,7 @@ impl PrimitiveId {
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StatementId(Id<Statement>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct BlockStatementId(StatementId);
 
 impl BlockStatementId {
@@ -111,7 +111,7 @@ impl BlockStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct LocalStatementId(StatementId);
 
 impl LocalStatementId {
@@ -120,7 +120,7 @@ impl LocalStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct MemoryStatementId(LocalStatementId);
 
 impl MemoryStatementId {
@@ -129,7 +129,7 @@ impl MemoryStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ChannelStatementId(LocalStatementId);
 
 impl ChannelStatementId {
@@ -138,7 +138,7 @@ impl ChannelStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct SkipStatementId(StatementId);
 
 impl SkipStatementId {
@@ -147,7 +147,7 @@ impl SkipStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct LabeledStatementId(StatementId);
 
 impl LabeledStatementId {
@@ -156,7 +156,7 @@ impl LabeledStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct IfStatementId(StatementId);
 
 impl IfStatementId {
@@ -165,7 +165,7 @@ impl IfStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct EndIfStatementId(StatementId);
 
 impl EndIfStatementId {
@@ -174,7 +174,7 @@ impl EndIfStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct WhileStatementId(StatementId);
 
 impl WhileStatementId {
@@ -183,7 +183,7 @@ impl WhileStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct EndWhileStatementId(StatementId);
 
 impl EndWhileStatementId {
@@ -192,7 +192,7 @@ impl EndWhileStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct BreakStatementId(StatementId);
 
 impl BreakStatementId {
@@ -201,7 +201,7 @@ impl BreakStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ContinueStatementId(StatementId);
 
 impl ContinueStatementId {
@@ -210,7 +210,7 @@ impl ContinueStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct SynchronousStatementId(StatementId);
 
 impl SynchronousStatementId {
@@ -219,7 +219,7 @@ impl SynchronousStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct EndSynchronousStatementId(StatementId);
 
 impl EndSynchronousStatementId {
@@ -228,7 +228,7 @@ impl EndSynchronousStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ReturnStatementId(StatementId);
 
 impl ReturnStatementId {
@@ -237,7 +237,7 @@ impl ReturnStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct AssertStatementId(StatementId);
 
 impl AssertStatementId {
@@ -246,7 +246,7 @@ impl AssertStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct GotoStatementId(StatementId);
 
 impl GotoStatementId {
@@ -255,7 +255,7 @@ impl GotoStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct NewStatementId(StatementId);
 
 impl NewStatementId {
@@ -264,7 +264,7 @@ impl NewStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct PutStatementId(StatementId);
 
 impl PutStatementId {
@@ -273,7 +273,7 @@ impl PutStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ExpressionStatementId(StatementId);
 
 impl ExpressionStatementId {
@@ -282,10 +282,10 @@ impl ExpressionStatementId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ExpressionId(Id<Expression>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct AssignmentExpressionId(ExpressionId);
 
 impl AssignmentExpressionId {
@@ -294,7 +294,7 @@ impl AssignmentExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ConditionalExpressionId(ExpressionId);
 
 impl ConditionalExpressionId {
@@ -303,7 +303,7 @@ impl ConditionalExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct BinaryExpressionId(ExpressionId);
 
 impl BinaryExpressionId {
@@ -312,7 +312,7 @@ impl BinaryExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct UnaryExpressionId(ExpressionId);
 
 impl UnaryExpressionId {
@@ -321,7 +321,7 @@ impl UnaryExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct IndexingExpressionId(ExpressionId);
 
 impl IndexingExpressionId {
@@ -330,7 +330,7 @@ impl IndexingExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct SlicingExpressionId(ExpressionId);
 
 impl SlicingExpressionId {
@@ -339,7 +339,7 @@ impl SlicingExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct SelectExpressionId(ExpressionId);
 
 impl SelectExpressionId {
@@ -348,7 +348,7 @@ impl SelectExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ArrayExpressionId(ExpressionId);
 
 impl ArrayExpressionId {
@@ -357,7 +357,7 @@ impl ArrayExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ConstantExpressionId(ExpressionId);
 
 impl ConstantExpressionId {
@@ -366,7 +366,7 @@ impl ConstantExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct CallExpressionId(ExpressionId);
 
 impl CallExpressionId {
@@ -375,7 +375,7 @@ impl CallExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct VariableExpressionId(ExpressionId);
 
 impl VariableExpressionId {
@@ -384,10 +384,10 @@ impl VariableExpressionId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct DeclarationId(Id<Declaration>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct DefinedDeclarationId(DeclarationId);
 
 impl DefinedDeclarationId {
@@ -396,7 +396,7 @@ impl DefinedDeclarationId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct ImportedDeclarationId(DeclarationId);
 
 impl ImportedDeclarationId {
@@ -405,6 +405,7 @@ impl ImportedDeclarationId {
     }
 }
 
+#[derive(serde::Serialize)]
 pub struct Heap {
     // Phase 0: allocation
     protocol_descriptions: Arena<Root>,
@@ -1199,7 +1200,7 @@ impl Index<DeclarationId> for Heap {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Root {
     pub this: RootId,
     // Phase 1: parser
@@ -1244,7 +1245,7 @@ impl SyntaxElement for Root {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Pragma {
     pub this: PragmaId,
     // Phase 1: parser
@@ -1258,7 +1259,7 @@ impl SyntaxElement for Pragma {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Import {
     pub this: ImportId,
     // Phase 1: parser
@@ -1272,7 +1273,7 @@ impl SyntaxElement for Import {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Identifier {
     External(ExternalIdentifier),
     Source(SourceIdentifier),
@@ -1324,7 +1325,7 @@ impl PartialEq<SourceIdentifier> for Identifier {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExternalIdentifier {
     pub this: ExternalIdentifierId,
     // Phase 1: parser
@@ -1344,7 +1345,7 @@ impl Display for ExternalIdentifier {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SourceIdentifier {
     pub this: SourceIdentifierId,
     // Phase 1: parser
@@ -1385,7 +1386,7 @@ impl PartialEq<SourceIdentifier> for SourceIdentifier {
 
 type TypeData = Vec<u8>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum PrimitiveType {
     Input,
     Output,
@@ -1398,7 +1399,7 @@ pub enum PrimitiveType {
     Symbolic(TypeData),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Type {
     pub primitive: PrimitiveType,
     pub array: bool,
@@ -1465,7 +1466,7 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TypeAnnotation {
     pub this: TypeAnnotationId,
     // Phase 1: parser
@@ -1482,7 +1483,7 @@ impl SyntaxElement for TypeAnnotation {
 type CharacterData = Vec<u8>;
 type IntegerData = Vec<u8>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Constant {
     Null, // message
     True,
@@ -1491,7 +1492,7 @@ pub enum Constant {
     Integer(IntegerData),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Method {
     Get,
     Fires,
@@ -1499,7 +1500,7 @@ pub enum Method {
     Symbolic(SourceIdentifierId),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Field {
     Length,
     Symbolic(SourceIdentifierId),
@@ -1513,7 +1514,7 @@ impl Field {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub enum Scope {
     Definition(DefinitionId),
     Block(BlockStatementId),
@@ -1551,7 +1552,7 @@ impl VariableScope for Scope {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Variable {
     Parameter(Parameter),
     Local(Local),
@@ -1599,7 +1600,7 @@ impl SyntaxElement for Variable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Parameter {
     pub this: ParameterId,
     // Phase 1: parser
@@ -1614,7 +1615,7 @@ impl SyntaxElement for Parameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Local {
     pub this: LocalId,
     // Phase 1: parser
@@ -1628,7 +1629,7 @@ impl SyntaxElement for Local {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Definition {
     Component(Component),
     Function(Function),
@@ -1702,7 +1703,7 @@ impl VariableScope for Definition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Component {
     Composite(Composite),
     Primitive(Primitive),
@@ -1756,7 +1757,7 @@ impl SyntaxElement for Component {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Composite {
     pub this: CompositeId,
     // Phase 1: parser
@@ -1772,7 +1773,7 @@ impl SyntaxElement for Composite {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Primitive {
     pub this: PrimitiveId,
     // Phase 1: parser
@@ -1788,7 +1789,7 @@ impl SyntaxElement for Primitive {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Function {
     pub this: FunctionId,
     // Phase 1: parser
@@ -1805,7 +1806,7 @@ impl SyntaxElement for Function {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Declaration {
     Defined(DefinedDeclaration),
     Imported(ImportedDeclaration),
@@ -1835,7 +1836,7 @@ impl Declaration {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DefinedDeclaration {
     pub this: DefinedDeclarationId,
     // Phase 2: linker
@@ -1843,7 +1844,7 @@ pub struct DefinedDeclaration {
     pub signature: Signature,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ImportedDeclaration {
     pub this: ImportedDeclarationId,
     // Phase 2: linker
@@ -1851,7 +1852,7 @@ pub struct ImportedDeclaration {
     pub signature: Signature,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Signature {
     Component(ComponentSignature),
     Function(FunctionSignature),
@@ -1898,20 +1899,20 @@ impl Signature {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ComponentSignature {
     pub identifier: IdentifierId,
     pub arity: Vec<Type>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FunctionSignature {
     pub return_type: Type,
     pub identifier: IdentifierId,
     pub arity: Vec<Type>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Statement {
     Block(BlockStatement),
     Local(LocalStatement),
@@ -2148,7 +2149,7 @@ impl SyntaxElement for Statement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BlockStatement {
     pub this: BlockStatementId,
     // Phase 1: parser
@@ -2209,7 +2210,7 @@ impl VariableScope for BlockStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum LocalStatement {
     Memory(MemoryStatement),
     Channel(ChannelStatement),
@@ -2251,7 +2252,7 @@ impl SyntaxElement for LocalStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MemoryStatement {
     pub this: MemoryStatementId,
     // Phase 1: parser
@@ -2268,7 +2269,7 @@ impl SyntaxElement for MemoryStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ChannelStatement {
     pub this: ChannelStatementId,
     // Phase 1: parser
@@ -2285,7 +2286,7 @@ impl SyntaxElement for ChannelStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SkipStatement {
     pub this: SkipStatementId,
     // Phase 1: parser
@@ -2300,7 +2301,7 @@ impl SyntaxElement for SkipStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct LabeledStatement {
     pub this: LabeledStatementId,
     // Phase 1: parser
@@ -2317,7 +2318,7 @@ impl SyntaxElement for LabeledStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IfStatement {
     pub this: IfStatementId,
     // Phase 1: parser
@@ -2333,7 +2334,7 @@ impl SyntaxElement for IfStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
     // Phase 2: linker
@@ -2347,7 +2348,7 @@ impl SyntaxElement for EndIfStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WhileStatement {
     pub this: WhileStatementId,
     // Phase 1: parser
@@ -2365,7 +2366,7 @@ impl SyntaxElement for WhileStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
     // Phase 2: linker
@@ -2379,7 +2380,7 @@ impl SyntaxElement for EndWhileStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BreakStatement {
     pub this: BreakStatementId,
     // Phase 1: parser
@@ -2395,7 +2396,7 @@ impl SyntaxElement for BreakStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ContinueStatement {
     pub this: ContinueStatementId,
     // Phase 1: parser
@@ -2411,7 +2412,7 @@ impl SyntaxElement for ContinueStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SynchronousStatement {
     pub this: SynchronousStatementId,
     // Phase 1: parser
@@ -2442,7 +2443,7 @@ impl VariableScope for SynchronousStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EndSynchronousStatement {
     pub this: EndSynchronousStatementId,
     // Phase 2: linker
@@ -2456,7 +2457,7 @@ impl SyntaxElement for EndSynchronousStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ReturnStatement {
     pub this: ReturnStatementId,
     // Phase 1: parser
@@ -2470,7 +2471,7 @@ impl SyntaxElement for ReturnStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AssertStatement {
     pub this: AssertStatementId,
     // Phase 1: parser
@@ -2486,7 +2487,7 @@ impl SyntaxElement for AssertStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct GotoStatement {
     pub this: GotoStatementId,
     // Phase 1: parser
@@ -2502,7 +2503,7 @@ impl SyntaxElement for GotoStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct NewStatement {
     pub this: NewStatementId,
     // Phase 1: parser
@@ -2518,7 +2519,7 @@ impl SyntaxElement for NewStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PutStatement {
     pub this: PutStatementId,
     // Phase 1: parser
@@ -2535,7 +2536,7 @@ impl SyntaxElement for PutStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExpressionStatement {
     pub this: ExpressionStatementId,
     // Phase 1: parser
@@ -2551,7 +2552,7 @@ impl SyntaxElement for ExpressionStatement {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum Expression {
     Assignment(AssignmentExpression),
     Conditional(ConditionalExpression),
@@ -2665,7 +2666,7 @@ impl SyntaxElement for Expression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum AssignmentOperator {
     Set,
     Multiplied,
@@ -2680,7 +2681,7 @@ pub enum AssignmentOperator {
     BitwiseOred,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AssignmentExpression {
     pub this: AssignmentExpressionId,
     // Phase 1: parser
@@ -2696,7 +2697,7 @@ impl SyntaxElement for AssignmentExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ConditionalExpression {
     pub this: ConditionalExpressionId,
     // Phase 1: parser
@@ -2712,7 +2713,7 @@ impl SyntaxElement for ConditionalExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum BinaryOperator {
     Concatenate,
     LogicalOr,
@@ -2735,7 +2736,7 @@ pub enum BinaryOperator {
     Remainder,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BinaryExpression {
     pub this: BinaryExpressionId,
     // Phase 1: parser
@@ -2751,7 +2752,7 @@ impl SyntaxElement for BinaryExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum UnaryOperation {
     Positive,
     Negative,
@@ -2763,7 +2764,7 @@ pub enum UnaryOperation {
     PostDecrement,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct UnaryExpression {
     pub this: UnaryExpressionId,
     // Phase 1: parser
@@ -2778,7 +2779,7 @@ impl SyntaxElement for UnaryExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexingExpression {
     pub this: IndexingExpressionId,
     // Phase 1: parser
@@ -2793,7 +2794,7 @@ impl SyntaxElement for IndexingExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SlicingExpression {
     pub this: SlicingExpressionId,
     // Phase 1: parser
@@ -2809,7 +2810,7 @@ impl SyntaxElement for SlicingExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SelectExpression {
     pub this: SelectExpressionId,
     // Phase 1: parser
@@ -2824,7 +2825,7 @@ impl SyntaxElement for SelectExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ArrayExpression {
     pub this: ArrayExpressionId,
     // Phase 1: parser
@@ -2838,7 +2839,7 @@ impl SyntaxElement for ArrayExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CallExpression {
     pub this: CallExpressionId,
     // Phase 1: parser
@@ -2855,7 +2856,7 @@ impl SyntaxElement for CallExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ConstantExpression {
     pub this: ConstantExpressionId,
     // Phase 1: parser
@@ -2869,7 +2870,7 @@ impl SyntaxElement for ConstantExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
