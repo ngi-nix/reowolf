@@ -39,7 +39,7 @@ impl ExternalIdentifierId {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TypeAnnotationId(Id<TypeAnnotation>);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct VariableId(Id<Variable>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,7 +60,7 @@ impl LocalId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DefinitionId(Id<Definition>);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,7 +99,7 @@ impl PrimitiveId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StatementId(Id<Statement>);
 
 #[derive(Debug, Clone, Copy, PartialEq)]

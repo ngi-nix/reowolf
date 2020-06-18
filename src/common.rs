@@ -35,18 +35,6 @@ pub struct PortId {
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
-impl serde::Serialize for Payload {
-    fn serialize<S>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<<S as serde::Serializer>::Ok, <S as serde::Serializer>::Error>
-    where
-        S: serde::Serializer,
-    {
-        let inner: &Vec<u8> = &self.0;
-        inner.serialize(serializer)
-    }
-}
 
 /// This is a unique identifier for a channel (i.e., port).
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd)]
@@ -61,7 +49,9 @@ pub enum Polarity {
     Getter, // input port (from the perspective of the component)
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone, serde::Serialize)]
+#[derive(
+    Eq, PartialEq, Ord, PartialOrd, Hash, Copy, Clone, serde::Serialize, serde::Deserialize,
+)]
 #[repr(C)]
 pub struct Port(pub u32); // ports are COPY
 
@@ -151,6 +141,29 @@ impl Payload {
         let bytes = other.as_slice().iter().copied();
         let me = Arc::make_mut(&mut self.0);
         me.extend(bytes);
+    }
+}
+impl serde::Serialize for Payload {
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<<S as serde::Serializer>::Ok, <S as serde::Serializer>::Error>
+    where
+        S: serde::Serializer,
+    {
+        let inner: &Vec<u8> = &self.0;
+        inner.serialize(serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for Payload {
+    fn deserialize<D>(
+        deserializer: D,
+    ) -> std::result::Result<Self, <D as serde::Deserializer<'de>>::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let inner: Vec<u8> = Vec::deserialize(deserializer)?;
+        Ok(Self(Arc::new(inner)))
     }
 }
 impl std::iter::FromIterator<u8> for Payload {

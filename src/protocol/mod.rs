@@ -96,7 +96,7 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ComponentStateImpl {
     prompt: Prompt,
 }

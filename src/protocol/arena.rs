@@ -1,7 +1,7 @@
 use core::hash::Hash;
 use core::marker::PhantomData;
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Id<T> {
     index: u32,
     _phantom: PhantomData<T>,
