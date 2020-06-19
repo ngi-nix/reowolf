@@ -12,7 +12,7 @@ use crate::protocol::eval::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProtocolDescriptionImpl {
     heap: Heap,
     source: InputSource,
@@ -82,6 +82,7 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
         }
         Ok(result)
     }
+    // expects port polarities to be correct
     fn new_main_component(&self, identifier: &[u8], ports: &[Port]) -> ComponentStateImpl {
         let mut args = Vec::new();
         for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {

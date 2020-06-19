@@ -6,9 +6,9 @@ pub(crate) mod communication;
 pub(crate) mod connector;
 pub(crate) mod endpoint;
 pub mod errors;
-// pub mod experimental;
 mod serde;
 pub(crate) mod setup;
+// mod v2;
 
 pub(crate) type ProtocolD = crate::protocol::ProtocolDescriptionImpl;
 pub(crate) type ProtocolS = crate::protocol::ComponentStateImpl;
@@ -42,7 +42,7 @@ struct SyncBatch {
 pub enum Connector {
     Unconfigured(Unconfigured),
     Configured(Configured),
-    Connected(Connected), // TODO consider boxing. currently takes up a lot of stack real estate
+    Connected(Connected), // TODO consider boxing. currently takes up a lot of stack space
 }
 #[derive(Debug)]
 pub struct Unconfigured {
