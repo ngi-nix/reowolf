@@ -22,9 +22,9 @@ indexmap = "1.3.0" # hashsets/hashmaps with efficient arbitrary element removal
 # network
 integer-encoding = "1.0.7"
 byteorder = "1.3.2"
-mio = "0.6.21"
+# mio = "0.6.21"
 mio-extras = "2.0.6"
-mio07 = { version = "0.7.0", package = "mio", features = ["tcp", "os-poll"] }
+mio = { version = "0.7.0", package = "mio", features = ["tcp", "os-poll"] }
 
 # protocol
 # id-arena = "2.2.1"

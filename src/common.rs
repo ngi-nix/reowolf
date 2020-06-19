@@ -14,7 +14,7 @@ pub use indexmap::{IndexMap, IndexSet};
 pub use maplit::{hashmap, hashset};
 pub use mio::{
     net::{TcpListener, TcpStream},
-    Event, Evented, Events, Poll, PollOpt, Ready, Token,
+    Events, Interest, Poll, Token,
 };
 pub use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},

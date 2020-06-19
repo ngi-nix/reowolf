@@ -1,5 +1,6 @@
 use crate as reowolf;
-use reowolf::Polarity::*;
+use crossbeam_utils::thread::scope;
+use reowolf::{Connector, EndpointSetup, Polarity::*, ProtocolDescription};
 use std::net::SocketAddr;
 use std::{sync::Arc, time::Duration};
 
@@ -14,19 +15,19 @@ fn next_test_addr() -> SocketAddr {
 }
 
 lazy_static::lazy_static! {
-    static ref MINIMAL_PROTO: Arc<reowolf::ProtocolDescription> =
+    static ref MINIMAL_PROTO: Arc<ProtocolDescription> =
         { Arc::new(reowolf::ProtocolDescription::parse(b"").unwrap()) };
 }
 
 #[test]
 fn simple_connector() {
-    let c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     println!("{:#?}", c);
 }
 
 #[test]
 fn add_port_pair() {
-    let mut c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, _] = c.add_port_pair();
     let [_, _] = c.add_port_pair();
     println!("{:#?}", c);
@@ -34,7 +35,7 @@ fn add_port_pair() {
 
 #[test]
 fn add_sync() {
-    let mut c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, i] = c.add_port_pair();
     c.add_component(b"sync", &[i, o]).unwrap();
     println!("{:#?}", c);
@@ -42,35 +43,51 @@ fn add_sync() {
 
 #[test]
 fn add_net_port() {
-    let mut c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let sock_addr = next_test_addr();
-    let _ = c
-        .add_net_port(reowolf::EndpointSetup { polarity: Getter, sock_addr, is_active: false })
-        .unwrap();
-    let _ = c
-        .add_net_port(reowolf::EndpointSetup { polarity: Putter, sock_addr, is_active: true })
-        .unwrap();
+    let _ =
+        c.add_net_port(EndpointSetup { polarity: Getter, sock_addr, is_active: false }).unwrap();
+    let _ = c.add_net_port(EndpointSetup { polarity: Putter, sock_addr, is_active: true }).unwrap();
     println!("{:#?}", c);
 }
 
 #[test]
 fn trivial_connect() {
-    let mut c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     c.connect(Duration::from_secs(1)).unwrap();
     println!("{:#?}", c);
 }
 
 #[test]
 fn single_node_connect() {
-    let mut c = reowolf::Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let sock_addr = next_test_addr();
-    let _ = c
-        .add_net_port(reowolf::EndpointSetup { polarity: Getter, sock_addr, is_active: false })
-        .unwrap();
-    let _ = c
-        .add_net_port(reowolf::EndpointSetup { polarity: Putter, sock_addr, is_active: true })
-        .unwrap();
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let _ =
+        c.add_net_port(EndpointSetup { polarity: Getter, sock_addr, is_active: false }).unwrap();
+    let _ = c.add_net_port(EndpointSetup { polarity: Putter, sock_addr, is_active: true }).unwrap();
     c.connect(Duration::from_secs(1)).unwrap();
     println!("{:#?}", c);
     c.get_logger().dump_log(&mut std::io::stdout().lock());
+}
+
+#[test]
+fn multithreaded_connect() {
+    let sock_addr = next_test_addr();
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+            let es = EndpointSetup { polarity: Getter, sock_addr, is_active: true };
+            let _ = c.add_net_port(es).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.print_state();
+        });
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+            let es = EndpointSetup { polarity: Putter, sock_addr, is_active: false };
+            let _ = c.add_net_port(es).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.print_state();
+        });
+    })
+    .unwrap();
 }
