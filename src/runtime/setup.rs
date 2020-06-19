@@ -25,7 +25,7 @@ impl Controller {
         bound_proto_interface: &[(PortBinding, Polarity)],
         logger: &mut String,
         deadline: Instant,
-    ) -> Result<(Self, Vec<(Port, Polarity)>), ConnectErr> {
+    ) -> Result<(Self, Vec<(PortId, Polarity)>), ConnectErr> {
         use ConnectErr::*;
 
         log!(logger, "CONNECT PHASE START! MY CID={:?} STARTING LOGGER ~", major);
@@ -215,7 +215,7 @@ impl Controller {
             for event in ms.events.iter() {
                 log!(logger, "event {:#?}", event);
                 let token = event.token();
-                let port = Port::from_token(token);
+                let port = PortId::from_token(token);
                 let entry = endpoint_ext_todos.get_mut(port).unwrap();
                 match entry {
                     Finished(_) => {
@@ -325,7 +325,7 @@ impl Controller {
         logger: &mut String,
         endpoint_exts: &mut Arena<EndpointExt>,
         messenger_state: &mut MessengerState,
-        neighbors: Vec<Port>,
+        neighbors: Vec<PortId>,
         deadline: Instant,
     ) -> Result<ControllerFamily, ConnectErr> {
         use {ConnectErr::*, Msg::SetupMsg as S, SetupMsg::*};
@@ -337,7 +337,7 @@ impl Controller {
             fn get_state_mut(&mut self) -> &mut MessengerState {
                 self.0
             }
-            fn get_endpoint_mut(&mut self, port: Port) -> &mut Endpoint {
+            fn get_endpoint_mut(&mut self, port: PortId) -> &mut Endpoint {
                 &mut self.1.get_mut(port).expect("OUT OF BOUNDS").endpoint
             }
         }
@@ -353,7 +353,7 @@ impl Controller {
 
         // 2. Receive incoming replies. whenever a higher-id echo arrives,
         //    adopt it as leader, sender as parent, and reset the await set.
-        let mut parent: Option<Port> = None;
+        let mut parent: Option<PortId> = None;
         let mut my_leader = major;
         messenger.undelay_all();
         'echo_loop: while !awaiting.is_empty() || parent.is_some() {
@@ -478,7 +478,7 @@ impl Messengerlike for Controller {
     fn get_state_mut(&mut self) -> &mut MessengerState {
         &mut self.inner.messenger_state
     }
-    fn get_endpoint_mut(&mut self, port: Port) -> &mut Endpoint {
+    fn get_endpoint_mut(&mut self, port: PortId) -> &mut Endpoint {
         &mut self.inner.endpoint_exts.get_mut(port).expect("OUT OF BOUNDS").endpoint
     }
 }

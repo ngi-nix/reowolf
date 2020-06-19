@@ -1,8 +1,5 @@
 use crate::common::*;
-use crate::runtime::{
-    endpoint::{CommMsg, CommMsgContents, Decision, EndpointInfo, Msg, SetupMsg},
-    Predicate,
-};
+use crate::runtime::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{ErrorKind::InvalidData, Read, Write};
 
@@ -52,6 +49,19 @@ macro_rules! ser_seq {
     }};
 }
 /////////////////////////////////////////
+
+impl<W: Write> Ser<PortId> for W {
+    fn ser(&mut self, t: &PortId) -> Result<(), std::io::Error> {
+        self.ser(&t.controller_id)?;
+        self.ser(&VarLenInt(t.port_index as u64))
+    }
+}
+
+impl<R: Read> De<PortId> for R {
+    fn de(&mut self) -> Result<PortId, std::io::Error> {
+        Ok(PortId { controller_id: self.de()?, port_index: De::<VarLenInt>::de(self)?.0 as u32 })
+    }
+}
 
 impl<W: Write> Ser<bool> for W {
     fn ser(&mut self, t: &bool) -> Result<(), std::io::Error> {
@@ -147,21 +157,6 @@ impl<R: Read> De<VarLenInt> for R {
     }
 }
 
-impl<W: Write> Ser<ChannelId> for W {
-    fn ser(&mut self, t: &ChannelId) -> Result<(), std::io::Error> {
-        self.ser(&t.controller_id)?;
-        self.ser(&VarLenInt(t.channel_index as u64))
-    }
-}
-impl<R: Read> De<ChannelId> for R {
-    fn de(&mut self) -> Result<ChannelId, std::io::Error> {
-        Ok(ChannelId {
-            controller_id: self.de()?,
-            channel_index: De::<VarLenInt>::de(self)?.0 as ChannelIndex,
-        })
-    }
-}
-
 impl<W: Write> Ser<Predicate> for W {
     fn ser(&mut self, t: &Predicate) -> Result<(), std::io::Error> {
         self.ser(&VarLenInt(t.assigned.len() as u64))?;
@@ -174,7 +169,7 @@ impl<W: Write> Ser<Predicate> for W {
 impl<R: Read> De<Predicate> for R {
     fn de(&mut self) -> Result<Predicate, std::io::Error> {
         let VarLenInt(len) = self.de()?;
-        let mut assigned = BTreeMap::<ChannelId, bool>::default();
+        let mut assigned = BTreeMap::<PortId, bool>::default();
         for _ in 0..len {
             assigned.insert(self.de()?, self.de()?);
         }
@@ -221,26 +216,13 @@ impl<R: Read> De<Polarity> for R {
         })
     }
 }
-
-impl<W: Write> Ser<EndpointInfo> for W {
-    fn ser(&mut self, t: &EndpointInfo) -> Result<(), std::io::Error> {
-        let EndpointInfo { channel_id, polarity } = t;
-        ser_seq![self, channel_id, polarity]
-    }
-}
-impl<R: Read> De<EndpointInfo> for R {
-    fn de(&mut self) -> Result<EndpointInfo, std::io::Error> {
-        Ok(EndpointInfo { channel_id: self.de()?, polarity: self.de()? })
-    }
-}
-
 impl<W: Write> Ser<Msg> for W {
     fn ser(&mut self, t: &Msg) -> Result<(), std::io::Error> {
         use {CommMsgContents::*, SetupMsg::*};
         match t {
             Msg::SetupMsg(s) => match s {
                 // [flag, data]
-                ChannelSetup { info } => ser_seq![self, &0u8, info],
+                MyPortInfo { polarity, port } => ser_seq![self, &0u8, polarity, port],
                 LeaderEcho { maybe_leader } => ser_seq![self, &1u8, maybe_leader],
                 LeaderAnnounce { leader } => ser_seq![self, &2u8, leader],
                 YouAreMyParent => ser_seq![self, &3u8],
@@ -267,7 +249,7 @@ impl<R: Read> De<Msg> for R {
         Ok(match b {
             0..=3 => Msg::SetupMsg(match b {
                 // [flag, data]
-                0u8 => ChannelSetup { info: self.de()? },
+                0u8 => MyPortInfo { polarity: self.de()?, port: self.de()? },
                 1u8 => LeaderEcho { maybe_leader: self.de()? },
                 2u8 => LeaderAnnounce { leader: self.de()? },
                 3u8 => YouAreMyParent,

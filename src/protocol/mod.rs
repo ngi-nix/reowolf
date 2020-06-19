@@ -13,28 +13,35 @@ use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct ProtocolDescriptionImpl {
+pub struct ProtocolDescription {
     heap: Heap,
     source: InputSource,
     root: RootId,
 }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ComponentState {
+    prompt: Prompt,
+}
+pub enum EvalContext<'a> {
+    Nonsync(&'a mut NonsyncContext<'a>),
+    Sync(&'a mut SyncContext<'a>),
+    None,
+}
+//////////////////////////////////////////////
 
-impl std::fmt::Debug for ProtocolDescriptionImpl {
+impl std::fmt::Debug for ProtocolDescription {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Protocol")
     }
 }
-
-impl ProtocolDescription for ProtocolDescriptionImpl {
-    type S = ComponentStateImpl;
-
-    fn parse(buffer: &[u8]) -> Result<Self, String> {
+impl ProtocolDescription {
+    pub fn parse(buffer: &[u8]) -> Result<Self, String> {
         let mut heap = Heap::new();
         let mut source = InputSource::from_buffer(buffer).unwrap();
         let mut parser = Parser::new(&mut source);
         match parser.parse(&mut heap) {
             Ok(root) => {
-                return Ok(ProtocolDescriptionImpl { heap, source, root });
+                return Ok(ProtocolDescription { heap, source, root });
             }
             Err(err) => {
                 let mut vec: Vec<u8> = Vec::new();
@@ -43,27 +50,31 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
             }
         }
     }
-    fn component_polarities(&self, identifier: &[u8]) -> Result<Vec<Polarity>, MainComponentErr> {
+    pub fn component_polarities(
+        &self,
+        identifier: &[u8],
+    ) -> Result<Vec<Polarity>, AddComponentError> {
+        use AddComponentError::*;
         let h = &self.heap;
         let root = &h[self.root];
         let def = root.get_definition_ident(h, identifier);
         if def.is_none() {
-            return Err(MainComponentErr::NoSuchComponent);
+            return Err(NoSuchComponent);
         }
         let def = &h[def.unwrap()];
         if !def.is_component() {
-            return Err(MainComponentErr::NoSuchComponent);
+            return Err(NoSuchComponent);
         }
         for &param in def.parameters().iter() {
             let param = &h[param];
             let type_annot = &h[param.type_annotation];
             if type_annot.the_type.array {
-                return Err(MainComponentErr::NonPortTypeParameters);
+                return Err(NonPortTypeParameters);
             }
             match type_annot.the_type.primitive {
                 PrimitiveType::Input | PrimitiveType::Output => continue,
                 _ => {
-                    return Err(MainComponentErr::NonPortTypeParameters);
+                    return Err(NonPortTypeParameters);
                 }
             }
         }
@@ -83,7 +94,7 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
         Ok(result)
     }
     // expects port polarities to be correct
-    fn new_main_component(&self, identifier: &[u8], ports: &[Port]) -> ComponentStateImpl {
+    pub fn new_main_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
         let mut args = Vec::new();
         for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {
             match y {
@@ -94,23 +105,16 @@ impl ProtocolDescription for ProtocolDescriptionImpl {
         let h = &self.heap;
         let root = &h[self.root];
         let def = root.get_definition_ident(h, identifier).unwrap();
-        ComponentStateImpl { prompt: Prompt::new(h, def, &args) }
+        ComponentState { prompt: Prompt::new(h, def, &args) }
     }
 }
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ComponentStateImpl {
-    prompt: Prompt,
-}
-impl ComponentState for ComponentStateImpl {
-    type D = ProtocolDescriptionImpl;
-
-    fn pre_sync_run<C: MonoContext<D = ProtocolDescriptionImpl, S = Self>>(
-        &mut self,
-        context: &mut C,
-        pd: &ProtocolDescriptionImpl,
-    ) -> MonoBlocker {
-        let mut context = EvalContext::Mono(context);
+impl ComponentState {
+    pub fn nonsync_run<'a: 'b, 'b>(
+        &'a mut self,
+        context: &'b mut NonsyncContext<'b>,
+        pd: &'a ProtocolDescription,
+    ) -> NonsyncBlocker {
+        let mut context = EvalContext::Nonsync(context);
         loop {
             let result = self.prompt.step(&pd.heap, &mut context);
             match result {
@@ -118,16 +122,16 @@ impl ComponentState for ComponentStateImpl {
                 Ok(_) => unreachable!(),
                 Err(cont) => match cont {
                     EvalContinuation::Stepping => continue,
-                    EvalContinuation::Inconsistent => return MonoBlocker::Inconsistent,
-                    EvalContinuation::Terminal => return MonoBlocker::ComponentExit,
-                    EvalContinuation::SyncBlockStart => return MonoBlocker::SyncBlockStart,
+                    EvalContinuation::Inconsistent => return NonsyncBlocker::Inconsistent,
+                    EvalContinuation::Terminal => return NonsyncBlocker::ComponentExit,
+                    EvalContinuation::SyncBlockStart => return NonsyncBlocker::SyncBlockStart,
                     // Not possible to end sync block if never entered one
                     EvalContinuation::SyncBlockEnd => unreachable!(),
                     EvalContinuation::NewComponent(decl, args) => {
                         // Look up definition (TODO for now, assume it is a definition)
                         let h = &pd.heap;
                         let def = h[decl].as_defined().definition;
-                        let init_state = ComponentStateImpl { prompt: Prompt::new(h, def, &args) };
+                        let init_state = ComponentState { prompt: Prompt::new(h, def, &args) };
                         context.new_component(&args, init_state);
                         // Continue stepping
                         continue;
@@ -141,12 +145,12 @@ impl ComponentState for ComponentStateImpl {
         }
     }
 
-    fn sync_run<C: PolyContext<D = ProtocolDescriptionImpl>>(
-        &mut self,
-        context: &mut C,
-        pd: &ProtocolDescriptionImpl,
-    ) -> PolyBlocker {
-        let mut context = EvalContext::Poly(context);
+    pub fn sync_run<'a: 'b, 'b>(
+        &'a mut self,
+        context: &'b mut SyncContext<'b>,
+        pd: &'a ProtocolDescription,
+    ) -> SyncBlocker {
+        let mut context = EvalContext::Sync(context);
         loop {
             let result = self.prompt.step(&pd.heap, &mut context);
             match result {
@@ -154,29 +158,29 @@ impl ComponentState for ComponentStateImpl {
                 Ok(_) => unreachable!(),
                 Err(cont) => match cont {
                     EvalContinuation::Stepping => continue,
-                    EvalContinuation::Inconsistent => return PolyBlocker::Inconsistent,
+                    EvalContinuation::Inconsistent => return SyncBlocker::Inconsistent,
                     // First need to exit synchronous block before definition may end
                     EvalContinuation::Terminal => unreachable!(),
                     // No nested synchronous blocks
                     EvalContinuation::SyncBlockStart => unreachable!(),
-                    EvalContinuation::SyncBlockEnd => return PolyBlocker::SyncBlockEnd,
+                    EvalContinuation::SyncBlockEnd => return SyncBlocker::SyncBlockEnd,
                     // Not possible to create component in sync block
                     EvalContinuation::NewComponent(_, _) => unreachable!(),
                     EvalContinuation::BlockFires(port) => match port {
                         Value::Output(OutputValue(port)) => {
-                            return PolyBlocker::CouldntCheckFiring(port);
+                            return SyncBlocker::CouldntCheckFiring(port);
                         }
                         Value::Input(InputValue(port)) => {
-                            return PolyBlocker::CouldntCheckFiring(port);
+                            return SyncBlocker::CouldntCheckFiring(port);
                         }
                         _ => unreachable!(),
                     },
                     EvalContinuation::BlockGet(port) => match port {
                         Value::Output(OutputValue(port)) => {
-                            return PolyBlocker::CouldntReadMsg(port);
+                            return SyncBlocker::CouldntReadMsg(port);
                         }
                         Value::Input(InputValue(port)) => {
-                            return PolyBlocker::CouldntReadMsg(port);
+                            return SyncBlocker::CouldntReadMsg(port);
                         }
                         _ => unreachable!(),
                     },
@@ -195,7 +199,7 @@ impl ComponentState for ComponentStateImpl {
                         match message {
                             Value::Message(MessageValue(None)) => {
                                 // Putting a null message is inconsistent
-                                return PolyBlocker::Inconsistent;
+                                return SyncBlocker::Inconsistent;
                             }
                             Value::Message(MessageValue(Some(buffer))) => {
                                 // Create a copy of the payload
@@ -203,31 +207,25 @@ impl ComponentState for ComponentStateImpl {
                             }
                             _ => unreachable!(),
                         }
-                        return PolyBlocker::PutMsg(value, payload);
+                        return SyncBlocker::PutMsg(value, payload);
                     }
                 },
             }
         }
     }
 }
-
-pub enum EvalContext<'a> {
-    Mono(&'a mut dyn MonoContext<D = ProtocolDescriptionImpl, S = ComponentStateImpl>),
-    Poly(&'a mut dyn PolyContext<D = ProtocolDescriptionImpl>),
-    None,
-}
 impl EvalContext<'_> {
     // fn random(&mut self) -> LongValue {
     //     match self {
     //         EvalContext::None => unreachable!(),
-    //         EvalContext::Mono(_context) => todo!(),
-    //         EvalContext::Poly(_) => unreachable!(),
+    //         EvalContext::Nonsync(_context) => todo!(),
+    //         EvalContext::Sync(_) => unreachable!(),
     //     }
     // }
-    fn new_component(&mut self, args: &[Value], init_state: ComponentStateImpl) -> () {
+    fn new_component(&mut self, args: &[Value], init_state: ComponentState) -> () {
         match self {
             EvalContext::None => unreachable!(),
-            EvalContext::Mono(context) => {
+            EvalContext::Nonsync(context) => {
                 let mut moved_ports = HashSet::new();
                 for arg in args.iter() {
                     match arg {
@@ -242,26 +240,26 @@ impl EvalContext<'_> {
                 }
                 context.new_component(moved_ports, init_state)
             }
-            EvalContext::Poly(_) => unreachable!(),
+            EvalContext::Sync(_) => unreachable!(),
         }
     }
     fn new_channel(&mut self) -> [Value; 2] {
         match self {
             EvalContext::None => unreachable!(),
-            EvalContext::Mono(context) => {
+            EvalContext::Nonsync(context) => {
                 let [from, to] = context.new_channel();
                 let from = Value::Output(OutputValue(from));
                 let to = Value::Input(InputValue(to));
                 return [from, to];
             }
-            EvalContext::Poly(_) => unreachable!(),
+            EvalContext::Sync(_) => unreachable!(),
         }
     }
     fn fires(&mut self, port: Value) -> Option<Value> {
         match self {
             EvalContext::None => unreachable!(),
-            EvalContext::Mono(_) => unreachable!(),
-            EvalContext::Poly(context) => match port {
+            EvalContext::Nonsync(_) => unreachable!(),
+            EvalContext::Sync(context) => match port {
                 Value::Output(OutputValue(port)) => context.is_firing(port).map(Value::from),
                 Value::Input(InputValue(port)) => context.is_firing(port).map(Value::from),
                 _ => unreachable!(),
@@ -271,8 +269,8 @@ impl EvalContext<'_> {
     fn get(&mut self, port: Value) -> Option<Value> {
         match self {
             EvalContext::None => unreachable!(),
-            EvalContext::Mono(_) => unreachable!(),
-            EvalContext::Poly(context) => match port {
+            EvalContext::Nonsync(_) => unreachable!(),
+            EvalContext::Sync(context) => match port {
                 Value::Output(OutputValue(port)) => {
                     context.read_msg(port).map(Value::receive_message)
                 }

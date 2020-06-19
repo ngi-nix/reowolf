@@ -1575,7 +1575,9 @@ struct IndexableExpressions {
 }
 
 impl IndexableExpressions {
-    fn new() -> Self {  IndexableExpressions { indexable: false }  }
+    fn new() -> Self {
+        IndexableExpressions { indexable: false }
+    }
     fn error(&self, position: InputPosition) -> VisitorResult {
         Err(ParseError::new(position, "Unindexable expression"))
     }
@@ -1818,66 +1820,66 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    extern crate test_generator;
+// #[cfg(test)]
+// mod tests {
+//     extern crate test_generator;
 
-    use std::fs::File;
-    use std::io::Read;
-    use std::path::Path;
+//     use std::fs::File;
+//     use std::io::Read;
+//     use std::path::Path;
 
-    use test_generator::test_resources;
+//     use test_generator::test_resources;
 
-    use super::*;
+//     use super::*;
 
-    #[test_resources("testdata/parser/positive/*.pdl")]
-    fn batch1(resource: &str) {
-        let path = Path::new(resource);
-        let mut heap = Heap::new();
-        let mut source = InputSource::from_file(&path).unwrap();
-        let mut parser = Parser::new(&mut source);
-        match parser.parse(&mut heap) {
-            Ok(_) => {}
-            Err(err) => {
-                println!("{}", err.display(&source));
-                println!("{:?}", err);
-                assert!(false);
-            }
-        }
-    }
+//     #[test_resources("testdata/parser/positive/*.pdl")]
+//     fn batch1(resource: &str) {
+//         let path = Path::new(resource);
+//         let mut heap = Heap::new();
+//         let mut source = InputSource::from_file(&path).unwrap();
+//         let mut parser = Parser::new(&mut source);
+//         match parser.parse(&mut heap) {
+//             Ok(_) => {}
+//             Err(err) => {
+//                 println!("{}", err.display(&source));
+//                 println!("{:?}", err);
+//                 assert!(false);
+//             }
+//         }
+//     }
 
-    #[test_resources("testdata/parser/negative/*.pdl")]
-    fn batch2(resource: &str) {
-        let path = Path::new(resource);
-        let expect = path.with_extension("txt");
-        let mut heap = Heap::new();
-        let mut source = InputSource::from_file(&path).unwrap();
-        let mut parser = Parser::new(&mut source);
-        match parser.parse(&mut heap) {
-            Ok(pd) => {
-                println!("{:?}", heap[pd]);
-                println!("Expected parse error:");
+//     #[test_resources("testdata/parser/negative/*.pdl")]
+//     fn batch2(resource: &str) {
+//         let path = Path::new(resource);
+//         let expect = path.with_extension("txt");
+//         let mut heap = Heap::new();
+//         let mut source = InputSource::from_file(&path).unwrap();
+//         let mut parser = Parser::new(&mut source);
+//         match parser.parse(&mut heap) {
+//             Ok(pd) => {
+//                 println!("{:?}", heap[pd]);
+//                 println!("Expected parse error:");
 
-                let mut cev: Vec<u8> = Vec::new();
-                let mut f = File::open(expect).unwrap();
-                f.read_to_end(&mut cev).unwrap();
-                println!("{}", String::from_utf8_lossy(&cev));
-                assert!(false);
-            }
-            Err(err) => {
-                println!("{:?}", err);
+//                 let mut cev: Vec<u8> = Vec::new();
+//                 let mut f = File::open(expect).unwrap();
+//                 f.read_to_end(&mut cev).unwrap();
+//                 println!("{}", String::from_utf8_lossy(&cev));
+//                 assert!(false);
+//             }
+//             Err(err) => {
+//                 println!("{:?}", err);
 
-                let mut vec: Vec<u8> = Vec::new();
-                err.write(&source, &mut vec).unwrap();
-                println!("{}", String::from_utf8_lossy(&vec));
+//                 let mut vec: Vec<u8> = Vec::new();
+//                 err.write(&source, &mut vec).unwrap();
+//                 println!("{}", String::from_utf8_lossy(&vec));
 
-                let mut cev: Vec<u8> = Vec::new();
-                let mut f = File::open(expect).unwrap();
-                f.read_to_end(&mut cev).unwrap();
-                println!("{}", String::from_utf8_lossy(&cev));
+//                 let mut cev: Vec<u8> = Vec::new();
+//                 let mut f = File::open(expect).unwrap();
+//                 f.read_to_end(&mut cev).unwrap();
+//                 println!("{}", String::from_utf8_lossy(&cev));
 
-                assert_eq!(vec, cev);
-            }
-        }
-    }
-}
+//                 assert_eq!(vec, cev);
+//             }
+//         }
+//     }
+// }

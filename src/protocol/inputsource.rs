@@ -311,96 +311,96 @@ impl fmt::Display for DisplayEvalError<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[test]
-    fn test_from_string() {
-        let mut is = InputSource::from_string("#version 100\n").unwrap();
-        assert!(is.input.len() == 13);
-        assert!(is.line == 1);
-        assert!(is.column == 1);
-        assert!(is.offset == 0);
-        let ps = is.pos();
-        assert!(ps.line == 1);
-        assert!(ps.column == 1);
-        assert!(ps.offset == 0);
-        assert!(is.next() == Some(b'#'));
-        is.consume();
-        assert!(is.next() == Some(b'v'));
-        assert!(is.lookahead(1) == Some(b'e'));
-        is.consume();
-        assert!(is.next() == Some(b'e'));
-        is.consume();
-        assert!(is.next() == Some(b'r'));
-        is.consume();
-        assert!(is.next() == Some(b's'));
-        is.consume();
-        assert!(is.next() == Some(b'i'));
-        is.consume();
-        {
-            let ps = is.pos();
-            assert_eq!(b"#version 100", ps.context(&is));
-            let er = is.error("hello world!");
-            let mut vec: Vec<u8> = Vec::new();
-            er.write(&is, &mut vec).unwrap();
-            assert_eq!(
-                "Parse error at 1:7: hello world!\n#version 100\n      ^\n",
-                String::from_utf8_lossy(&vec)
-            );
-        }
-        assert!(is.next() == Some(b'o'));
-        is.consume();
-        assert!(is.next() == Some(b'n'));
-        is.consume();
-        assert!(is.input.len() == 13);
-        assert!(is.line == 1);
-        assert!(is.column == 9);
-        assert!(is.offset == 8);
-        assert!(is.next() == Some(b' '));
-        is.consume();
-        assert!(is.next() == Some(b'1'));
-        is.consume();
-        assert!(is.next() == Some(b'0'));
-        is.consume();
-        assert!(is.next() == Some(b'0'));
-        is.consume();
-        assert!(is.input.len() == 13);
-        assert!(is.line == 1);
-        assert!(is.column == 13);
-        assert!(is.offset == 12);
-        assert!(is.next() == Some(b'\n'));
-        is.consume();
-        assert!(is.input.len() == 13);
-        assert!(is.line == 2);
-        assert!(is.column == 1);
-        assert!(is.offset == 13);
-        {
-            let ps = is.pos();
-            assert_eq!(b"", ps.context(&is));
-        }
-        assert!(is.next() == None);
-        is.consume();
-        assert!(is.next() == None);
-    }
+//     #[test]
+//     fn test_from_string() {
+//         let mut is = InputSource::from_string("#version 100\n").unwrap();
+//         assert!(is.input.len() == 13);
+//         assert!(is.line == 1);
+//         assert!(is.column == 1);
+//         assert!(is.offset == 0);
+//         let ps = is.pos();
+//         assert!(ps.line == 1);
+//         assert!(ps.column == 1);
+//         assert!(ps.offset == 0);
+//         assert!(is.next() == Some(b'#'));
+//         is.consume();
+//         assert!(is.next() == Some(b'v'));
+//         assert!(is.lookahead(1) == Some(b'e'));
+//         is.consume();
+//         assert!(is.next() == Some(b'e'));
+//         is.consume();
+//         assert!(is.next() == Some(b'r'));
+//         is.consume();
+//         assert!(is.next() == Some(b's'));
+//         is.consume();
+//         assert!(is.next() == Some(b'i'));
+//         is.consume();
+//         {
+//             let ps = is.pos();
+//             assert_eq!(b"#version 100", ps.context(&is));
+//             let er = is.error("hello world!");
+//             let mut vec: Vec<u8> = Vec::new();
+//             er.write(&is, &mut vec).unwrap();
+//             assert_eq!(
+//                 "Parse error at 1:7: hello world!\n#version 100\n      ^\n",
+//                 String::from_utf8_lossy(&vec)
+//             );
+//         }
+//         assert!(is.next() == Some(b'o'));
+//         is.consume();
+//         assert!(is.next() == Some(b'n'));
+//         is.consume();
+//         assert!(is.input.len() == 13);
+//         assert!(is.line == 1);
+//         assert!(is.column == 9);
+//         assert!(is.offset == 8);
+//         assert!(is.next() == Some(b' '));
+//         is.consume();
+//         assert!(is.next() == Some(b'1'));
+//         is.consume();
+//         assert!(is.next() == Some(b'0'));
+//         is.consume();
+//         assert!(is.next() == Some(b'0'));
+//         is.consume();
+//         assert!(is.input.len() == 13);
+//         assert!(is.line == 1);
+//         assert!(is.column == 13);
+//         assert!(is.offset == 12);
+//         assert!(is.next() == Some(b'\n'));
+//         is.consume();
+//         assert!(is.input.len() == 13);
+//         assert!(is.line == 2);
+//         assert!(is.column == 1);
+//         assert!(is.offset == 13);
+//         {
+//             let ps = is.pos();
+//             assert_eq!(b"", ps.context(&is));
+//         }
+//         assert!(is.next() == None);
+//         is.consume();
+//         assert!(is.next() == None);
+//     }
 
-    #[test]
-    fn test_split() {
-        let mut is = InputSource::from_string("#version 100\n").unwrap();
-        let backup = is.clone();
-        assert!(is.next() == Some(b'#'));
-        is.consume();
-        assert!(is.next() == Some(b'v'));
-        is.consume();
-        assert!(is.next() == Some(b'e'));
-        is.consume();
-        is = backup;
-        assert!(is.next() == Some(b'#'));
-        is.consume();
-        assert!(is.next() == Some(b'v'));
-        is.consume();
-        assert!(is.next() == Some(b'e'));
-        is.consume();
-    }
-}
+//     #[test]
+//     fn test_split() {
+//         let mut is = InputSource::from_string("#version 100\n").unwrap();
+//         let backup = is.clone();
+//         assert!(is.next() == Some(b'#'));
+//         is.consume();
+//         assert!(is.next() == Some(b'v'));
+//         is.consume();
+//         assert!(is.next() == Some(b'e'));
+//         is.consume();
+//         is = backup;
+//         assert!(is.next() == Some(b'#'));
+//         is.consume();
+//         assert!(is.next() == Some(b'v'));
+//         is.consume();
+//         assert!(is.next() == Some(b'e'));
+//         is.consume();
+//     }
+// }

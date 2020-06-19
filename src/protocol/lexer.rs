@@ -1656,124 +1656,124 @@ impl Lexer<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::protocol::ast::Expression::*;
-    use crate::protocol::{ast, lexer::*};
+// #[cfg(test)]
+// mod tests {
+//     use crate::protocol::ast::Expression::*;
+//     use crate::protocol::{ast, lexer::*};
 
-    #[test]
-    fn test_lowercase() {
-        assert_eq!(lowercase(b'a'), b'a');
-        assert_eq!(lowercase(b'A'), b'a');
-        assert_eq!(lowercase(b'z'), b'z');
-        assert_eq!(lowercase(b'Z'), b'z');
-    }
+//     #[test]
+//     fn test_lowercase() {
+//         assert_eq!(lowercase(b'a'), b'a');
+//         assert_eq!(lowercase(b'A'), b'a');
+//         assert_eq!(lowercase(b'z'), b'z');
+//         assert_eq!(lowercase(b'Z'), b'z');
+//     }
 
-    #[test]
-    fn test_basic_expression() {
-        let mut h = Heap::new();
-        let mut is = InputSource::from_string("a+b;").unwrap();
-        let mut lex = Lexer::new(&mut is);
-        match lex.consume_expression(&mut h) {
-            Ok(expr) => {
-                println!("{:?}", expr);
-                if let Binary(bin) = &h[expr] {
-                    if let Variable(left) = &h[bin.left] {
-                        if let Variable(right) = &h[bin.right] {
-                            assert_eq!("a", format!("{}", h[left.identifier]));
-                            assert_eq!("b", format!("{}", h[right.identifier]));
-                            assert_eq!(Some(b';'), is.next());
-                            return;
-                        }
-                    }
-                }
-                assert!(false);
-            }
-            Err(err) => {
-                err.print(&is);
-                assert!(false);
-            }
-        }
-    }
+//     #[test]
+//     fn test_basic_expression() {
+//         let mut h = Heap::new();
+//         let mut is = InputSource::from_string("a+b;").unwrap();
+//         let mut lex = Lexer::new(&mut is);
+//         match lex.consume_expression(&mut h) {
+//             Ok(expr) => {
+//                 println!("{:?}", expr);
+//                 if let Binary(bin) = &h[expr] {
+//                     if let Variable(left) = &h[bin.left] {
+//                         if let Variable(right) = &h[bin.right] {
+//                             assert_eq!("a", format!("{}", h[left.identifier]));
+//                             assert_eq!("b", format!("{}", h[right.identifier]));
+//                             assert_eq!(Some(b';'), is.next());
+//                             return;
+//                         }
+//                     }
+//                 }
+//                 assert!(false);
+//             }
+//             Err(err) => {
+//                 err.print(&is);
+//                 assert!(false);
+//             }
+//         }
+//     }
 
-    #[test]
-    fn test_paren_expression() {
-        let mut h = Heap::new();
-        let mut is = InputSource::from_string("(true)").unwrap();
-        let mut lex = Lexer::new(&mut is);
-        match lex.consume_paren_expression(&mut h) {
-            Ok(expr) => {
-                println!("{:#?}", expr);
-                if let Constant(con) = &h[expr] {
-                    if let ast::Constant::True = con.value {
-                        return;
-                    }
-                }
-                assert!(false);
-            }
-            Err(err) => {
-                err.print(&is);
-                assert!(false);
-            }
-        }
-    }
+//     #[test]
+//     fn test_paren_expression() {
+//         let mut h = Heap::new();
+//         let mut is = InputSource::from_string("(true)").unwrap();
+//         let mut lex = Lexer::new(&mut is);
+//         match lex.consume_paren_expression(&mut h) {
+//             Ok(expr) => {
+//                 println!("{:#?}", expr);
+//                 if let Constant(con) = &h[expr] {
+//                     if let ast::Constant::True = con.value {
+//                         return;
+//                     }
+//                 }
+//                 assert!(false);
+//             }
+//             Err(err) => {
+//                 err.print(&is);
+//                 assert!(false);
+//             }
+//         }
+//     }
 
-    #[test]
-    fn test_expression() {
-        let mut h = Heap::new();
-        let mut is = InputSource::from_string("(x(1+5,get(y))-w[5])+z++\n").unwrap();
-        let mut lex = Lexer::new(&mut is);
-        match lex.consume_expression(&mut h) {
-            Ok(expr) => {
-                println!("{:#?}", expr);
-            }
-            Err(err) => {
-                err.print(&is);
-                assert!(false);
-            }
-        }
-    }
+//     #[test]
+//     fn test_expression() {
+//         let mut h = Heap::new();
+//         let mut is = InputSource::from_string("(x(1+5,get(y))-w[5])+z++\n").unwrap();
+//         let mut lex = Lexer::new(&mut is);
+//         match lex.consume_expression(&mut h) {
+//             Ok(expr) => {
+//                 println!("{:#?}", expr);
+//             }
+//             Err(err) => {
+//                 err.print(&is);
+//                 assert!(false);
+//             }
+//         }
+//     }
 
-    #[test]
-    fn test_basic_statement() {
-        let mut h = Heap::new();
-        let mut is = InputSource::from_string("while (true) { skip; }").unwrap();
-        let mut lex = Lexer::new(&mut is);
-        match lex.consume_statement(&mut h) {
-            Ok(stmt) => {
-                println!("{:#?}", stmt);
-                if let Statement::While(w) = &h[stmt] {
-                    if let Expression::Constant(_) = h[w.test] {
-                        if let Statement::Block(_) = h[w.body] {
-                            return;
-                        }
-                    }
-                }
-                assert!(false);
-            }
-            Err(err) => {
-                err.print(&is);
-                assert!(false);
-            }
-        }
-    }
+//     #[test]
+//     fn test_basic_statement() {
+//         let mut h = Heap::new();
+//         let mut is = InputSource::from_string("while (true) { skip; }").unwrap();
+//         let mut lex = Lexer::new(&mut is);
+//         match lex.consume_statement(&mut h) {
+//             Ok(stmt) => {
+//                 println!("{:#?}", stmt);
+//                 if let Statement::While(w) = &h[stmt] {
+//                     if let Expression::Constant(_) = h[w.test] {
+//                         if let Statement::Block(_) = h[w.body] {
+//                             return;
+//                         }
+//                     }
+//                 }
+//                 assert!(false);
+//             }
+//             Err(err) => {
+//                 err.print(&is);
+//                 assert!(false);
+//             }
+//         }
+//     }
 
-    #[test]
-    fn test_statement() {
-        let mut h = Heap::new();
-        let mut is = InputSource::from_string(
-            "label: while (true) { if (x++ > y[0]) break label; else continue; }\n",
-        )
-        .unwrap();
-        let mut lex = Lexer::new(&mut is);
-        match lex.consume_statement(&mut h) {
-            Ok(stmt) => {
-                println!("{:#?}", stmt);
-            }
-            Err(err) => {
-                err.print(&is);
-                assert!(false);
-            }
-        }
-    }
-}
+//     #[test]
+//     fn test_statement() {
+//         let mut h = Heap::new();
+//         let mut is = InputSource::from_string(
+//             "label: while (true) { if (x++ > y[0]) break label; else continue; }\n",
+//         )
+//         .unwrap();
+//         let mut lex = Lexer::new(&mut is);
+//         match lex.consume_statement(&mut h) {
+//             Ok(stmt) => {
+//                 println!("{:#?}", stmt);
+//             }
+//             Err(err) => {
+//                 err.print(&is);
+//                 assert!(false);
+//             }
+//         }
+//     }
+// }

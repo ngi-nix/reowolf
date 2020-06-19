@@ -3,37 +3,37 @@ use crate::runtime::{endpoint::*, *};
 
 #[derive(Debug, Clone)]
 pub(crate) struct MonoN {
-    pub ports: HashSet<Port>,
-    pub result: Option<(usize, HashMap<Port, Payload>)>,
+    pub ports: HashSet<PortId>,
+    pub result: Option<(usize, HashMap<PortId, Payload>)>,
 }
 #[derive(Debug)]
 pub(crate) struct PolyN {
-    pub ports: HashSet<Port>,
+    pub ports: HashSet<PortId>,
     pub branches: HashMap<Predicate, BranchN>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct BranchN {
-    pub to_get: HashSet<Port>,
-    pub gotten: HashMap<Port, Payload>,
+    pub to_get: HashSet<PortId>,
+    pub gotten: HashMap<PortId, Payload>,
     pub sync_batch_index: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct MonoP {
     pub state: ProtocolS,
-    pub ports: HashSet<Port>,
+    pub ports: HashSet<PortId>,
 }
 #[derive(Debug)]
 pub(crate) struct PolyP {
     pub incomplete: HashMap<Predicate, BranchP>,
     pub complete: HashMap<Predicate, BranchP>,
-    pub ports: HashSet<Port>,
+    pub ports: HashSet<PortId>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct BranchP {
-    pub blocking_on: Option<Port>,
-    pub outbox: HashMap<Port, Payload>,
-    pub inbox: HashMap<Port, Payload>,
+    pub blocking_on: Option<PortId>,
+    pub outbox: HashMap<PortId, Payload>,
+    pub inbox: HashMap<PortId, Payload>,
     pub state: ProtocolS,
 }
 
@@ -211,7 +211,7 @@ impl PolyP {
         &mut self,
         m_ctx: PolyPContext,
         protocol_description: &ProtocolD,
-        port: Port,
+        port: PortId,
         payload_predicate: Predicate,
         payload: Payload,
     ) -> Result<SyncRunResult, EndpointErr> {
@@ -366,7 +366,7 @@ impl PolyP {
 impl PolyN {
     pub fn sync_recv(
         &mut self,
-        port: Port,
+        port: PortId,
         logger: &mut String,
         payload: Payload,
         payload_predicate: Predicate,

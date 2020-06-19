@@ -1,10 +1,22 @@
+use crate::common::*;
 use core::hash::Hash;
 use core::marker::PhantomData;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Id<T> {
     index: u32,
     _phantom: PhantomData<T>,
+}
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Arena<T> {
+    store: Vec<T>,
+}
+//////////////////////////////////
+
+impl<T> Debug for Id<T> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        f.debug_struct("Id").field("index", &self.index).finish()
+    }
 }
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
@@ -22,11 +34,6 @@ impl<T> Hash for Id<T> {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.index.hash(h);
     }
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Arena<T> {
-    store: Vec<T>,
 }
 impl<T> Arena<T> {
     pub fn new() -> Self {

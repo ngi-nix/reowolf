@@ -201,7 +201,7 @@ impl Controller {
         //    this is needed during the event loop to determine which actor
         //    should receive the incoming message.
         //    TODO: store and update this mapping rather than rebuilding it each round.
-        let port_to_holder: HashMap<Port, PolyId> = {
+        let port_to_holder: HashMap<PortId, PolyId> = {
             use PolyId::*;
             let n = self.inner.mono_n.ports.iter().map(move |&e| (e, N));
             let p = self
@@ -566,7 +566,7 @@ impl From<EndpointErr> for SyncErr {
 impl MonoContext for MonoPContext<'_> {
     type D = ProtocolD;
     type S = ProtocolS;
-    fn new_component(&mut self, moved_ports: HashSet<Port>, init_state: Self::S) {
+    fn new_component(&mut self, moved_ports: HashSet<PortId>, init_state: Self::S) {
         log!(
             &mut self.inner.logger,
             "!! MonoContext callback to new_component with ports {:?}!",
@@ -579,7 +579,7 @@ impl MonoContext for MonoPContext<'_> {
             panic!("MachineP attempting to move alien port!");
         }
     }
-    fn new_channel(&mut self) -> [Port; 2] {
+    fn new_channel(&mut self) -> [PortId; 2] {
         let [a, b] = Endpoint::new_memory_pair();
         let channel_id = self.inner.channel_id_stream.next();
 
@@ -588,7 +588,7 @@ impl MonoContext for MonoPContext<'_> {
                 EndpointExt { info: EndpointInfo { polarity, channel_id }, endpoint };
             let port = self.inner.endpoint_exts.alloc(endpoint_ext);
             let endpoint = &self.inner.endpoint_exts.get(port).unwrap().endpoint;
-            let token = Port::to_token(port);
+            let token = PortId::to_token(port);
             self.inner
                 .messenger_state
                 .poll
@@ -713,7 +713,7 @@ impl SolutionStorage {
 impl PolyContext for BranchPContext<'_, '_> {
     type D = ProtocolD;
 
-    fn is_firing(&mut self, port: Port) -> Option<bool> {
+    fn is_firing(&mut self, port: PortId) -> Option<bool> {
         assert!(self.ports.contains(&port));
         let channel_id = self.m_ctx.inner.endpoint_exts.get(port).unwrap().info.channel_id;
         let val = self.predicate.query(channel_id);
@@ -725,7 +725,7 @@ impl PolyContext for BranchPContext<'_, '_> {
         );
         val
     }
-    fn read_msg(&mut self, port: Port) -> Option<&Payload> {
+    fn read_msg(&mut self, port: PortId) -> Option<&Payload> {
         assert!(self.ports.contains(&port));
         let val = self.inbox.get(&port);
         log!(
