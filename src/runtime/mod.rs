@@ -110,12 +110,16 @@ pub struct MemInMsg {
     msg: Payload,
 }
 #[derive(Debug)]
-pub struct EndpointPoller {
+pub struct EndpointManager {
+    // invariants:
+    // 1. endpoint N is registered READ | WRITE with poller
+    // 2. Events is empty
     poll: Poll,
     events: Events,
     undrained_endpoints: IndexSet<usize>,
     delayed_messages: Vec<(usize, Msg)>,
     undelayed_messages: Vec<(usize, Msg)>,
+    endpoint_exts: Vec<EndpointExt>,
 }
 #[derive(Debug)]
 pub struct Connector {
@@ -135,8 +139,7 @@ pub enum ConnectorPhased {
         surplus_sockets: u16,
     },
     Communication {
-        endpoint_poller: EndpointPoller,
-        endpoint_exts: Vec<EndpointExt>,
+        endpoint_manager: EndpointManager,
         neighborhood: Neighborhood,
         mem_inbox: Vec<MemInMsg>,
     },
@@ -173,12 +176,11 @@ enum TryRecyAnyError {
     BrokenEndpoint(usize),
 }
 ////////////////
-impl EndpointPoller {
-    fn try_recv_any(
-        &mut self,
-        endpoint_exts: &mut [EndpointExt],
-        deadline: Instant,
-    ) -> Result<(usize, Msg), TryRecyAnyError> {
+impl EndpointManager {
+    fn send_to(&mut self, index: usize, msg: &Msg) -> Result<(), ()> {
+        self.endpoint_exts[index].endpoint.send(msg)
+    }
+    fn try_recv_any(&mut self, deadline: Instant) -> Result<(usize, Msg), TryRecyAnyError> {
         use TryRecyAnyError::*;
         // 1. try messages already buffered
         if let Some(x) = self.undelayed_messages.pop() {
@@ -186,7 +188,7 @@ impl EndpointPoller {
         }
         // 2. try read from sockets nonblocking
         while let Some(index) = self.undrained_endpoints.pop() {
-            if let Some(msg) = endpoint_exts[index]
+            if let Some(msg) = self.endpoint_exts[index]
                 .endpoint
                 .try_recv()
                 .map_err(|error| EndpointRecvErr { error, index })?
@@ -200,7 +202,7 @@ impl EndpointPoller {
             self.poll.poll(&mut self.events, Some(remaining)).map_err(|_| PollFailed)?;
             for event in self.events.iter() {
                 let Token(index) = event.token();
-                if let Some(msg) = endpoint_exts[index]
+                if let Some(msg) = self.endpoint_exts[index]
                     .endpoint
                     .try_recv()
                     .map_err(|error| EndpointRecvErr { error, index })?
