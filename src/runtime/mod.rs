@@ -8,12 +8,12 @@ mod my_tests;
 use crate::common::*;
 use error::*;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum LocalComponentId {
     Native,
     Proto(ProtoComponentId),
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Route {
     LocalComponent(LocalComponentId),
     Endpoint { index: usize },
@@ -172,9 +172,10 @@ pub struct NonsyncProtoContext<'a> {
     unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>,
 }
 pub struct SyncProtoContext<'a> {
+    logger: &'a mut dyn Logger,
     predicate: &'a Predicate,
     proto_component_id: ProtoComponentId,
-    inbox: HashMap<PortId, Payload>,
+    inbox: &'a HashMap<PortId, Payload>,
 }
 
 // pub struct MonoPContext<'a> {
@@ -201,14 +202,6 @@ pub struct SyncProtoContext<'a> {
 //     inbox: &'r HashMap<PortId, Payload>,
 // }
 
-// #[derive(Default)]
-// pub struct SolutionStorage {
-//     old_local: HashSet<Predicate>,
-//     new_local: HashSet<Predicate>,
-//     // this pair acts as SubtreeId -> HashSet<Predicate> which is friendlier to iteration
-//     subtree_solutions: Vec<HashSet<Predicate>>,
-//     subtree_id_to_index: HashMap<SubtreeId, usize>,
-// }
 // #[derive(Debug)]
 // pub enum SyncRunResult {
 //     BlockingForRecv,
@@ -432,6 +425,11 @@ impl Connector {
 // }
 
 impl Predicate {
+    #[inline]
+    pub fn inserted(mut self, k: PortId, v: bool) -> Self {
+        self.assigned.insert(k, v);
+        self
+    }
     // returns true IFF self.unify would return Equivalent OR FormerNotLatter
     pub fn satisfies(&self, other: &Self) -> bool {
         let mut s_it = self.assigned.iter();
@@ -530,9 +528,9 @@ impl Predicate {
             self.assigned.entry(channel_id).or_insert(value);
         }
     }
-    pub fn replace_assignment(&mut self, channel_id: PortId, value: bool) -> Option<bool> {
-        self.assigned.insert(channel_id, value)
-    }
+    // pub fn replace_assignment(&mut self, channel_id: PortId, value: bool) -> Option<bool> {
+    //     self.assigned.insert(channel_id, value)
+    // }
     pub fn union_with(&self, other: &Self) -> Option<Self> {
         let mut res = self.clone();
         for (&channel_id, &assignment_1) in other.assigned.iter() {
