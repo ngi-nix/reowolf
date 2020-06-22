@@ -167,11 +167,13 @@ impl Connector {
 
                 // run all proto components to their sync blocker
                 for (proto_component_id, proto_component) in branching_proto_components.iter_mut() {
+                    // run this component to sync blocker in-place
                     let blocked = &mut proto_component.branches;
                     let [unblocked_from, unblocked_to] = [
                         &mut HashMap::<Predicate, ProtoComponentBranch>::default(),
                         &mut Default::default(),
                     ];
+                    // DRAIN-AND-POPULATE PATTERN: DRAINING unblocked into blocked while POPULATING unblocked
                     std::mem::swap(unblocked_from, blocked);
                     while !unblocked_from.is_empty() {
                         for (mut predicate, mut branch) in unblocked_from.drain() {
@@ -185,11 +187,16 @@ impl Connector {
                             match branch.state.sync_run(&mut ctx, &self.proto_description) {
                                 B::Inconsistent => {
                                     log!(self.logger, "Proto component {:?} branch with pred {:?} became inconsistent", proto_component_id, &predicate);
-                                    // discard forever
+                                    // branch is inconsistent. throw it away
                                     drop((predicate, branch));
                                 }
                                 B::SyncBlockEnd => {
-                                    // todo falsify
+                                    // make concrete all variables
+                                    for &port in proto_component.ports.iter() {
+                                        predicate.assigned.entry(port).or_insert(false);
+                                    }
+                                    // submit solution for this component
+                                    log!(self.logger, "Proto component {:?} branch with pred {:?} reached SyncBlockEnd", proto_component_id, &predicate);
                                     solution_storage.submit_and_digest_subtree_solution(
                                         &mut *self.logger,
                                         Route::LocalComponent(LocalComponentId::Proto(
@@ -197,10 +204,6 @@ impl Connector {
                                         )),
                                         predicate.clone(),
                                     );
-                                    // make concrete all variables
-                                    for &port in proto_component.ports.iter() {
-                                        predicate.assigned.entry(port).or_insert(false);
-                                    }
                                     // move to "blocked"
                                     blocked.insert(predicate, branch);
                                 }
@@ -248,7 +251,19 @@ impl Connector {
                         std::mem::swap(unblocked_from, unblocked_to);
                     }
                 }
-                todo!()
+                // now all components are blocked!
+                //
+
+                let decision = 'undecided: loop {
+                    // check if we already have a solution
+                    for _solution in solution_storage.iter_new_local_make_old() {
+                        // todo check if parent, inform children etc. etc.
+                        break 'undecided Ok(0);
+                    }
+
+                    // send / recv messages
+                };
+                decision
             }
         }
     }
