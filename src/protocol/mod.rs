@@ -23,8 +23,8 @@ pub struct ComponentState {
     prompt: Prompt,
 }
 pub enum EvalContext<'a> {
-    Nonsync(&'a mut NonsyncContext<'a>),
-    Sync(&'a mut SyncContext<'a>),
+    Nonsync(&'a mut NonsyncProtoContext<'a>),
+    Sync(&'a mut SyncProtoContext<'a>),
     None,
 }
 //////////////////////////////////////////////
@@ -111,7 +111,7 @@ impl ProtocolDescription {
 impl ComponentState {
     pub fn nonsync_run<'a: 'b, 'b>(
         &'a mut self,
-        context: &'b mut NonsyncContext<'b>,
+        context: &'b mut NonsyncProtoContext<'b>,
         pd: &'a ProtocolDescription,
     ) -> NonsyncBlocker {
         let mut context = EvalContext::Nonsync(context);
@@ -147,7 +147,7 @@ impl ComponentState {
 
     pub fn sync_run<'a: 'b, 'b>(
         &'a mut self,
-        context: &'b mut SyncContext<'b>,
+        context: &'b mut SyncProtoContext<'b>,
         pd: &'a ProtocolDescription,
     ) -> SyncBlocker {
         let mut context = EvalContext::Sync(context);

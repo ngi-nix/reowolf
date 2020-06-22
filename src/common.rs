@@ -1,7 +1,7 @@
 ///////////////////// PRELUDE /////////////////////
 
 pub use crate::protocol::{ComponentState, ProtocolDescription};
-pub use crate::runtime::{NonsyncContext, SyncContext};
+pub use crate::runtime::{NonsyncProtoContext, SyncProtoContext};
 
 pub use core::{
     cmp::Ordering,
@@ -138,5 +138,15 @@ impl From<Vec<u8>> for Payload {
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "PortId({},{})", self.controller_id, self.port_index)
+    }
+}
+impl std::ops::Not for Polarity {
+    type Output = Self;
+    fn not(self) -> Self::Output {
+        use Polarity::*;
+        match self {
+            Putter => Getter,
+            Getter => Putter,
+        }
     }
 }

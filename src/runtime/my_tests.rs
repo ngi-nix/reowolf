@@ -45,9 +45,8 @@ fn add_sync() {
 fn add_net_port() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let sock_addr = next_test_addr();
-    let _ =
-        c.add_net_port(EndpointSetup { polarity: Getter, sock_addr, is_active: false }).unwrap();
-    let _ = c.add_net_port(EndpointSetup { polarity: Putter, sock_addr, is_active: true }).unwrap();
+    let _ = c.add_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+    let _ = c.add_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
     println!("{:#?}", c);
 }
 
@@ -62,12 +61,12 @@ fn trivial_connect() {
 fn single_node_connect() {
     let sock_addr = next_test_addr();
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
-    let _ =
-        c.add_net_port(EndpointSetup { polarity: Getter, sock_addr, is_active: false }).unwrap();
-    let _ = c.add_net_port(EndpointSetup { polarity: Putter, sock_addr, is_active: true }).unwrap();
-    c.connect(Duration::from_secs(1)).unwrap();
+    let _ = c.add_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+    let _ = c.add_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
+    let res = c.connect(Duration::from_secs(1));
     println!("{:#?}", c);
     c.get_logger().dump_log(&mut std::io::stdout().lock());
+    res.unwrap();
 }
 
 #[test]
@@ -76,15 +75,13 @@ fn multithreaded_connect() {
     scope(|s| {
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
-            let es = EndpointSetup { polarity: Getter, sock_addr, is_active: true };
-            let _ = c.add_net_port(es).unwrap();
+            let _ = c.add_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
             c.connect(Duration::from_secs(1)).unwrap();
             c.print_state();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
-            let es = EndpointSetup { polarity: Putter, sock_addr, is_active: false };
-            let _ = c.add_net_port(es).unwrap();
+            let _ = c.add_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
             c.connect(Duration::from_secs(1)).unwrap();
             c.print_state();
         });
