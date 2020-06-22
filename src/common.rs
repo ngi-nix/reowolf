@@ -31,14 +31,28 @@ pub use Polarity::*;
 pub type ControllerId = u32;
 pub type PortSuffix = u32;
 
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct Id {
+    pub(crate) controller_id: ControllerId,
+    pub(crate) u32_suffix: PortSuffix,
+}
+
+#[derive(Debug, Default)]
+pub struct U32Stream {
+    next: u32,
+}
+
 // globally unique
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-pub struct PortId {
-    pub(crate) controller_id: ControllerId,
-    pub(crate) port_index: PortSuffix,
-}
+pub struct PortId(Id);
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct ProtoComponentId(Id);
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
@@ -79,6 +93,25 @@ pub enum SyncBlocker {
 }
 
 ///////////////////// IMPL /////////////////////
+impl U32Stream {
+    pub fn next(&mut self) -> u32 {
+        if self.next == u32::MAX {
+            panic!("NO NEXT!")
+        }
+        self.next += 1;
+        self.next - 1
+    }
+}
+impl From<Id> for PortId {
+    fn from(id: Id) -> PortId {
+        Self(id)
+    }
+}
+impl From<Id> for ProtoComponentId {
+    fn from(id: Id) -> ProtoComponentId {
+        Self(id)
+    }
+}
 impl Payload {
     pub fn new(len: usize) -> Payload {
         let mut v = Vec::with_capacity(len);
@@ -137,7 +170,12 @@ impl From<Vec<u8>> for Payload {
 }
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "PortId({},{})", self.controller_id, self.port_index)
+        write!(f, "PortId({},{})", self.0.controller_id, self.0.u32_suffix)
+    }
+}
+impl Debug for ProtoComponentId {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ProtoComponentId({},{})", self.0.controller_id, self.0.u32_suffix)
     }
 }
 impl std::ops::Not for Polarity {

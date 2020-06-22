@@ -247,7 +247,7 @@ impl EvalContext<'_> {
         match self {
             EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
-                let [from, to] = context.new_channel();
+                let [from, to] = context.new_port_pair();
                 let from = Value::Output(OutputValue(from));
                 let to = Value::Input(InputValue(to));
                 return [from, to];
