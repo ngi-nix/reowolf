@@ -88,3 +88,28 @@ fn multithreaded_connect() {
     })
     .unwrap();
 }
+
+#[test]
+fn put_no_sync() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [o, _] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.put(o, (b"hi" as &[_]).into()).unwrap();
+}
+
+#[test]
+fn wrong_polarity_bad() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.put(i, (b"hi" as &[_]).into()).unwrap_err();
+}
+
+#[test]
+fn dup_put_bad() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [o, _] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.put(o, (b"hi" as &[_]).into()).unwrap();
+    c.put(o, (b"hi" as &[_]).into()).unwrap_err();
+}

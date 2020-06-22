@@ -112,6 +112,11 @@ impl From<Id> for ProtoComponentId {
         Self(id)
     }
 }
+impl From<&[u8]> for Payload {
+    fn from(s: &[u8]) -> Payload {
+        Payload(Arc::new(s.to_vec()))
+    }
+}
 impl Payload {
     pub fn new(len: usize) -> Payload {
         let mut v = Vec::with_capacity(len);

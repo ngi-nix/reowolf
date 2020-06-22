@@ -85,6 +85,26 @@ impl SyncProtoContext<'_> {
 }
 
 impl Connector {
+    pub fn put(&mut self, port: PortId, payload: Payload) -> Result<(), PortOpError> {
+        use PortOpError::*;
+        if !self.native_ports.contains(&port) {
+            return Err(PortUnavailable);
+        }
+        if Putter != *self.port_info.polarities.get(&port).unwrap() {
+            return Err(WrongPolarity);
+        }
+        match &mut self.phased {
+            ConnectorPhased::Setup { .. } => Err(NotConnected),
+            ConnectorPhased::Communication { native_batches, .. } => {
+                let batch = native_batches.last_mut().unwrap();
+                if batch.to_put.contains_key(&port) {
+                    return Err(MultipleOpsOnPort);
+                }
+                batch.to_put.insert(port, payload);
+                Ok(())
+            }
+        }
+    }
     pub fn sync(&mut self) -> Result<usize, SyncError> {
         use SyncError::*;
         match &mut self.phased {

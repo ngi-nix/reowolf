@@ -19,3 +19,10 @@ pub enum SyncError {
     InconsistentProtoComponent(ProtoComponentId),
     IndistinguishableBatches([usize; 2]),
 }
+#[derive(Debug)]
+pub enum PortOpError {
+    WrongPolarity,
+    NotConnected,
+    MultipleOpsOnPort,
+    PortUnavailable,
+}
