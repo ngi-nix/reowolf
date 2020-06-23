@@ -21,8 +21,7 @@ lazy_static::lazy_static! {
 
 #[test]
 fn simple_connector() {
-    let c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
-    println!("{:#?}", c);
+    Connector::new_simple(MINIMAL_PROTO.clone(), 0);
 }
 
 #[test]
@@ -30,7 +29,6 @@ fn new_port_pair() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, _] = c.new_port_pair();
     let [_, _] = c.new_port_pair();
-    println!("{:#?}", c);
 }
 
 #[test]
@@ -38,7 +36,6 @@ fn new_sync() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, i] = c.new_port_pair();
     c.add_component(b"sync", &[i, o]).unwrap();
-    println!("{:#?}", c);
 }
 
 #[test]
@@ -47,14 +44,12 @@ fn new_net_port() {
     let sock_addr = next_test_addr();
     let _ = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
     let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-    println!("{:#?}", c);
 }
 
 #[test]
 fn trivial_connect() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     c.connect(Duration::from_secs(1)).unwrap();
-    println!("{:#?}", c);
 }
 
 #[test]
@@ -63,10 +58,7 @@ fn single_node_connect() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let _ = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
     let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-    let res = c.connect(Duration::from_secs(1));
-    println!("{:#?}", c);
-    c.get_logger().dump_log(&mut std::io::stdout().lock());
-    res.unwrap();
+    c.connect(Duration::from_secs(1)).unwrap();
 }
 
 #[test]
@@ -77,13 +69,11 @@ fn multithreaded_connect() {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
             let _ = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
             c.connect(Duration::from_secs(1)).unwrap();
-            c.print_state();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
             let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
             c.connect(Duration::from_secs(1)).unwrap();
-            c.print_state();
         });
     })
     .unwrap();
@@ -119,7 +109,6 @@ fn trivial_sync() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     c.connect(Duration::from_secs(1)).unwrap();
     c.sync(Duration::from_secs(1)).unwrap();
-    c.print_state();
 }
 
 #[test]
@@ -250,12 +239,12 @@ fn connector_pair_nondet() {
 
 #[test]
 fn cannot_use_moved_ports() {
-    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
-    let [p, g] = c.new_port_pair();
-    c.add_component(b"sync", &[g, p]).unwrap();
     /*
     native p|-->|g sync
     */
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+    let [p, g] = c.new_port_pair();
+    c.add_component(b"sync", &[g, p]).unwrap();
     c.connect(Duration::from_secs(1)).unwrap();
     c.put(p, (b"hello" as &[_]).into()).unwrap_err();
     c.get(g).unwrap_err();
@@ -263,17 +252,103 @@ fn cannot_use_moved_ports() {
 
 #[test]
 fn sync_sync() {
-    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
-    let [p0, g0] = c.new_port_pair();
-    let [p1, g1] = c.new_port_pair();
-    c.add_component(b"sync", &[g0, p1]).unwrap();
     /*
     native p0|-->|g0 sync
            g1|<--|p1
     */
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    c.add_component(b"sync", &[g0, p1]).unwrap();
     c.connect(Duration::from_secs(1)).unwrap();
     c.put(p0, (b"hello" as &[_]).into()).unwrap();
     c.get(g1).unwrap();
     c.sync(Duration::from_secs(1)).unwrap();
     c.gotten(g1).unwrap();
+}
+
+#[test]
+fn double_net_connect() {
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 2);
+            let [_p, _g] = [
+                c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[0], is_active: true })
+                    .unwrap(),
+                c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[1], is_active: true })
+                    .unwrap(),
+            ];
+            c.connect(Duration::from_secs(1)).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 3);
+            let [_g, _p] = [
+                c.new_net_port(
+                    Getter,
+                    EndpointSetup { sock_addr: sock_addrs[0], is_active: false },
+                )
+                .unwrap(),
+                c.new_net_port(
+                    Putter,
+                    EndpointSetup { sock_addr: sock_addrs[1], is_active: false },
+                )
+                .unwrap(),
+            ];
+            c.connect(Duration::from_secs(1)).unwrap();
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn distributed_msg_bounce() {
+    /*
+    native[0] | sync 0.p|-->|1.p native[1]
+                     0.g|<--|1.g
+    */
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            /*
+            native | sync p|-->
+                   |      g|<--
+            */
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 4);
+            let [p, g] = [
+                c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[0], is_active: true })
+                    .unwrap(),
+                c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[1], is_active: true })
+                    .unwrap(),
+            ];
+            c.add_component(b"sync", &[g, p]).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.sync(Duration::from_secs(1)).unwrap();
+        });
+        s.spawn(|_| {
+            /*
+            native p|-->
+                   g|<--
+            */
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 5);
+            let [g, p] = [
+                c.new_net_port(
+                    Getter,
+                    EndpointSetup { sock_addr: sock_addrs[0], is_active: false },
+                )
+                .unwrap(),
+                c.new_net_port(
+                    Putter,
+                    EndpointSetup { sock_addr: sock_addrs[1], is_active: false },
+                )
+                .unwrap(),
+            ];
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.get(g).unwrap();
+            c.sync(Duration::from_secs(1)).unwrap();
+            c.gotten(g).unwrap();
+        });
+    })
+    .unwrap();
 }

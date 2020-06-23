@@ -7,6 +7,7 @@ impl Connector {
         controller_id: ControllerId,
     ) -> Self {
         let logger = Box::new(StringLogger::new(controller_id));
+        // let logger = Box::new(DummyLogger);
         let surplus_sockets = 8;
         Self::new(logger, proto_description, controller_id, surplus_sockets)
     }

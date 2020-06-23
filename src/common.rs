@@ -52,6 +52,10 @@ pub struct PortId(Id);
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+pub struct FiringVar(pub(crate) PortId);
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct ProtoComponentId(Id);
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -175,7 +179,12 @@ impl From<Vec<u8>> for Payload {
 }
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "PortId({},{})", self.0.controller_id, self.0.u32_suffix)
+        write!(f, "PID<{},{}>", self.0.controller_id, self.0.u32_suffix)
+    }
+}
+impl Debug for FiringVar {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "VID<{},{}>", (self.0).0.controller_id, (self.0).0.u32_suffix)
     }
 }
 impl Debug for ProtoComponentId {
