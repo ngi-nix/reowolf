@@ -33,3 +33,8 @@ pub enum GottenError {
     PortDidntGet,
     PreviousSyncFailed,
 }
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum NextBatchError {
+    NotConnected,
+}

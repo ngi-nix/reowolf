@@ -8,6 +8,10 @@ mod my_tests;
 use crate::common::*;
 use error::*;
 
+#[derive(
+    Debug, Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct FiringVar(PortId);
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum LocalComponentId {
     Native,
@@ -48,13 +52,12 @@ pub struct CommMsg {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum CommMsgContents {
     SendPayload(SendPayloadMsg),
-    Elaborate { partial_oracle: Predicate }, // SINKWARD
-    Failure,                                 // SINKWARD
-    Announce { decision: Decision },         // SINKAWAYS
+    Suggest { suggestion: Decision }, // SINKWARD
+    Announce { decision: Decision },  // SINKAWAYS
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SendPayloadMsg {
-    payload_predicate: Predicate,
+    predicate: Predicate,
     payload: Payload,
 }
 #[derive(Debug, PartialEq)]
@@ -86,7 +89,7 @@ pub struct EndpointSetup {
 #[derive(Debug)]
 pub struct EndpointExt {
     endpoint: Endpoint,
-    inp_for_emerging_msgs: PortId,
+    getter_for_incoming: PortId,
 }
 #[derive(Debug)]
 pub struct Neighborhood {
@@ -151,7 +154,7 @@ pub enum ConnectorPhased {
 pub struct StringLogger(ControllerId, String);
 #[derive(Default, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Predicate {
-    pub assigned: BTreeMap<PortId, bool>,
+    pub assigned: BTreeMap<FiringVar, bool>,
 }
 #[derive(Debug, Default)]
 pub struct NativeBatch {
@@ -175,6 +178,7 @@ pub struct SyncProtoContext<'a> {
     logger: &'a mut dyn Logger,
     predicate: &'a Predicate,
     proto_component_id: ProtoComponentId,
+    port_info: &'a PortInfo,
     inbox: &'a HashMap<PortId, Payload>,
 }
 
@@ -228,11 +232,11 @@ pub struct SyncProtoContext<'a> {
 
 ////////////////
 impl PortInfo {
-    fn firing_var_for(&self, port: PortId) -> PortId {
-        match self.polarities.get(&port).unwrap() {
+    fn firing_var_for(&self, port: PortId) -> FiringVar {
+        FiringVar(match self.polarities.get(&port).unwrap() {
             Getter => port,
             Putter => *self.peers.get(&port).unwrap(),
-        }
+        })
     }
 }
 impl IdManager {
@@ -423,10 +427,9 @@ impl Connector {
 //         f.pad("]")
 //     }
 // }
-
 impl Predicate {
     #[inline]
-    pub fn inserted(mut self, k: PortId, v: bool) -> Self {
+    pub fn inserted(mut self, k: FiringVar, v: bool) -> Self {
         self.assigned.insert(k, v);
         self
     }
@@ -460,7 +463,7 @@ impl Predicate {
     /// FormerNotLatter, LatterNotFormer and Equivalent are returned respectively.
     /// otherwise New(N) is returned.
     pub fn common_satisfier(&self, other: &Self) -> CommonSatResult {
-        use CommonSatResult::*;
+        use CommonSatResult as Csr;
         // iterators over assignments of both predicates. Rely on SORTED ordering of BTreeMap's keys.
         let [mut s_it, mut o_it] = [self.assigned.iter(), other.assigned.iter()];
         let [mut s, mut o] = [s_it.next(), o_it.next()];
@@ -491,7 +494,7 @@ impl Predicate {
                     } else if sb != ob {
                         assert_eq!(sid, oid);
                         // both predicates assign the variable but differ on the value
-                        return Nonexistant;
+                        return Csr::Nonexistant;
                     } else {
                         // both predicates assign the variable to the same value
                         s = s_it.next();
@@ -502,9 +505,9 @@ impl Predicate {
         }
         // Observed zero inconsistencies. A unified predicate exists...
         match [s_not_o.is_empty(), o_not_s.is_empty()] {
-            [true, true] => Equivalent,       // ... equivalent to both.
-            [false, true] => FormerNotLatter, // ... equivalent to self.
-            [true, false] => LatterNotFormer, // ... equivalent to other.
+            [true, true] => Csr::Equivalent,       // ... equivalent to both.
+            [false, true] => Csr::FormerNotLatter, // ... equivalent to self.
+            [true, false] => Csr::LatterNotFormer, // ... equivalent to other.
             [false, false] => {
                 // ... which is the union of the predicates' assignments but
                 //     is equivalent to neither self nor other.
@@ -512,22 +515,22 @@ impl Predicate {
                 for (&id, &b) in o_not_s {
                     new.assigned.insert(id, b);
                 }
-                New(new)
+                Csr::New(new)
             }
         }
     }
 
-    pub fn iter_matching(&self, value: bool) -> impl Iterator<Item = PortId> + '_ {
-        self.assigned
-            .iter()
-            .filter_map(move |(&channel_id, &b)| if b == value { Some(channel_id) } else { None })
-    }
+    // pub fn iter_matching(&self, value: bool) -> impl Iterator<Item = FiringVar> + '_ {
+    //     self.assigned
+    //         .iter()
+    //         .filter_map(move |(&channel_id, &b)| if b == value { Some(channel_id) } else { None })
+    // }
 
-    pub fn batch_assign_nones(&mut self, channel_ids: impl Iterator<Item = PortId>, value: bool) {
-        for channel_id in channel_ids {
-            self.assigned.entry(channel_id).or_insert(value);
-        }
-    }
+    // pub fn batch_assign_nones(&mut self, channel_ids: impl Iterator<Item = PortId>, value: bool) {
+    //     for channel_id in channel_ids {
+    //         self.assigned.entry(channel_id).or_insert(value);
+    //     }
+    // }
     // pub fn replace_assignment(&mut self, channel_id: PortId, value: bool) -> Option<bool> {
     //     self.assigned.insert(channel_id, value)
     // }
@@ -541,8 +544,8 @@ impl Predicate {
         }
         Some(res)
     }
-    pub fn query(&self, x: PortId) -> Option<bool> {
-        self.assigned.get(&x).copied()
+    pub fn query(&self, var: FiringVar) -> Option<bool> {
+        self.assigned.get(&var).copied()
     }
 }
 impl Debug for Predicate {

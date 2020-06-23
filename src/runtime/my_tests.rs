@@ -145,3 +145,67 @@ fn connected_gotten_err_ungotten() {
     c.sync(Duration::from_secs(1)).unwrap();
     assert_eq!(reowolf::error::GottenError::PortDidntGet, c.gotten(i).unwrap_err());
 }
+
+#[test]
+fn native_polarity_checks() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [o, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    // fail...
+    c.get(o).unwrap_err();
+    c.put(i, (b"hi" as &[_]).into()).unwrap_err();
+    // succeed..
+    c.get(i).unwrap();
+    c.put(o, (b"hi" as &[_]).into()).unwrap();
+}
+
+#[test]
+fn native_multiple_gets() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.get(i).unwrap();
+    c.get(i).unwrap_err();
+}
+
+#[test]
+fn next_batch() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    c.next_batch().unwrap_err();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.next_batch().unwrap();
+    c.next_batch().unwrap();
+    c.next_batch().unwrap();
+}
+
+#[test]
+fn native_sync() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [o, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.get(i).unwrap();
+    c.put(o, (b"hi" as &[_]).into()).unwrap();
+    c.sync(Duration::from_secs(1)).unwrap();
+}
+
+#[test]
+fn native_message_pass() {
+    let sock_addr = next_test_addr();
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+            let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.get(g).unwrap();
+            c.sync(Duration::from_secs(1)).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+            let p = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.sync(Duration::from_secs(1)).unwrap();
+        });
+    })
+    .unwrap();
+}

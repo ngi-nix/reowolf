@@ -96,7 +96,7 @@ impl Connector {
                 Err(())
             }
             ConnectorPhased::Setup { endpoint_setups, .. } => {
-                log!(self.logger, "~~~ CONNECT called with timeout {:?}", timeout);
+                log!(self.logger, "~~~ CONNECT called timeout {:?}", timeout);
                 let deadline = Instant::now() + timeout;
                 // connect all endpoints in parallel; send and receive peer ids through ports
                 let mut endpoint_manager = new_endpoint_manager(
@@ -266,12 +266,12 @@ fn new_endpoint_manager(
     }
     let endpoint_exts = todos
         .into_iter()
-        .map(|Todo { todo_endpoint, recv_peer_port, .. }| EndpointExt {
+        .map(|Todo { todo_endpoint, local_port, .. }| EndpointExt {
             endpoint: match todo_endpoint {
                 TodoEndpoint::Endpoint(endpoint) => endpoint,
                 TodoEndpoint::Listener(..) => unreachable!(),
             },
-            inp_for_emerging_msgs: recv_peer_port.unwrap(),
+            getter_for_incoming: local_port,
         })
         .collect();
     Ok(EndpointManager {
