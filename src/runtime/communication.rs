@@ -231,8 +231,7 @@ impl Connector {
                         .proto_components
                         .keys()
                         .map(|&id| Route::LocalComponent(LocalComponentId::Proto(id)));
-                    let e = (0..endpoint_manager.endpoint_exts.len())
-                        .map(|index| Route::Endpoint { index });
+                    let e = neighborhood.children.iter().map(|&index| Route::Endpoint { index });
                     SolutionStorage::new(n.chain(c).chain(e))
                 };
                 log!(logger, "Solution storage initialized");
@@ -271,11 +270,16 @@ impl Connector {
                         payloads_to_get.push((getter, msg));
                     }
                     if to_get.is_empty() {
-                        log!(logger, "Native submitting trivial solution for index {}", index);
+                        log!(
+                            logger,
+                            "Native submitting solution for batch {} with {:?}",
+                            index,
+                            &predicate
+                        );
                         solution_storage.submit_and_digest_subtree_solution(
                             logger,
                             Route::LocalComponent(LocalComponentId::Native),
-                            Predicate::default(),
+                            predicate.clone(),
                         );
                     }
                     let branch = NativeBranch { index, gotten: Default::default(), to_get };
@@ -614,8 +618,8 @@ impl BranchingNative {
         getter: PortId,
         send_payload_msg: SendPayloadMsg,
     ) {
+        log!(logger, "feeding native getter {:?} {:?}", getter, &send_payload_msg);
         assert!(port_info.polarities.get(&getter).copied() == Some(Getter));
-        println!("BEFORE {:#?}", &self.branches);
         let mut draining = HashMap::default();
         let finished = &mut self.branches;
         std::mem::swap(&mut draining, finished);
@@ -637,40 +641,59 @@ impl BranchingNative {
             };
             if predicate.query(var) != Some(true) {
                 // optimization. Don't bother trying this branch
+                log!(
+                    logger,
+                    "skipping branch with {:?} that doesn't want the message (fastpath)",
+                    &predicate
+                );
                 finished.insert(predicate, branch);
                 continue;
             }
             use CommonSatResult as Csr;
             match predicate.common_satisfier(&send_payload_msg.predicate) {
+                Csr::Nonexistant => {
+                    // this branch does not receive the message
+                    log!(
+                        logger,
+                        "skipping branch with {:?} that doesn't want the message (slowpath)",
+                        &predicate
+                    );
+                    finished.insert(predicate, branch);
+                }
                 Csr::Equivalent | Csr::FormerNotLatter => {
                     // retain the existing predicate, but add this payload
                     feed_branch(&mut branch, &predicate);
-                    finished.insert(predicate, branch);
-                }
-                Csr::Nonexistant => {
-                    // this branch does not receive the message
+                    log!(logger, "branch pred covers it! Accept the msg");
                     finished.insert(predicate, branch);
                 }
                 Csr::LatterNotFormer => {
-                    // fork branch, give fork the message and payload predicate
+                    // fork branch, give fork the message and payload predicate. original branch untouched
                     let mut branch2 = branch.clone();
-                    // original branch untouched
-                    finished.insert(predicate, branch);
                     let predicate2 = send_payload_msg.predicate.clone();
                     feed_branch(&mut branch2, &predicate2);
+                    log!(
+                        logger,
+                        "payload pred {:?} covers branch pred {:?}",
+                        &predicate2,
+                        &predicate
+                    );
+                    finished.insert(predicate, branch);
                     finished.insert(predicate2, branch2);
                 }
-                Csr::New(new_predicate) => {
-                    // fork branch, give fork the message and the new predicate
+                Csr::New(predicate2) => {
+                    // fork branch, give fork the message and the new predicate. original branch untouched
                     let mut branch2 = branch.clone();
-                    // original branch untouched
+                    feed_branch(&mut branch2, &predicate2);
+                    log!(
+                        logger,
+                        "new subsuming pred created {:?}. forking and feeding",
+                        &predicate2
+                    );
                     finished.insert(predicate, branch);
-                    feed_branch(&mut branch2, &new_predicate);
-                    finished.insert(new_predicate, branch2);
+                    finished.insert(predicate2, branch2);
                 }
             }
         }
-        println!("AFTER {:#?}", &self.branches);
     }
     fn collapse_with(self, solution_predicate: &Predicate) -> (usize, HashMap<PortId, Payload>) {
         for (branch_predicate, branch) in self.branches {

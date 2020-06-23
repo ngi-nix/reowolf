@@ -198,6 +198,7 @@ fn native_message_pass() {
             c.connect(Duration::from_secs(1)).unwrap();
             c.get(g).unwrap();
             c.sync(Duration::from_secs(1)).unwrap();
+            c.gotten(g).unwrap();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);

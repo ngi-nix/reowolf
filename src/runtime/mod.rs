@@ -3,7 +3,7 @@ pub mod error;
 mod setup2;
 
 #[cfg(test)]
-mod my_tests;
+mod tests;
 
 use crate::common::*;
 use error::*;
@@ -350,6 +350,14 @@ impl Into<Msg> for SetupMsg {
 impl StringLogger {
     pub fn new(controller_id: ControllerId) -> Self {
         Self(controller_id, String::default())
+    }
+}
+impl Drop for StringLogger {
+    fn drop(&mut self) {
+        let stdout = std::io::stdout();
+        let mut lock = stdout.lock();
+        writeln!(lock, "--- DROP LOG DUMP ---").unwrap();
+        self.dump_log(&mut lock);
     }
 }
 impl Logger for StringLogger {

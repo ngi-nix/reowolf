@@ -45,7 +45,13 @@ impl Connector {
                 // {polarity, route} known. {peer} unknown.
                 self.port_info.polarities.insert(p, polarity);
                 self.port_info.routes.insert(p, Route::LocalComponent(LocalComponentId::Native));
-                log!(self.logger, "Added net port {:?} with info {:?} ", p, &endpoint_setup);
+                log!(
+                    self.logger,
+                    "Added net port {:?} with polarity {:?} and endpoint setup {:?} ",
+                    p,
+                    polarity,
+                    &endpoint_setup
+                );
                 endpoint_setups.push((p, endpoint_setup));
                 Ok(p)
             }
