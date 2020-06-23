@@ -113,3 +113,35 @@ fn dup_put_bad() {
     c.put(o, (b"hi" as &[_]).into()).unwrap();
     c.put(o, (b"hi" as &[_]).into()).unwrap_err();
 }
+
+#[test]
+fn trivial_sync() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.sync(Duration::from_secs(1)).unwrap();
+    c.print_state();
+}
+
+#[test]
+fn unconnected_gotten_err() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    assert_eq!(reowolf::error::GottenError::NoPreviousRound, c.gotten(i).unwrap_err());
+}
+
+#[test]
+fn connected_gotten_err_no_round() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    assert_eq!(reowolf::error::GottenError::NoPreviousRound, c.gotten(i).unwrap_err());
+}
+
+#[test]
+fn connected_gotten_err_ungotten() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.sync(Duration::from_secs(1)).unwrap();
+    assert_eq!(reowolf::error::GottenError::PortDidntGet, c.gotten(i).unwrap_err());
+}

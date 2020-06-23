@@ -96,7 +96,7 @@ impl Connector {
                 Err(())
             }
             ConnectorPhased::Setup { endpoint_setups, .. } => {
-                log!(self.logger, "Call to connecting in setup state. Timeout {:?}", timeout);
+                log!(self.logger, "~~~ CONNECT called with timeout {:?}", timeout);
                 let deadline = Instant::now() + timeout;
                 // connect all endpoints in parallel; send and receive peer ids through ports
                 let mut endpoint_manager = new_endpoint_manager(
@@ -394,9 +394,7 @@ fn init_neighborhood(
         ee.endpoint.send(msg)?;
     }
     let mut children = Vec::default();
-    log!(logger, "delayed {:?} undelayed {:?}", &em.delayed_messages, &em.undelayed_messages);
     em.undelay_all();
-    log!(logger, "delayed {:?} undelayed {:?}", &em.delayed_messages, &em.undelayed_messages);
     while !awaiting.is_empty() {
         log!(logger, "awaiting {:?}", &awaiting);
         let (index, msg) = em.try_recv_any(deadline).map_err(drop)?;

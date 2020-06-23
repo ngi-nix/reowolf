@@ -12,12 +12,13 @@ pub enum TryRecyAnyError {
     EndpointError { error: EndpointError, index: usize },
     BrokenEndpoint(usize),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SyncError {
     Timeout,
     NotConnected,
     InconsistentProtoComponent(ProtoComponentId),
     IndistinguishableBatches([usize; 2]),
+    DistributedTimeout,
 }
 #[derive(Debug)]
 pub enum PortOpError {
@@ -25,4 +26,10 @@ pub enum PortOpError {
     NotConnected,
     MultipleOpsOnPort,
     PortUnavailable,
+}
+#[derive(Debug, Eq, PartialEq)]
+pub enum GottenError {
+    NoPreviousRound,
+    PortDidntGet,
+    PreviousSyncFailed,
 }

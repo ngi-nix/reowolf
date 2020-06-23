@@ -1,5 +1,5 @@
 mod communication;
-mod error;
+pub mod error;
 mod setup2;
 
 #[cfg(test)]
@@ -144,12 +144,12 @@ pub enum ConnectorPhased {
         neighborhood: Neighborhood,
         mem_inbox: Vec<MemInMsg>,
         native_batches: Vec<NativeBatch>,
-        round_result: Result<Option<usize>, SyncError>,
+        round_result: Result<Option<(usize, HashMap<PortId, Payload>)>, SyncError>,
     },
 }
 #[derive(Debug)]
 pub struct StringLogger(ControllerId, String);
-#[derive(Default, Debug, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Predicate {
     pub assigned: BTreeMap<PortId, bool>,
 }
@@ -543,5 +543,26 @@ impl Predicate {
     }
     pub fn query(&self, x: PortId) -> Option<bool> {
         self.assigned.get(&x).copied()
+    }
+}
+impl Debug for Predicate {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        struct MySet<'a>(&'a Predicate, bool);
+        impl Debug for MySet<'_> {
+            fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+                let iter = self.0.assigned.iter().filter_map(|(port, &firing)| {
+                    if firing == self.1 {
+                        Some(port)
+                    } else {
+                        None
+                    }
+                });
+                f.debug_set().entries(iter).finish()
+            }
+        }
+        f.debug_struct("Predicate")
+            .field("Trues", &MySet(self, true))
+            .field("Falses", &MySet(self, false))
+            .finish()
     }
 }

@@ -10,7 +10,7 @@ mod runtime;
 
 pub use common::Polarity;
 pub use protocol::ProtocolDescription;
-pub use runtime::{Connector, EndpointSetup, StringLogger};
+pub use runtime::{error, Connector, EndpointSetup, StringLogger};
 
 // #[cfg(feature = "ffi")]
 // pub use runtime::ffi;
