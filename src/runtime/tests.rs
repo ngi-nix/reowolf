@@ -179,7 +179,7 @@ fn next_batch() {
 }
 
 #[test]
-fn native_sync() {
+fn native_self_msg() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, i] = c.new_port_pair();
     c.connect(Duration::from_secs(1)).unwrap();
@@ -189,7 +189,7 @@ fn native_sync() {
 }
 
 #[test]
-fn native_message_pass() {
+fn two_natives_msg() {
     let sock_addr = next_test_addr();
     scope(|s| {
         s.spawn(|_| {
@@ -209,4 +209,71 @@ fn native_message_pass() {
         });
     })
     .unwrap();
+}
+
+#[test]
+fn trivial_nondet() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    let [_, i] = c.new_port_pair();
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.get(i).unwrap();
+    // getting 0 batch
+    c.next_batch().unwrap();
+    // silent 1 batch
+    assert_eq!(1, c.sync(Duration::from_secs(1)).unwrap());
+    c.gotten(i).unwrap_err();
+}
+
+#[test]
+fn connector_pair_nondet() {
+    let sock_addr = next_test_addr();
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+            let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.next_batch().unwrap();
+            c.get(g).unwrap();
+            assert_eq!(1, c.sync(Duration::from_secs(1)).unwrap());
+            c.gotten(g).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+            let p = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+            c.connect(Duration::from_secs(1)).unwrap();
+            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.sync(Duration::from_secs(1)).unwrap();
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn cannot_use_moved_ports() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+    let [p, g] = c.new_port_pair();
+    c.add_component(b"sync", &[g, p]).unwrap();
+    /*
+    native p|-->|g sync
+    */
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.put(p, (b"hello" as &[_]).into()).unwrap_err();
+    c.get(g).unwrap_err();
+}
+
+#[test]
+fn sync_sync() {
+    let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    c.add_component(b"sync", &[g0, p1]).unwrap();
+    /*
+    native p0|-->|g0 sync
+           g1|<--|p1
+    */
+    c.connect(Duration::from_secs(1)).unwrap();
+    c.put(p0, (b"hello" as &[_]).into()).unwrap();
+    c.get(g1).unwrap();
+    c.sync(Duration::from_secs(1)).unwrap();
+    c.gotten(g1).unwrap();
 }

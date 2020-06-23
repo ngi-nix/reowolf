@@ -275,6 +275,44 @@ impl Connector {
         log!(self.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
         [o, i]
     }
+    pub fn add_component(
+        &mut self,
+        identifier: &[u8],
+        ports: &[PortId],
+    ) -> Result<(), AddComponentError> {
+        // called by the USER. moves ports owned by the NATIVE
+        use AddComponentError::*;
+        // 1. check if this is OK
+        let polarities = self.proto_description.component_polarities(identifier)?;
+        if polarities.len() != ports.len() {
+            return Err(WrongNumberOfParamaters { expected: polarities.len() });
+        }
+        for (&expected_polarity, port) in polarities.iter().zip(ports.iter()) {
+            if !self.native_ports.contains(port) {
+                return Err(UnknownPort(*port));
+            }
+            if expected_polarity != *self.port_info.polarities.get(port).unwrap() {
+                return Err(WrongPortPolarity { port: *port, expected_polarity });
+            }
+        }
+        // 3. remove ports from old component & update port->route
+        let new_id = self.id_manager.new_proto_component_id();
+        for port in ports.iter() {
+            self.port_info
+                .routes
+                .insert(*port, Route::LocalComponent(LocalComponentId::Proto(new_id)));
+        }
+        self.native_ports.retain(|port| !ports.contains(port));
+        // 4. add new component
+        self.proto_components.insert(
+            new_id,
+            ProtoComponent {
+                state: self.proto_description.new_main_component(identifier, ports),
+                ports: ports.iter().copied().collect(),
+            },
+        );
+        Ok(())
+    }
 }
 impl EndpointManager {
     fn send_to(&mut self, index: usize, msg: &Msg) -> Result<(), ()> {

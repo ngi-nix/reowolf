@@ -1,13 +1,6 @@
 use crate::common::*;
 use crate::runtime::*;
 
-struct LogicalChannelInfo {
-    local_port: PortId,
-    peer_port: PortId,
-    local_polarity: Polarity,
-    endpoint_index: usize,
-}
-///////////////
 impl Connector {
     pub fn new_simple(
         proto_description: Arc<ProtocolDescription>,
@@ -57,43 +50,6 @@ impl Connector {
             }
             ConnectorPhased::Communication { .. } => Err(()),
         }
-    }
-    pub fn add_component(
-        &mut self,
-        identifier: &[u8],
-        ports: &[PortId],
-    ) -> Result<(), AddComponentError> {
-        // called by the USER. moves ports owned by the NATIVE
-        use AddComponentError::*;
-        // 1. check if this is OK
-        let polarities = self.proto_description.component_polarities(identifier)?;
-        if polarities.len() != ports.len() {
-            return Err(WrongNumberOfParamaters { expected: polarities.len() });
-        }
-        for (&expected_polarity, port) in polarities.iter().zip(ports.iter()) {
-            if !self.native_ports.contains(port) {
-                return Err(UnknownPort(*port));
-            }
-            if expected_polarity != *self.port_info.polarities.get(port).unwrap() {
-                return Err(WrongPortPolarity { port: *port, expected_polarity });
-            }
-        }
-        // 3. remove ports from old component & update port->route
-        let new_id = self.id_manager.new_proto_component_id();
-        for port in ports.iter() {
-            self.port_info
-                .routes
-                .insert(*port, Route::LocalComponent(LocalComponentId::Proto(new_id)));
-        }
-        // 4. add new component
-        self.proto_components.insert(
-            new_id,
-            ProtoComponent {
-                state: self.proto_description.new_main_component(identifier, ports),
-                ports: ports.iter().copied().collect(),
-            },
-        );
-        Ok(())
     }
     pub fn connect(&mut self, timeout: Duration) -> Result<(), ()> {
         match &mut self.phased {
