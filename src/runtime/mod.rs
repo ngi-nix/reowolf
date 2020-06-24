@@ -92,7 +92,7 @@ pub struct FileLogger(ConnectorId, std::fs::File);
 #[derive(Debug, Clone)]
 pub struct EndpointSetup {
     pub sock_addr: SocketAddr,
-    pub is_active: bool,
+    pub endpoint_polarity: EndpointPolarity,
 }
 #[derive(Debug)]
 pub struct EndpointExt {

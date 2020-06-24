@@ -68,6 +68,13 @@ pub enum Polarity {
     Putter, // output port (from the perspective of the component)
     Getter, // input port (from the perspective of the component)
 }
+#[derive(
+    Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub enum EndpointPolarity {
+    Active,  // calls connect()
+    Passive, // calls bind() listen() accept()
+}
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum AddComponentError {

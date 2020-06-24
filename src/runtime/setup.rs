@@ -32,10 +32,12 @@ impl Connector {
     pub fn new_net_port(
         &mut self,
         polarity: Polarity,
-        endpoint_setup: EndpointSetup,
+        sock_addr: SocketAddr,
+        endpoint_polarity: EndpointPolarity,
     ) -> Result<PortId, ()> {
         match &mut self.phased {
             ConnectorPhased::Setup { endpoint_setups, .. } => {
+                let endpoint_setup = EndpointSetup { sock_addr, endpoint_polarity };
                 let p = self.id_manager.new_port_id();
                 self.native_ports.insert(p);
                 // {polarity, route} known. {peer} unknown.
@@ -125,7 +127,7 @@ fn new_endpoint_manager(
         endpoint_setup: &EndpointSetup,
         poll: &mut Poll,
     ) -> Result<Todo, ConnectError> {
-        let todo_endpoint = if endpoint_setup.is_active {
+        let todo_endpoint = if let EndpointPolarity::Active = endpoint_setup.endpoint_polarity {
             let mut stream = TcpStream::connect(endpoint_setup.sock_addr)
                 .expect("mio::TcpStream connect should not fail!");
             poll.registry().register(&mut stream, token, BOTH).unwrap();
