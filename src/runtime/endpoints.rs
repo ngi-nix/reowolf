@@ -12,10 +12,6 @@ enum TryRecyAnyError {
 }
 
 /////////////////////
-
-fn would_block(err: &std::io::Error) -> bool {
-    err.kind() == std::io::ErrorKind::WouldBlock
-}
 impl Endpoint {
     pub(super) fn try_recv<T: serde::de::DeserializeOwned>(
         &mut self,

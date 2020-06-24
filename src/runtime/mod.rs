@@ -202,6 +202,9 @@ pub struct SyncProtoContext<'a> {
     inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
+pub fn would_block(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::WouldBlock
+}
 impl<T: std::cmp::Ord> VecSet<T> {
     fn iter(&self) -> std::slice::Iter<T> {
         self.vec.iter()
