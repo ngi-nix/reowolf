@@ -51,7 +51,13 @@ pub enum SetupMsg {
     LeaderWave { wave_leader: ConnectorId },
     LeaderAnnounce { tree_leader: ConnectorId },
     YouAreMyParent,
+    SessionGather { unoptimized_map: HashMap<ConnectorId, SessionInfo> },
+    SessionScatter { optimized_map: HashMap<ConnectorId, SessionInfo> },
 }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SessionInfo {}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CommMsg {
     pub round_index: usize,
@@ -192,7 +198,7 @@ pub struct SyncProtoContext<'a> {
 }
 ////////////////
 impl<T: std::cmp::Ord> VecSet<T> {
-    fn iter(&self) -> impl Iterator<Item = &T> {
+    fn iter(&self) -> std::slice::Iter<T> {
         self.vec.iter()
     }
     fn contains(&self, element: &T) -> bool {

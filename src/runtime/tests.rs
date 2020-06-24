@@ -34,7 +34,7 @@ fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connecto
 
 #[test]
 fn basic_connector() {
-    Connector::new_simple(MINIMAL_PROTO.clone(), 0);
+    Connector::new(Box::new(DummyLogger), MINIMAL_PROTO.clone(), 0, 0);
 }
 
 #[test]
@@ -86,9 +86,9 @@ fn single_node_connect() {
 }
 
 #[test]
-fn multithreaded_connect() {
+fn minimal_net_connect() {
     let sock_addr = next_test_addr();
-    let test_log_path = Path::new("./logs/multithreaded_connect");
+    let test_log_path = Path::new("./logs/minimal_net_connect");
     scope(|s| {
         s.spawn(|_| {
             let mut c = file_logged_connector(0, test_log_path);
@@ -278,9 +278,10 @@ fn connector_pair_nondet() {
 
 #[test]
 fn cannot_use_moved_ports() {
-    let test_log_path = Path::new("./logs/cannot_use_moved_ports"); /*
-                                                                    native p|-->|g sync
-                                                                    */
+    /*
+    native p|-->|g sync
+    */
+    let test_log_path = Path::new("./logs/cannot_use_moved_ports");
     let mut c = file_logged_connector(0, test_log_path);
     let [p, g] = c.new_port_pair();
     c.add_component(b"sync", &[g, p]).unwrap();
@@ -291,10 +292,11 @@ fn cannot_use_moved_ports() {
 
 #[test]
 fn sync_sync() {
-    let test_log_path = Path::new("./logs/sync_sync"); /*
-                                                       native p0|-->|g0 sync
-                                                              g1|<--|p1
-                                                       */
+    /*
+    native p0|-->|g0 sync
+           g1|<--|p1
+    */
+    let test_log_path = Path::new("./logs/sync_sync");
     let mut c = file_logged_connector(0, test_log_path);
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
@@ -333,11 +335,11 @@ fn double_net_connect() {
 
 #[test]
 fn distributed_msg_bounce() {
-    let test_log_path = Path::new("./logs/distributed_msg_bounce");
     /*
     native[0] | sync 0.p|-->|1.p native[1]
                      0.g|<--|1.g
     */
+    let test_log_path = Path::new("./logs/distributed_msg_bounce");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     scope(|s| {
         s.spawn(|_| {

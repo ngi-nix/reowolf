@@ -10,7 +10,7 @@ mod runtime;
 
 pub use common::{ConnectorId, EndpointPolarity, Polarity, PortId};
 pub use protocol::ProtocolDescription;
-pub use runtime::{error, Connector, FileLogger, VecLogger};
+pub use runtime::{error, Connector, DummyLogger, FileLogger, VecLogger};
 
 // #[cfg(feature = "ffi")]
 // pub use runtime::ffi;

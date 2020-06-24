@@ -17,7 +17,7 @@ fn would_block(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::WouldBlock
 }
 impl Endpoint {
-    pub fn try_recv<T: serde::de::DeserializeOwned>(
+    pub(super) fn try_recv<T: serde::de::DeserializeOwned>(
         &mut self,
         logger: &mut dyn Logger,
     ) -> Result<Option<T>, EndpointError> {
@@ -50,28 +50,28 @@ impl Endpoint {
             },
         }
     }
-    pub fn send<T: serde::ser::Serialize>(&mut self, msg: &T) -> Result<(), EndpointError> {
+    pub(super) fn send<T: serde::ser::Serialize>(&mut self, msg: &T) -> Result<(), EndpointError> {
         bincode::serialize_into(&mut self.stream, msg).map_err(|_| EndpointError::BrokenEndpoint)
     }
 }
 
 impl EndpointManager {
-    pub fn index_iter(&self) -> Range<usize> {
+    pub(super) fn index_iter(&self) -> Range<usize> {
         0..self.num_endpoints()
     }
-    pub fn num_endpoints(&self) -> usize {
+    pub(super) fn num_endpoints(&self) -> usize {
         self.endpoint_exts.len()
     }
-    pub fn send_to_setup(&mut self, index: usize, msg: &Msg) -> Result<(), ConnectError> {
+    pub(super) fn send_to_setup(&mut self, index: usize, msg: &Msg) -> Result<(), ConnectError> {
         let endpoint = &mut self.endpoint_exts[index].endpoint;
         endpoint.send(msg).map_err(|err| {
             ConnectError::EndpointSetupError(endpoint.stream.local_addr().unwrap(), err)
         })
     }
-    pub fn send_to(&mut self, index: usize, msg: &Msg) -> Result<(), EndpointError> {
+    pub(super) fn send_to(&mut self, index: usize, msg: &Msg) -> Result<(), EndpointError> {
         self.endpoint_exts[index].endpoint.send(msg)
     }
-    pub fn try_recv_any_comms(
+    pub(super) fn try_recv_any_comms(
         &mut self,
         logger: &mut dyn Logger,
         deadline: Option<Instant>,
@@ -84,7 +84,7 @@ impl EndpointManager {
             Err(Trae::EndpointError { error: _, index }) => Err(Se::BrokenEndpoint(index)),
         }
     }
-    pub fn try_recv_any_setup(
+    pub(super) fn try_recv_any_setup(
         &mut self,
         logger: &mut dyn Logger,
         deadline: Option<Instant>,
@@ -119,10 +119,10 @@ impl EndpointManager {
                     .map_err(|error| Trea::EndpointError { error, index })?
                 {
                     endptlog!(logger, "RECV polled_undrained {:?}", &msg);
-                    // if !endpoint.inbox.is_empty() {
-                    // there may be another message waiting!
-                    self.polled_undrained.insert(index);
-                    // }
+                    if !endpoint.inbox.is_empty() {
+                        // there may be another message waiting!
+                        self.polled_undrained.insert(index);
+                    }
                     return Ok((index, msg));
                 }
             }
@@ -143,17 +143,11 @@ impl EndpointManager {
                     index,
                     self.polled_undrained.iter()
                 );
-                if event.is_error() {
-                    return Err(Trea::EndpointError {
-                        error: EndpointError::BrokenEndpoint,
-                        index,
-                    });
-                }
             }
             self.events.clear();
         }
     }
-    pub fn undelay_all(&mut self) {
+    pub(super) fn undelay_all(&mut self) {
         if self.undelayed_messages.is_empty() {
             // fast path
             std::mem::swap(&mut self.delayed_messages, &mut self.undelayed_messages);
@@ -174,7 +168,7 @@ impl<R: Read> From<R> for MonitoredReader<R> {
     }
 }
 impl<R: Read> MonitoredReader<R> {
-    pub fn bytes_read(&self) -> usize {
+    pub(super) fn bytes_read(&self) -> usize {
         self.bytes
     }
 }
