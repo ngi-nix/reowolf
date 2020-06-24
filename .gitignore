@@ -5,3 +5,4 @@ Cargo.lock
 main
 examples/*/*.exe
 examples/reowolf*
+logs

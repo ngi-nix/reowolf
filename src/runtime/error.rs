@@ -1,16 +1,9 @@
 use crate::common::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum EndpointError {
     MalformedMessage,
     BrokenEndpoint,
-}
-#[derive(Debug)]
-pub enum TryRecyAnyError {
-    Timeout,
-    PollFailed,
-    EndpointError { error: EndpointError, index: usize },
-    BrokenEndpoint(usize),
 }
 #[derive(Debug, Clone)]
 pub enum SyncError {
@@ -19,6 +12,8 @@ pub enum SyncError {
     InconsistentProtoComponent(ProtoComponentId),
     IndistinguishableBatches([usize; 2]),
     DistributedTimeout,
+    PollFailed,
+    BrokenEndpoint(usize),
 }
 #[derive(Debug)]
 pub enum PortOpError {
@@ -37,4 +32,15 @@ pub enum GottenError {
 #[derive(Debug, Eq, PartialEq)]
 pub enum NextBatchError {
     NotConnected,
+}
+#[derive(Debug)]
+pub enum ConnectError {
+    BindFailed(SocketAddr),
+    PollInitFailed,
+    Timeout,
+    PollFailed,
+    AcceptFailed(SocketAddr),
+    AlreadyConnected,
+    PortPeerPolarityMismatch(PortId),
+    EndpointSetupError(SocketAddr, EndpointError),
 }

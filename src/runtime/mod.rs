@@ -75,13 +75,14 @@ pub struct ProtoComponent {
     ports: HashSet<PortId>,
 }
 pub trait Logger: Debug {
-    fn line_writer(&mut self) -> &mut dyn std::fmt::Write;
-    fn dump_log(&self, w: &mut dyn std::io::Write);
+    fn line_writer(&mut self) -> &mut dyn std::io::Write;
 }
 #[derive(Debug)]
-pub struct StringLogger(ControllerId, String);
+pub struct VecLogger(ControllerId, Vec<u8>);
 #[derive(Debug)]
 pub struct DummyLogger;
+#[derive(Debug)]
+pub struct FileLogger(ControllerId, std::fs::File);
 #[derive(Debug, Clone)]
 pub struct EndpointSetup {
     pub sock_addr: SocketAddr,
@@ -203,7 +204,19 @@ impl IdManager {
         .into()
     }
 }
+impl Drop for Connector {
+    fn drop(&mut self) {
+        log!(&mut *self.logger, "Connector dropping. Goodbye!");
+    }
+}
 impl Connector {
+    pub fn swap_logger(&mut self, mut new_logger: Box<dyn Logger>) -> Box<dyn Logger> {
+        std::mem::swap(&mut self.logger, &mut new_logger);
+        new_logger
+    }
+    pub fn get_logger(&mut self) -> &mut dyn Logger {
+        &mut *self.logger
+    }
     pub fn new_port_pair(&mut self) -> [PortId; 2] {
         // adds two new associated ports, related to each other, and exposed to the native
         let [o, i] = [self.id_manager.new_port_id(), self.id_manager.new_port_id()];
@@ -260,61 +273,55 @@ impl Connector {
     }
 }
 impl Logger for DummyLogger {
-    fn line_writer(&mut self) -> &mut dyn std::fmt::Write {
-        impl std::fmt::Write for DummyLogger {
-            fn write_str(&mut self, _: &str) -> Result<(), std::fmt::Error> {
+    fn line_writer(&mut self) -> &mut dyn std::io::Write {
+        impl std::io::Write for DummyLogger {
+            fn flush(&mut self) -> Result<(), std::io::Error> {
                 Ok(())
+            }
+            fn write(&mut self, bytes: &[u8]) -> Result<usize, std::io::Error> {
+                Ok(bytes.len())
             }
         }
         self
     }
-    fn dump_log(&self, _: &mut dyn std::io::Write) {}
 }
-impl StringLogger {
+impl VecLogger {
     pub fn new(controller_id: ControllerId) -> Self {
-        Self(controller_id, String::default())
+        Self(controller_id, Default::default())
     }
 }
-impl Drop for StringLogger {
+impl Drop for VecLogger {
     fn drop(&mut self) {
         let stdout = std::io::stderr();
         let mut lock = stdout.lock();
         writeln!(lock, "--- DROP LOG DUMP ---").unwrap();
-        self.dump_log(&mut lock);
-        // lock.flush().unwrap();
-        // std::thread::sleep(Duration::from_millis(50));
+        let _ = std::io::Write::write(&mut lock, self.1.as_slice());
     }
 }
-impl Logger for StringLogger {
-    fn line_writer(&mut self) -> &mut dyn std::fmt::Write {
-        use std::fmt::Write;
+impl Logger for VecLogger {
+    fn line_writer(&mut self) -> &mut dyn std::io::Write {
         let _ = write!(&mut self.1, "\nCID({}): ", self.0);
         self
     }
-    fn dump_log(&self, w: &mut dyn std::io::Write) {
-        let _ = w.write(self.1.as_bytes());
+}
+impl FileLogger {
+    pub fn new(controller_id: ControllerId, file: std::fs::File) -> Self {
+        Self(controller_id, file)
     }
 }
-impl std::fmt::Write for StringLogger {
-    fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
-        self.1.write_str(s)
+impl Logger for FileLogger {
+    fn line_writer(&mut self) -> &mut dyn std::io::Write {
+        let _ = write!(&mut self.1, "\nCID({}): ", self.0);
+        &mut self.1
     }
 }
-impl Connector {
-    pub fn get_logger(&self) -> &dyn Logger {
-        &*self.logger
+impl std::io::Write for VecLogger {
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        Ok(())
     }
-    pub fn print_state(&self) {
-        let stdout = std::io::stdout();
-        let mut lock = stdout.lock();
-        writeln!(
-            lock,
-            "--- Connector with ControllerId={:?}.\n::LOG_DUMP:\n",
-            self.id_manager.controller_id
-        )
-        .unwrap();
-        self.get_logger().dump_log(&mut lock);
-        writeln!(lock, "\n\nDEBUG_PRINT:\n{:#?}\n", self).unwrap();
+    fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
+        self.1.extend_from_slice(data);
+        Ok(data.len())
     }
 }
 impl Predicate {

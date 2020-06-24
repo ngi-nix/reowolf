@@ -1,6 +1,9 @@
 use crate as reowolf;
 use crossbeam_utils::thread::scope;
-use reowolf::{Connector, EndpointSetup, Polarity::*, ProtocolDescription};
+use reowolf::{
+    Polarity::{Getter, Putter},
+    *,
+};
 use std::net::SocketAddr;
 use std::{sync::Arc, time::Duration};
 
@@ -49,7 +52,7 @@ fn new_net_port() {
 #[test]
 fn trivial_connect() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
 }
 
 #[test]
@@ -58,7 +61,7 @@ fn single_node_connect() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let _ = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
     let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
 }
 
 #[test]
@@ -68,12 +71,12 @@ fn multithreaded_connect() {
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
             let _ = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
             let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
         });
     })
     .unwrap();
@@ -83,7 +86,7 @@ fn multithreaded_connect() {
 fn put_no_sync() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, _] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.put(o, (b"hi" as &[_]).into()).unwrap();
 }
 
@@ -91,7 +94,7 @@ fn put_no_sync() {
 fn wrong_polarity_bad() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.put(i, (b"hi" as &[_]).into()).unwrap_err();
 }
 
@@ -99,7 +102,7 @@ fn wrong_polarity_bad() {
 fn dup_put_bad() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, _] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.put(o, (b"hi" as &[_]).into()).unwrap();
     c.put(o, (b"hi" as &[_]).into()).unwrap_err();
 }
@@ -107,8 +110,8 @@ fn dup_put_bad() {
 #[test]
 fn trivial_sync() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
-    c.connect(Duration::from_secs(1)).unwrap();
-    c.sync(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.sync(Some(Duration::from_secs(1))).unwrap();
 }
 
 #[test]
@@ -122,7 +125,7 @@ fn unconnected_gotten_err() {
 fn connected_gotten_err_no_round() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     assert_eq!(reowolf::error::GottenError::NoPreviousRound, c.gotten(i).unwrap_err());
 }
 
@@ -130,8 +133,8 @@ fn connected_gotten_err_no_round() {
 fn connected_gotten_err_ungotten() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
-    c.sync(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.sync(Some(Duration::from_secs(1))).unwrap();
     assert_eq!(reowolf::error::GottenError::PortDidntGet, c.gotten(i).unwrap_err());
 }
 
@@ -139,7 +142,7 @@ fn connected_gotten_err_ungotten() {
 fn native_polarity_checks() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     // fail...
     c.get(o).unwrap_err();
     c.put(i, (b"hi" as &[_]).into()).unwrap_err();
@@ -152,7 +155,7 @@ fn native_polarity_checks() {
 fn native_multiple_gets() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.get(i).unwrap();
     c.get(i).unwrap_err();
 }
@@ -161,7 +164,7 @@ fn native_multiple_gets() {
 fn next_batch() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     c.next_batch().unwrap_err();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.next_batch().unwrap();
     c.next_batch().unwrap();
     c.next_batch().unwrap();
@@ -171,10 +174,10 @@ fn next_batch() {
 fn native_self_msg() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [o, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.get(i).unwrap();
     c.put(o, (b"hi" as &[_]).into()).unwrap();
-    c.sync(Duration::from_secs(1)).unwrap();
+    c.sync(Some(Duration::from_secs(1))).unwrap();
 }
 
 #[test]
@@ -184,17 +187,17 @@ fn two_natives_msg() {
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
             let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
             c.get(g).unwrap();
-            c.sync(Duration::from_secs(1)).unwrap();
+            c.sync(Some(Duration::from_secs(1))).unwrap();
             c.gotten(g).unwrap();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
             let p = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
             c.put(p, (b"hello" as &[_]).into()).unwrap();
-            c.sync(Duration::from_secs(1)).unwrap();
+            c.sync(Some(Duration::from_secs(1))).unwrap();
         });
     })
     .unwrap();
@@ -204,12 +207,12 @@ fn two_natives_msg() {
 fn trivial_nondet() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
     let [_, i] = c.new_port_pair();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.get(i).unwrap();
     // getting 0 batch
     c.next_batch().unwrap();
     // silent 1 batch
-    assert_eq!(1, c.sync(Duration::from_secs(1)).unwrap());
+    assert_eq!(1, c.sync(Some(Duration::from_secs(1))).unwrap());
     c.gotten(i).unwrap_err();
 }
 
@@ -220,18 +223,18 @@ fn connector_pair_nondet() {
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 0);
             let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: true }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
             c.next_batch().unwrap();
             c.get(g).unwrap();
-            assert_eq!(1, c.sync(Duration::from_secs(1)).unwrap());
+            assert_eq!(1, c.sync(Some(Duration::from_secs(1))).unwrap());
             c.gotten(g).unwrap();
         });
         s.spawn(|_| {
             let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
             let p = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: false }).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
             c.put(p, (b"hello" as &[_]).into()).unwrap();
-            c.sync(Duration::from_secs(1)).unwrap();
+            c.sync(Some(Duration::from_secs(1))).unwrap();
         });
     })
     .unwrap();
@@ -245,7 +248,7 @@ fn cannot_use_moved_ports() {
     let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 1);
     let [p, g] = c.new_port_pair();
     c.add_component(b"sync", &[g, p]).unwrap();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.put(p, (b"hello" as &[_]).into()).unwrap_err();
     c.get(g).unwrap_err();
 }
@@ -260,11 +263,17 @@ fn sync_sync() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     c.add_component(b"sync", &[g0, p1]).unwrap();
-    c.connect(Duration::from_secs(1)).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
     c.put(p0, (b"hello" as &[_]).into()).unwrap();
     c.get(g1).unwrap();
-    c.sync(Duration::from_secs(1)).unwrap();
+    c.sync(Some(Duration::from_secs(1))).unwrap();
     c.gotten(g1).unwrap();
+}
+
+fn file_logged_connector(controller_id: ControllerId, path: &str) -> Connector {
+    let file = std::fs::File::create(path).unwrap();
+    let file_logger = Box::new(FileLogger::new(controller_id, file));
+    Connector::new(file_logger, MINIMAL_PROTO.clone(), controller_id, 8)
 }
 
 #[test]
@@ -272,17 +281,17 @@ fn double_net_connect() {
     let sock_addrs = [next_test_addr(), next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
-            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 2);
+            let mut c = file_logged_connector(0, "./logs/double_net_a.txt");
             let [_p, _g] = [
                 c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[0], is_active: true })
                     .unwrap(),
                 c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[1], is_active: true })
                     .unwrap(),
             ];
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
         });
         s.spawn(|_| {
-            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 3);
+            let mut c = file_logged_connector(1, "./logs/double_net_b.txt");
             let [_g, _p] = [
                 c.new_net_port(
                     Getter,
@@ -295,7 +304,7 @@ fn double_net_connect() {
                 )
                 .unwrap(),
             ];
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
         });
     })
     .unwrap();
@@ -314,7 +323,7 @@ fn distributed_msg_bounce() {
             native | sync p|-->
                    |      g|<--
             */
-            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 4);
+            let mut c = file_logged_connector(0, "./logs/distributed_msg_bounce_a.txt");
             let [p, g] = [
                 c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[0], is_active: true })
                     .unwrap(),
@@ -322,15 +331,15 @@ fn distributed_msg_bounce() {
                     .unwrap(),
             ];
             c.add_component(b"sync", &[g, p]).unwrap();
-            c.connect(Duration::from_secs(1)).unwrap();
-            c.sync(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.sync(Some(Duration::from_secs(1))).unwrap();
         });
         s.spawn(|_| {
             /*
             native p|-->
                    g|<--
             */
-            let mut c = Connector::new_simple(MINIMAL_PROTO.clone(), 5);
+            let mut c = file_logged_connector(1, "./logs/distributed_msg_bounce_b.txt");
             let [g, p] = [
                 c.new_net_port(
                     Getter,
@@ -343,10 +352,10 @@ fn distributed_msg_bounce() {
                 )
                 .unwrap(),
             ];
-            c.connect(Duration::from_secs(1)).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
             c.put(p, (b"hello" as &[_]).into()).unwrap();
             c.get(g).unwrap();
-            c.sync(Duration::from_secs(1)).unwrap();
+            c.sync(Some(Duration::from_secs(1))).unwrap();
             c.gotten(g).unwrap();
         });
     })
