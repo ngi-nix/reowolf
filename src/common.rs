@@ -28,14 +28,14 @@ pub use Polarity::*;
 
 ///////////////////// DEFS /////////////////////
 
-pub type ControllerId = u32;
+pub type ConnectorId = u32;
 pub type PortSuffix = u32;
 
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 pub struct Id {
-    pub(crate) controller_id: ControllerId,
+    pub(crate) connector_id: ConnectorId,
     pub(crate) u32_suffix: PortSuffix,
 }
 
@@ -179,17 +179,17 @@ impl From<Vec<u8>> for Payload {
 }
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "PID<{},{}>", self.0.controller_id, self.0.u32_suffix)
+        write!(f, "PID<{},{}>", self.0.connector_id, self.0.u32_suffix)
     }
 }
 impl Debug for FiringVar {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "VID<{},{}>", (self.0).0.controller_id, (self.0).0.u32_suffix)
+        write!(f, "VID<{},{}>", (self.0).0.connector_id, (self.0).0.u32_suffix)
     }
 }
 impl Debug for ProtoComponentId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ProtoComponentId({},{})", self.0.controller_id, self.0.u32_suffix)
+        write!(f, "ProtoComponentId({},{})", self.0.connector_id, self.0.u32_suffix)
     }
 }
 impl std::ops::Not for Polarity {

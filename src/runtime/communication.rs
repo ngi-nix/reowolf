@@ -348,7 +348,7 @@ impl Connector {
                     log!(logger, "No decision yet. Let's recv an endpoint msg...");
                     {
                         let (endpoint_index, msg) = loop {
-                            match endpoint_manager.try_recv_any_comms(deadline)? {
+                            match endpoint_manager.try_recv_any_comms(logger, deadline)? {
                                 None => {
                                     log!(
                                         logger,
@@ -422,7 +422,7 @@ impl Connector {
                             }
                             CommMsgContents::Suggest { suggestion } => {
                                 // only accept this control msg through a child endpoint
-                                if neighborhood.children.binary_search(&endpoint_index).is_ok() {
+                                if neighborhood.children.contains(&endpoint_index) {
                                     match suggestion {
                                         Decision::Success(predicate) => {
                                             // child solution contributes to local solution
@@ -492,7 +492,7 @@ impl Connector {
                 }
 
                 *round_result = match decision {
-                    Decision::Failure => Err(DistributedTimeout),
+                    Decision::Failure => Err(RoundFailure),
                     Decision::Success(predicate) => {
                         // commit changes to component states
                         self.proto_components.clear();

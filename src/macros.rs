@@ -1,33 +1,12 @@
-macro_rules! log {
+macro_rules! endptlog {
     ($logger:expr, $($arg:tt)*) => {{
-        let _ = write!($logger.line_writer(), $($arg)*).unwrap();
+        // let w = $logger.line_writer();
+        //    let _ = write!(w, "[ENDPT]");
+        //    let _ = writeln!(w, $($arg)*);
     }};
 }
-// macro_rules! assert_let {
-//     ($pat:pat = $expr:expr => $work:expr) => {
-//         if let $pat = $expr {
-//             $work
-//         } else {
-//             panic!("assert_let failed");
-//         }
-//     };
-// }
-
-// #[test]
-// fn assert_let() {
-//     let x = Some(5);
-//     let z = assert_let![Some(y) = x => {
-//         println!("{:?}", y);
-//         3
-//     }];
-//     println!("{:?}", z);
-// }
-
-// #[test]
-// #[should_panic]
-// fn must_let_panic() {
-//     let x: Option<u32> = None;
-//     assert_let![Some(y) = x => {
-//         println!("{:?}", y);
-//     }];
-// }
+macro_rules! log {
+    ($logger:expr, $($arg:tt)*) => {{
+        let _ = writeln!($logger.line_writer(), $($arg)*);
+    }};
+}

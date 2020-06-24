@@ -1,6 +1,7 @@
 mod communication;
 mod endpoints;
 pub mod error;
+mod logging;
 mod setup;
 
 #[cfg(test)]
@@ -9,6 +10,11 @@ mod tests;
 use crate::common::*;
 use error::*;
 
+#[derive(Debug)]
+pub struct VecSet<T: std::cmp::Ord> {
+    // invariant: ordered, deduplicated
+    vec: Vec<T>,
+}
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum LocalComponentId {
     Native,
@@ -37,8 +43,8 @@ pub enum Msg {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SetupMsg {
     MyPortInfo(MyPortInfo),
-    LeaderEcho { maybe_leader: ControllerId },
-    LeaderAnnounce { leader: ControllerId },
+    LeaderWave { wave_leader: ConnectorId },
+    LeaderAnnounce { tree_leader: ConnectorId },
     YouAreMyParent,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -78,11 +84,11 @@ pub trait Logger: Debug {
     fn line_writer(&mut self) -> &mut dyn std::io::Write;
 }
 #[derive(Debug)]
-pub struct VecLogger(ControllerId, Vec<u8>);
+pub struct VecLogger(ConnectorId, Vec<u8>);
 #[derive(Debug)]
 pub struct DummyLogger;
 #[derive(Debug)]
-pub struct FileLogger(ControllerId, std::fs::File);
+pub struct FileLogger(ConnectorId, std::fs::File);
 #[derive(Debug, Clone)]
 pub struct EndpointSetup {
     pub sock_addr: SocketAddr,
@@ -96,7 +102,7 @@ pub struct EndpointExt {
 #[derive(Debug)]
 pub struct Neighborhood {
     parent: Option<usize>,
-    children: Vec<usize>, // ordered, deduplicated
+    children: VecSet<usize>,
 }
 #[derive(Debug)]
 pub struct MemInMsg {
@@ -105,7 +111,7 @@ pub struct MemInMsg {
 }
 #[derive(Debug)]
 pub struct IdManager {
-    controller_id: ControllerId,
+    connector_id: ConnectorId,
     port_suffix_stream: U32Stream,
     proto_component_suffix_stream: U32Stream,
 }
@@ -177,6 +183,19 @@ pub struct SyncProtoContext<'a> {
     inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
+impl<T: std::cmp::Ord> VecSet<T> {
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.vec.iter()
+    }
+    fn contains(&self, element: &T) -> bool {
+        self.vec.binary_search(element).is_ok()
+    }
+    fn new(mut vec: Vec<T>) -> Self {
+        vec.sort();
+        vec.dedup();
+        Self { vec }
+    }
+}
 impl PortInfo {
     fn firing_var_for(&self, port: PortId) -> FiringVar {
         FiringVar(match self.polarities.get(&port).unwrap() {
@@ -186,19 +205,19 @@ impl PortInfo {
     }
 }
 impl IdManager {
-    fn new(controller_id: ControllerId) -> Self {
+    fn new(connector_id: ConnectorId) -> Self {
         Self {
-            controller_id,
+            connector_id,
             port_suffix_stream: Default::default(),
             proto_component_suffix_stream: Default::default(),
         }
     }
     fn new_port_id(&mut self) -> PortId {
-        Id { controller_id: self.controller_id, u32_suffix: self.port_suffix_stream.next() }.into()
+        Id { connector_id: self.connector_id, u32_suffix: self.port_suffix_stream.next() }.into()
     }
     fn new_proto_component_id(&mut self) -> ProtoComponentId {
         Id {
-            controller_id: self.controller_id,
+            connector_id: self.connector_id,
             u32_suffix: self.proto_component_suffix_stream.next(),
         }
         .into()
@@ -270,58 +289,6 @@ impl Connector {
             },
         );
         Ok(())
-    }
-}
-impl Logger for DummyLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        impl std::io::Write for DummyLogger {
-            fn flush(&mut self) -> Result<(), std::io::Error> {
-                Ok(())
-            }
-            fn write(&mut self, bytes: &[u8]) -> Result<usize, std::io::Error> {
-                Ok(bytes.len())
-            }
-        }
-        self
-    }
-}
-impl VecLogger {
-    pub fn new(controller_id: ControllerId) -> Self {
-        Self(controller_id, Default::default())
-    }
-}
-impl Drop for VecLogger {
-    fn drop(&mut self) {
-        let stdout = std::io::stderr();
-        let mut lock = stdout.lock();
-        writeln!(lock, "--- DROP LOG DUMP ---").unwrap();
-        let _ = std::io::Write::write(&mut lock, self.1.as_slice());
-    }
-}
-impl Logger for VecLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        let _ = write!(&mut self.1, "\nCID({}): ", self.0);
-        self
-    }
-}
-impl FileLogger {
-    pub fn new(controller_id: ControllerId, file: std::fs::File) -> Self {
-        Self(controller_id, file)
-    }
-}
-impl Logger for FileLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        let _ = write!(&mut self.1, "\nCID({}): ", self.0);
-        &mut self.1
-    }
-}
-impl std::io::Write for VecLogger {
-    fn flush(&mut self) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-    fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        self.1.extend_from_slice(data);
-        Ok(data.len())
     }
 }
 impl Predicate {

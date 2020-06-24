@@ -1,6 +1,7 @@
 use crate as reowolf;
 use crossbeam_utils::thread::scope;
 use reowolf::{
+    error::*,
     Polarity::{Getter, Putter},
     *,
 };
@@ -270,10 +271,10 @@ fn sync_sync() {
     c.gotten(g1).unwrap();
 }
 
-fn file_logged_connector(controller_id: ControllerId, path: &str) -> Connector {
+fn file_logged_connector(connector_id: ConnectorId, path: &str) -> Connector {
     let file = std::fs::File::create(path).unwrap();
-    let file_logger = Box::new(FileLogger::new(controller_id, file));
-    Connector::new(file_logger, MINIMAL_PROTO.clone(), controller_id, 8)
+    let file_logger = Box::new(FileLogger::new(connector_id, file));
+    Connector::new(file_logger, MINIMAL_PROTO.clone(), connector_id, 8)
 }
 
 #[test]
@@ -358,6 +359,108 @@ fn distributed_msg_bounce() {
             c.sync(Some(Duration::from_secs(1))).unwrap();
             c.gotten(g).unwrap();
         });
+    })
+    .unwrap();
+}
+
+#[test]
+fn local_timeout() {
+    let mut c = file_logged_connector(0, "./logs/local_timeout.txt");
+    let [_, g] = c.new_port_pair();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.get(g).unwrap();
+    match c.sync(Some(Duration::from_millis(200))) {
+        Err(SyncError::RoundFailure) => {}
+        res => panic!("expeted timeout. but got {:?}", res),
+    }
+}
+
+#[test]
+fn parent_timeout() {
+    let sock_addr = next_test_addr();
+    scope(|s| {
+        s.spawn(|_| {
+            // parent; times out
+            let mut c = file_logged_connector(999, "./logs/parent_timeout_a.txt");
+            let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.sync(Some(Duration::from_millis(300))).unwrap_err(); // timeout
+        });
+        s.spawn(|_| {
+            // child
+            let mut c = file_logged_connector(000, "./logs/parent_timeout_b.txt");
+            let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.get(g).unwrap(); // not matched by put
+            c.sync(None).unwrap_err(); // no timeout
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn child_timeout() {
+    let sock_addr = next_test_addr();
+    scope(|s| {
+        s.spawn(|_| {
+            // child; times out
+            let mut c = file_logged_connector(000, "./logs/child_timeout_a.txt");
+            let _ = c.new_net_port(Putter, EndpointSetup { sock_addr, is_active: true }).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.sync(Some(Duration::from_millis(300))).unwrap_err(); // timeout
+        });
+        s.spawn(|_| {
+            // parent
+            let mut c = file_logged_connector(999, "./logs/child_timeout_b.txt");
+            let g = c.new_net_port(Getter, EndpointSetup { sock_addr, is_active: false }).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.get(g).unwrap(); // not matched by put
+            c.sync(None).unwrap_err(); // no timeout
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn chain_connect() {
+    let sock_addrs = [next_test_addr(), next_test_addr(), next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = file_logged_connector(0, "./logs/chain_connect_a.txt");
+            c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[0], is_active: false })
+                .unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = file_logged_connector(2, "./logs/chain_connect_b.txt");
+            c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[0], is_active: true })
+                .unwrap();
+            c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[1], is_active: false })
+                .unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = file_logged_connector(1, "./logs/chain_connect_c.txt");
+            c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[1], is_active: true })
+                .unwrap();
+            // c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[2], is_active: false })
+            //     .unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+        });
+        // s.spawn(|_| {
+        //     let mut c = file_logged_connector(3, "./logs/chain_connect_d.txt");
+        //     c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[2], is_active: true })
+        //         .unwrap();
+        //     c.new_net_port(Putter, EndpointSetup { sock_addr: sock_addrs[3], is_active: false })
+        //         .unwrap();
+        //     c.connect(Some(Duration::from_secs(1))).unwrap();
+        // });
+        // s.spawn(|_| {
+        //     let mut c = file_logged_connector(4, "./logs/chain_connect_e.txt");
+        //     c.new_net_port(Getter, EndpointSetup { sock_addr: sock_addrs[3], is_active: true })
+        //         .unwrap();
+        //     c.connect(Some(Duration::from_secs(1))).unwrap();
+        // });
     })
     .unwrap();
 }

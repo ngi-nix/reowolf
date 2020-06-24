@@ -1,19 +1,31 @@
 use crate::common::*;
 
+#[derive(Debug)]
+pub enum ConnectError {
+    BindFailed(SocketAddr),
+    PollInitFailed,
+    Timeout,
+    PollFailed,
+    AcceptFailed(SocketAddr),
+    AlreadyConnected,
+    PortPeerPolarityMismatch(PortId),
+    EndpointSetupError(SocketAddr, EndpointError),
+    SetupAlgMisbehavior,
+}
+////////////////////////
+#[derive(Debug, Clone)]
+pub enum SyncError {
+    NotConnected,
+    InconsistentProtoComponent(ProtoComponentId),
+    IndistinguishableBatches([usize; 2]),
+    RoundFailure,
+    PollFailed,
+    BrokenEndpoint(usize),
+}
 #[derive(Debug, Clone)]
 pub enum EndpointError {
     MalformedMessage,
     BrokenEndpoint,
-}
-#[derive(Debug, Clone)]
-pub enum SyncError {
-    Timeout,
-    NotConnected,
-    InconsistentProtoComponent(ProtoComponentId),
-    IndistinguishableBatches([usize; 2]),
-    DistributedTimeout,
-    PollFailed,
-    BrokenEndpoint(usize),
 }
 #[derive(Debug)]
 pub enum PortOpError {
@@ -28,19 +40,7 @@ pub enum GottenError {
     PortDidntGet,
     PreviousSyncFailed,
 }
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum NextBatchError {
     NotConnected,
-}
-#[derive(Debug)]
-pub enum ConnectError {
-    BindFailed(SocketAddr),
-    PollInitFailed,
-    Timeout,
-    PollFailed,
-    AcceptFailed(SocketAddr),
-    AlreadyConnected,
-    PortPeerPolarityMismatch(PortId),
-    EndpointSetupError(SocketAddr, EndpointError),
 }
