@@ -21,6 +21,12 @@ pub enum SyncError {
     RoundFailure,
     PollFailed,
     BrokenEndpoint(usize),
+    MalformedStateError(MalformedStateError),
+}
+#[derive(Debug, Clone)]
+pub enum MalformedStateError {
+    PortCannotPut(PortId),
+    GetterUnknownFor { putter: PortId },
 }
 #[derive(Debug, Clone)]
 pub enum EndpointError {
@@ -30,6 +36,7 @@ pub enum EndpointError {
 #[derive(Debug)]
 pub enum PortOpError {
     WrongPolarity,
+    UnknownPolarity,
     NotConnected,
     MultipleOpsOnPort,
     PortUnavailable,

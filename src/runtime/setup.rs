@@ -1,6 +1,5 @@
 use crate::common::*;
 use crate::runtime::*;
-use std::io::ErrorKind::WouldBlock;
 
 impl Connector {
     pub fn new(
@@ -247,7 +246,7 @@ fn new_endpoint_manager(
                             std::thread::spawn(move || {
                                 while wcs2.load(std::sync::atomic::Ordering::SeqCst) {
                                     std::thread::sleep(WAKER_PERIOD);
-                                    waker.wake().expect("unable to wake");
+                                    let _ = waker.wake();
                                 }
                             });
                             waker_continue_signal = Some(wcs);

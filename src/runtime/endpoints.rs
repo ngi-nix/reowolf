@@ -58,6 +58,10 @@ impl EndpointManager {
     pub(super) fn num_endpoints(&self) -> usize {
         self.endpoint_exts.len()
     }
+    pub(super) fn send_to_comms(&mut self, index: usize, msg: &Msg) -> Result<(), SyncError> {
+        let endpoint = &mut self.endpoint_exts[index].endpoint;
+        endpoint.send(msg).map_err(|_| SyncError::BrokenEndpoint(index))
+    }
     pub(super) fn send_to_setup(&mut self, index: usize, msg: &Msg) -> Result<(), ConnectError> {
         let endpoint = &mut self.endpoint_exts[index].endpoint;
         endpoint.send(msg).map_err(|err| {
