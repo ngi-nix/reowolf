@@ -25,13 +25,13 @@ pub struct ComponentState {
 pub enum EvalContext<'a> {
     Nonsync(&'a mut NonsyncProtoContext<'a>),
     Sync(&'a mut SyncProtoContext<'a>),
-    None,
+    // None,
 }
 //////////////////////////////////////////////
 
 impl std::fmt::Debug for ProtocolDescription {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Protocol")
+        write!(f, "(A big honkin' protocol description)")
     }
 }
 impl ProtocolDescription {
@@ -217,14 +217,14 @@ impl ComponentState {
 impl EvalContext<'_> {
     // fn random(&mut self) -> LongValue {
     //     match self {
-    //         EvalContext::None => unreachable!(),
+    //         // EvalContext::None => unreachable!(),
     //         EvalContext::Nonsync(_context) => todo!(),
     //         EvalContext::Sync(_) => unreachable!(),
     //     }
     // }
     fn new_component(&mut self, args: &[Value], init_state: ComponentState) -> () {
         match self {
-            EvalContext::None => unreachable!(),
+            // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
                 let mut moved_ports = HashSet::new();
                 for arg in args.iter() {
@@ -245,7 +245,7 @@ impl EvalContext<'_> {
     }
     fn new_channel(&mut self) -> [Value; 2] {
         match self {
-            EvalContext::None => unreachable!(),
+            // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
                 let [from, to] = context.new_port_pair();
                 let from = Value::Output(OutputValue(from));
@@ -257,7 +257,7 @@ impl EvalContext<'_> {
     }
     fn fires(&mut self, port: Value) -> Option<Value> {
         match self {
-            EvalContext::None => unreachable!(),
+            // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
                 Value::Output(OutputValue(port)) => context.is_firing(port).map(Value::from),
@@ -268,7 +268,7 @@ impl EvalContext<'_> {
     }
     fn get(&mut self, port: Value) -> Option<Value> {
         match self {
-            EvalContext::None => unreachable!(),
+            // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
                 Value::Output(OutputValue(port)) => {

@@ -36,7 +36,7 @@ impl Connector {
                 up.native_ports.insert(p);
                 // {polarity, route} known. {peer} unknown.
                 up.port_info.polarities.insert(p, polarity);
-                up.port_info.routes.insert(p, Route::LocalComponent(LocalComponentId::Native));
+                up.port_info.routes.insert(p, Route::LocalComponent(ComponentId::Native));
                 log!(
                     up.logger,
                     "Added net port {:?} with polarity {:?} and endpoint setup {:?} ",
@@ -543,7 +543,11 @@ fn session_optimize(
         "Gathered all children's maps. ConnectorId set is... {:?}",
         unoptimized_map.keys()
     );
-    let my_session_info = SessionInfo {};
+    let my_session_info = SessionInfo {
+        port_info: cu.port_info.clone(),
+        proto_components: cu.proto_components.clone(),
+        serde_proto_description: SerdeProtocolDescription(cu.proto_description.clone()),
+    };
     unoptimized_map.insert(cu.id_manager.connector_id, my_session_info);
     log!(cu.logger, "Inserting my own info. Unoptimized subtree map is {:?}", &unoptimized_map);
 
@@ -586,7 +590,7 @@ fn session_optimize(
     } else {
         // by computing it myself
         log!(cu.logger, "I am the leader! I will optimize this session");
-        leader_session_map_optimize(unoptimized_map)?
+        leader_session_map_optimize(&mut *cu.logger, unoptimized_map)?
     };
     log!(
         cu.logger,
@@ -594,6 +598,7 @@ fn session_optimize(
         &optimized_map,
         comm.neighborhood.children.iter()
     );
+    log!(cu.logger, "All session info dumped!: {:#?}", &optimized_map);
     let optimized_info =
         optimized_map.get(&cu.id_manager.connector_id).expect("HEY NO INFO FOR ME?").clone();
     let msg = S(SessionScatter { optimized_map });
@@ -601,18 +606,25 @@ fn session_optimize(
         comm.endpoint_manager.send_to_setup(child, &msg)?;
     }
     apply_optimizations(cu, comm, optimized_info)?;
-    log!(cu.logger, "Session optimization complete");
+    log!(cu.logger, "Session optimizations applied");
     Ok(())
 }
 fn leader_session_map_optimize(
+    logger: &mut dyn Logger,
     unoptimized_map: HashMap<ConnectorId, SessionInfo>,
 ) -> Result<HashMap<ConnectorId, SessionInfo>, ConnectError> {
+    log!(logger, "Session map optimize START");
+    log!(logger, "Session map optimize END");
     Ok(unoptimized_map)
 }
 fn apply_optimizations(
-    _cu: &mut ConnectorUnphased,
+    cu: &mut ConnectorUnphased,
     _comm: &mut ConnectorCommunication,
-    _session_info: SessionInfo,
+    session_info: SessionInfo,
 ) -> Result<(), ConnectError> {
+    let SessionInfo { proto_components, port_info, serde_proto_description } = session_info;
+    cu.port_info = port_info;
+    cu.proto_components = proto_components;
+    cu.proto_description = serde_proto_description.0;
     Ok(())
 }

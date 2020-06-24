@@ -152,10 +152,7 @@ impl Payload {
     }
 }
 impl serde::Serialize for Payload {
-    fn serialize<S>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<<S as serde::Serializer>::Ok, <S as serde::Serializer>::Error>
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -164,9 +161,7 @@ impl serde::Serialize for Payload {
     }
 }
 impl<'de> serde::Deserialize<'de> for Payload {
-    fn deserialize<D>(
-        deserializer: D,
-    ) -> std::result::Result<Self, <D as serde::Deserializer<'de>>::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {

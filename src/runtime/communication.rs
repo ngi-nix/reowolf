@@ -195,11 +195,9 @@ impl Connector {
 
         // create the solution storage
         let mut solution_storage = {
-            let n = std::iter::once(Route::LocalComponent(LocalComponentId::Native));
-            let c = cu
-                .proto_components
-                .keys()
-                .map(|&id| Route::LocalComponent(LocalComponentId::Proto(id)));
+            let n = std::iter::once(Route::LocalComponent(ComponentId::Native));
+            let c =
+                cu.proto_components.keys().map(|&id| Route::LocalComponent(ComponentId::Proto(id)));
             let e = comm.neighborhood.children.iter().map(|&index| Route::Endpoint { index });
             SolutionStorage::new(n.chain(c).chain(e))
         };
@@ -246,7 +244,7 @@ impl Connector {
                 );
                 solution_storage.submit_and_digest_subtree_solution(
                     &mut *cu.logger,
-                    Route::LocalComponent(LocalComponentId::Native),
+                    Route::LocalComponent(ComponentId::Native),
                     predicate.clone(),
                 );
             }
@@ -298,14 +296,14 @@ impl Connector {
                         });
                         comm.endpoint_manager.send_to(*index, &msg).unwrap();
                     }
-                    Route::LocalComponent(LocalComponentId::Native) => branching_native.feed_msg(
+                    Route::LocalComponent(ComponentId::Native) => branching_native.feed_msg(
                         cu,
                         &mut solution_storage,
                         // &mut Pay
                         getter,
                         send_payload_msg,
                     ),
-                    Route::LocalComponent(LocalComponentId::Proto(proto_component_id)) => {
+                    Route::LocalComponent(ComponentId::Proto(proto_component_id)) => {
                         if let Some(branching_component) =
                             branching_proto_components.get_mut(proto_component_id)
                         {
@@ -535,7 +533,7 @@ impl BranchingNative {
                 assert!(was.is_none());
                 branch.to_get.remove(&getter);
                 if branch.to_get.is_empty() {
-                    let route = Route::LocalComponent(LocalComponentId::Native);
+                    let route = Route::LocalComponent(ComponentId::Native);
                     solution_storage.submit_and_digest_subtree_solution(
                         &mut *cu.logger,
                         route,
@@ -653,7 +651,7 @@ impl BranchingProtoComponent {
                         // submit solution for this component
                         solution_storage.submit_and_digest_subtree_solution(
                             &mut *cu.logger,
-                            Route::LocalComponent(LocalComponentId::Proto(proto_component_id)),
+                            Route::LocalComponent(ComponentId::Proto(proto_component_id)),
                             predicate.clone(),
                         );
                         // move to "blocked"
@@ -920,9 +918,7 @@ impl NonsyncProtoContext<'_> {
         let new_id = self.id_manager.new_proto_component_id();
         for port in moved_ports.iter() {
             self.proto_component_ports.remove(port);
-            self.port_info
-                .routes
-                .insert(*port, Route::LocalComponent(LocalComponentId::Proto(new_id)));
+            self.port_info.routes.insert(*port, Route::LocalComponent(ComponentId::Proto(new_id)));
         }
         // 3. create a new component
         self.unrun_components.push((new_id, ProtoComponent { state, ports: moved_ports }));
@@ -937,7 +933,7 @@ impl NonsyncProtoContext<'_> {
         self.port_info.polarities.insert(i, Getter);
         self.port_info.peers.insert(o, i);
         self.port_info.peers.insert(i, o);
-        let route = Route::LocalComponent(LocalComponentId::Proto(self.proto_component_id));
+        let route = Route::LocalComponent(ComponentId::Proto(self.proto_component_id));
         self.port_info.routes.insert(o, route);
         self.port_info.routes.insert(i, route);
         log!(

@@ -20,14 +20,14 @@ pub struct VecSet<T: std::cmp::Ord> {
     // invariant: ordered, deduplicated
     vec: Vec<T>,
 }
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum LocalComponentId {
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ComponentId {
     Native,
     Proto(ProtoComponentId),
 }
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Route {
-    LocalComponent(LocalComponentId),
+    LocalComponent(ComponentId),
     Endpoint { index: usize },
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -54,9 +54,14 @@ pub enum SetupMsg {
     SessionGather { unoptimized_map: HashMap<ConnectorId, SessionInfo> },
     SessionScatter { optimized_map: HashMap<ConnectorId, SessionInfo> },
 }
-
+#[derive(Debug, Clone)]
+pub(crate) struct SerdeProtocolDescription(Arc<ProtocolDescription>);
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SessionInfo {}
+pub struct SessionInfo {
+    serde_proto_description: SerdeProtocolDescription,
+    port_info: PortInfo,
+    proto_components: HashMap<ProtoComponentId, ProtoComponent>,
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CommMsg {
@@ -86,7 +91,7 @@ pub struct Endpoint {
     inbox: Vec<u8>,
     stream: TcpStream,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProtoComponent {
     state: ComponentState,
     ports: HashSet<PortId>,
@@ -138,7 +143,7 @@ pub struct EndpointManager {
     undelayed_messages: Vec<(usize, Msg)>,
     endpoint_exts: Vec<EndpointExt>,
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PortInfo {
     polarities: HashMap<PortId, Polarity>,
     peers: HashMap<PortId, PortId>,
@@ -261,7 +266,7 @@ impl Connector {
         cu.port_info.polarities.insert(i, Getter);
         cu.port_info.peers.insert(o, i);
         cu.port_info.peers.insert(i, o);
-        let route = Route::LocalComponent(LocalComponentId::Native);
+        let route = Route::LocalComponent(ComponentId::Native);
         cu.port_info.routes.insert(o, route);
         cu.port_info.routes.insert(i, route);
         log!(cu.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
@@ -291,9 +296,7 @@ impl Connector {
         // 3. remove ports from old component & update port->route
         let new_id = cu.id_manager.new_proto_component_id();
         for port in ports.iter() {
-            cu.port_info
-                .routes
-                .insert(*port, Route::LocalComponent(LocalComponentId::Proto(new_id)));
+            cu.port_info.routes.insert(*port, Route::LocalComponent(ComponentId::Proto(new_id)));
         }
         cu.native_ports.retain(|port| !ports.contains(port));
         // 4. add new component
@@ -432,5 +435,24 @@ impl Debug for Predicate {
             .field("Trues", &MySet(self, true))
             .field("Falses", &MySet(self, false))
             .finish()
+    }
+}
+
+impl serde::Serialize for SerdeProtocolDescription {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let inner: &ProtocolDescription = &self.0;
+        inner.serialize(serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for SerdeProtocolDescription {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let inner: ProtocolDescription = ProtocolDescription::deserialize(deserializer)?;
+        Ok(Self(Arc::new(inner)))
     }
 }

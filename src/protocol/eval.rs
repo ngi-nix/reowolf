@@ -6,8 +6,8 @@ use std::{i16, i32, i64, i8};
 use crate::common::*;
 
 use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
-use crate::protocol::parser::*;
+// use crate::protocol::inputsource::*;
+// use crate::protocol::parser::*;
 use crate::protocol::EvalContext;
 
 const MAX_RECURSION: usize = 1024;
@@ -84,7 +84,7 @@ impl Value {
                     Value::Long(LongValue(val))
                 }
             }
-            Constant::Character(data) => unimplemented!(),
+            Constant::Character(_data) => unimplemented!(),
         }
     }
     fn set(&mut self, index: &Value, value: &Value) -> Option<Value> {
@@ -1778,28 +1778,29 @@ impl Prompt {
             }
         }
     }
-    fn compute_function(h: &Heap, fun: FunctionId, args: &Vec<Value>) -> Option<Value> {
-        let mut prompt = Self::new(h, fun.upcast(), args);
-        let mut context = EvalContext::None;
-        loop {
-            let result = prompt.step(h, &mut context);
-            match result {
-                Ok(val) => return Some(val),
-                Err(cont) => match cont {
-                    EvalContinuation::Stepping => continue,
-                    EvalContinuation::Inconsistent => return None,
-                    // Functions never terminate without returning
-                    EvalContinuation::Terminal => unreachable!(),
-                    // Functions never encounter any blocking behavior
-                    EvalContinuation::SyncBlockStart => unreachable!(),
-                    EvalContinuation::SyncBlockEnd => unreachable!(),
-                    EvalContinuation::NewComponent(_, _) => unreachable!(),
-                    EvalContinuation::BlockFires(val) => unreachable!(),
-                    EvalContinuation::BlockGet(val) => unreachable!(),
-                    EvalContinuation::Put(port, msg) => unreachable!(),
-                },
-            }
-        }
+    fn compute_function(_h: &Heap, _fun: FunctionId, _args: &Vec<Value>) -> Option<Value> {
+        todo!()
+        // let mut prompt = Self::new(h, fun.upcast(), args);
+        // let mut context = EvalContext::None;
+        // loop {
+        //     let result = prompt.step(h, &mut context);
+        //     match result {
+        //         Ok(val) => return Some(val),
+        //         Err(cont) => match cont {
+        //             EvalContinuation::Stepping => continue,
+        //             EvalContinuation::Inconsistent => return None,
+        //             // Functions never terminate without returning
+        //             EvalContinuation::Terminal => unreachable!(),
+        //             // Functions never encounter any blocking behavior
+        //             EvalContinuation::SyncBlockStart => unreachable!(),
+        //             EvalContinuation::SyncBlockEnd => unreachable!(),
+        //             EvalContinuation::NewComponent(_, _) => unreachable!(),
+        //             EvalContinuation::BlockFires(val) => unreachable!(),
+        //             EvalContinuation::BlockGet(val) => unreachable!(),
+        //             EvalContinuation::Put(port, msg) => unreachable!(),
+        //         },
+        //     }
+        // }
     }
 }
 

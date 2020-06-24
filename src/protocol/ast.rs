@@ -405,7 +405,7 @@ impl ImportedDeclarationId {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
     // Phase 0: allocation
     protocol_descriptions: Arena<Root>,
