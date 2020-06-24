@@ -999,7 +999,7 @@ impl Visitor for ResolveVariables {
         let id = h[var].identifier;
         // First check whether variable with same identifier is in scope
         let check_duplicate = self.find_variable(h, id);
-        if !check_duplicate.is_none() {
+        if check_duplicate.is_some() {
             return Err(ParseError::new(h[id].position, "Declared variable clash"));
         }
         // Then check the expression's variables (this should not refer to own variable)
@@ -1018,7 +1018,7 @@ impl Visitor for ResolveVariables {
             let var = h[stmt].from;
             let id = h[var].identifier;
             let check_duplicate = self.find_variable(h, id);
-            if !check_duplicate.is_none() {
+            if check_duplicate.is_some() {
                 return Err(ParseError::new(h[id].position, "Declared variable clash"));
             }
             let mut block = &mut h[self.scope.unwrap().to_block()];
@@ -1029,7 +1029,7 @@ impl Visitor for ResolveVariables {
             let var = h[stmt].to;
             let id = h[var].identifier;
             let check_duplicate = self.find_variable(h, id);
-            if !check_duplicate.is_none() {
+            if check_duplicate.is_some() {
                 return Err(ParseError::new(h[id].position, "Declared variable clash"));
             }
             let mut block = &mut h[self.scope.unwrap().to_block()];

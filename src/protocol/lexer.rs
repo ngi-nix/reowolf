@@ -1031,7 +1031,7 @@ impl Lexer<'_> {
                 self.source.consume();
                 next = self.source.next();
             }
-            if next != Some(b'\'') || data.len() == 0 {
+            if next != Some(b'\'') || data.is_empty() {
                 return Err(self.source.error("Expected character constant"));
             }
             self.source.consume();
@@ -1205,14 +1205,10 @@ impl Lexer<'_> {
         }
         let backup = self.source.clone();
         let mut result = false;
-        match self.consume_type_annotation_spilled() {
-            Ok(_) => match self.consume_whitespace(false) {
-                Ok(_) => {
-                    result = self.has_identifier();
-                }
-                Err(_) => {}
-            },
-            Err(_) => {}
+        if let Ok(_) = self.consume_type_annotation_spilled() {
+            if let Ok(_) = self.consume_whitespace(false) {
+                result = self.has_identifier();
+            }
         }
         *self.source = backup;
         return result;
@@ -1231,7 +1227,7 @@ impl Lexer<'_> {
             self.consume_whitespace(false)?;
         }
         self.consume_string(b"}")?;
-        if statements.len() == 0 {
+        if statements.is_empty() {
             Ok(h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }).upcast())
         } else {
             Ok(h.alloc_block_statement(|this| BlockStatement {
@@ -1341,16 +1337,13 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         let true_body = self.consume_statement(h)?;
         self.consume_whitespace(false)?;
-        let false_body;
-        if self.has_keyword(b"else") {
+        let false_body = if self.has_keyword(b"else") {
             self.consume_keyword(b"else")?;
             self.consume_whitespace(false)?;
-            false_body = self.consume_statement(h)?;
+            self.consume_statement(h)?
         } else {
-            false_body = h
-                .alloc_skip_statement(|this| SkipStatement { this, position, next: None })
-                .upcast();
-        }
+            h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }).upcast()
+        };
         Ok(h.alloc_if_statement(|this| IfStatement { this, position, test, true_body, false_body }))
     }
     fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError> {
@@ -1432,12 +1425,11 @@ impl Lexer<'_> {
         let position = self.source.pos();
         self.consume_keyword(b"return")?;
         self.consume_whitespace(false)?;
-        let expression;
-        if self.has_string(b"(") {
-            expression = self.consume_paren_expression(h)?;
+        let expression = if self.has_string(b"(") {
+            self.consume_paren_expression(h)
         } else {
-            expression = self.consume_expression(h)?;
-        }
+            self.consume_expression(h)
+        }?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_return_statement(|this| ReturnStatement { this, position, expression }))
@@ -1446,12 +1438,11 @@ impl Lexer<'_> {
         let position = self.source.pos();
         self.consume_keyword(b"assert")?;
         self.consume_whitespace(false)?;
-        let expression;
-        if self.has_string(b"(") {
-            expression = self.consume_paren_expression(h)?;
+        let expression = if self.has_string(b"(") {
+            self.consume_paren_expression(h)
         } else {
-            expression = self.consume_expression(h)?;
-        }
+            self.consume_expression(h)
+        }?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_assert_statement(|this| AssertStatement {

@@ -203,7 +203,7 @@ impl ComponentState {
                             }
                             Value::Message(MessageValue(Some(buffer))) => {
                                 // Create a copy of the payload
-                                payload = buffer.clone();
+                                payload = buffer;
                             }
                             _ => unreachable!(),
                         }
