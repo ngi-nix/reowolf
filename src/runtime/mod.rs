@@ -214,16 +214,25 @@ pub fn would_block(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::WouldBlock
 }
 impl<T: std::cmp::Ord> VecSet<T> {
-    fn iter(&self) -> std::slice::Iter<T> {
-        self.vec.iter()
-    }
-    fn contains(&self, element: &T) -> bool {
-        self.vec.binary_search(element).is_ok()
-    }
     fn new(mut vec: Vec<T>) -> Self {
         vec.sort();
         vec.dedup();
         Self { vec }
+    }
+    fn contains(&self, element: &T) -> bool {
+        self.vec.binary_search(element).is_ok()
+    }
+    fn insert(&mut self, element: T) -> bool {
+        match self.vec.binary_search(&element) {
+            Ok(_) => false,
+            Err(index) => {
+                self.vec.insert(index, element);
+                true
+            }
+        }
+    }
+    fn iter(&self) -> std::slice::Iter<T> {
+        self.vec.iter()
     }
 }
 impl PortInfo {

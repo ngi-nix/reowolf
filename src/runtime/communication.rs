@@ -90,7 +90,7 @@ impl Connector {
         match phased {
             ConnectorPhased::Setup { .. } => Err(NotConnected),
             ConnectorPhased::Communication(comm) => {
-                let batch = comm.native_batches.last_mut().unwrap(); // length >= invariant
+                let batch = comm.native_batches.last_mut().unwrap(); // length >= 1 is invariant
                 Ok(batch)
             }
         }

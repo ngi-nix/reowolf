@@ -2,6 +2,14 @@
 #include <stdlib.h>
 #include <errno.h>
 
+void check(const char* phase, int code) {
+	if (code < 0) {
+		printf("ERR %d in phase `%s`. Err was `%s`\nEXITING!\n",
+			code, phase, connector_error_peek());
+		exit(1);
+	}
+}
+
 // allocates a buffer!
 char * buffer_pdl(char * filename) {
 	FILE *f = fopen(filename, "rb");

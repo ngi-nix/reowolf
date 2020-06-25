@@ -4,5 +4,7 @@ target
 Cargo.lock
 main
 examples/*/*.exe
+examples/*.dll
+examples/*.dll
 examples/reowolf*
 logs

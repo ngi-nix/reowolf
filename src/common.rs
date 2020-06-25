@@ -61,7 +61,7 @@ pub struct FiringVar(pub(crate) PortId);
 pub struct ProtoComponentId(Id);
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(C)]
+// #[repr(C)]
 pub struct Payload(Arc<Vec<u8>>);
 
 #[derive(

@@ -28,17 +28,17 @@ impl StoredError {
             stored_error.debug_store(error);
         })
     }
-    // fn bytes_store(&mut self, bytes: &[u8]) {
-    //     let _ = self.buf.write_all(bytes);
-    //     self.buf.push(Self::NULL_TERMINATOR);
-    // }
-    // fn tl_bytes_store(bytes: &[u8]) {
-    //     STORED_ERROR.with(|stored_error| {
-    //         let mut stored_error = stored_error.borrow_mut();
-    //         stored_error.clear();
-    //         stored_error.bytes_store(bytes);
-    //     })
-    // }
+    fn bytes_store(&mut self, bytes: &[u8]) {
+        let _ = self.buf.write_all(bytes);
+        self.buf.push(Self::NULL_TERMINATOR);
+    }
+    fn tl_bytes_store(bytes: &[u8]) {
+        STORED_ERROR.with(|stored_error| {
+            let mut stored_error = stored_error.borrow_mut();
+            stored_error.clear();
+            stored_error.bytes_store(bytes);
+        })
+    }
     fn tl_clear() {
         STORED_ERROR.with(|stored_error| {
             let mut stored_error = stored_error.borrow_mut();
@@ -86,17 +86,13 @@ pub unsafe extern "C" fn reowolf_error_peek(len: *mut usize) -> *const u8 {
 pub unsafe extern "C" fn protocol_description_parse(
     pdl: *const u8,
     pdl_len: usize,
-    out: *mut Arc<ProtocolDescription>,
-) -> ErrorCode {
+) -> *mut Arc<ProtocolDescription> {
     StoredError::tl_clear();
     match ProtocolDescription::parse(&*slice_from_parts(pdl, pdl_len)) {
-        Ok(new) => {
-            out.write(Arc::new(new));
-            0
-        }
+        Ok(new) => Box::into_raw(Box::new(Arc::new(new))),
         Err(err) => {
-            StoredError::tl_debug_store(&err);
-            -1
+            StoredError::tl_bytes_store(err.as_bytes());
+            std::ptr::null_mut()
         }
     }
 }
@@ -111,18 +107,17 @@ pub unsafe extern "C" fn protocol_description_destroy(pd: *mut Arc<ProtocolDescr
 #[no_mangle]
 pub unsafe extern "C" fn protocol_description_clone(
     pd: &Arc<ProtocolDescription>,
-    out: *mut Arc<ProtocolDescription>,
-) {
-    out.write(pd.clone());
+) -> *mut Arc<ProtocolDescription> {
+    Box::into_raw(Box::new(pd.clone()))
 }
 
 ///////////////////// CONNECTOR //////////////////////////
 
-/// Initializes `out` with a new connector using the given protocol description as its configuration.
-/// The connector is assigned a random (internal) connector ID.
+/// Allocates a new connector on the heap and returning a pointer,
+/// given an initialized protocol description.
 #[no_mangle]
-pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>, out: *mut Connector) {
-    connector_new_with_id(pd, random_connector_id(), out)
+pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
+    connector_new_with_id(pd, random_connector_id())
 }
 
 /// Initializes `out` with a new connector using the given protocol description as its configuration.
@@ -131,16 +126,16 @@ pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>, out: *mut 
 pub unsafe extern "C" fn connector_new_with_id(
     pd: &Arc<ProtocolDescription>,
     cid: ConnectorId,
-    out: *mut Connector,
-) {
-    out.write(Connector::new(Box::new(DummyLogger), pd.clone(), cid, 8))
+) -> *mut Connector {
+    let c = Connector::new(Box::new(DummyLogger), pd.clone(), cid, 8);
+    Box::into_raw(Box::new(c))
 }
 
-/// Destroys the given initialized connector and frees its resources.
+/// Destroys the given a pointer to the connector on the heap, freeing its resources.
 /// Usable in {setup, communication} states.
 #[no_mangle]
-pub unsafe extern "C" fn connector_destroy(connector: Connector) {
-    drop(connector)
+pub unsafe extern "C" fn connector_destroy(connector: *mut Connector) {
+    drop(Box::from_raw(connector))
 }
 
 /// Given an initialized connector in setup or connecting state,
@@ -288,12 +283,8 @@ pub unsafe extern "C" fn connector_put_bytes(
     bytes_len: usize,
 ) -> ErrorCode {
     StoredError::tl_clear();
-    let payload: Payload = {
-        let payload: *mut Payload = std::ptr::null_mut(); // uninitialized
-        payload_new(bytes_ptr, bytes_len, payload); // initializes;
-        payload.read()
-    };
-    match connector.put(port, payload) {
+    let bytes = &*slice_from_parts(bytes_ptr, bytes_len);
+    match connector.put(port, Payload::from(bytes)) {
         Ok(()) => 0,
         Err(err) => {
             StoredError::tl_debug_store(&err);
@@ -358,45 +349,45 @@ pub unsafe extern "C" fn connector_gotten_bytes(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn connector_gotten_payload(
-    connector: &mut Connector,
-    port: PortId,
-) -> *const Payload {
-    StoredError::tl_clear();
-    match connector.gotten(port) {
-        Ok(payload_borrow) => payload_borrow,
-        Err(err) => {
-            StoredError::tl_debug_store(&err);
-            std::ptr::null()
-        }
-    }
-}
+// #[no_mangle]
+// unsafe extern "C" fn connector_gotten_payload(
+//     connector: &mut Connector,
+//     port: PortId,
+// ) -> *const Payload {
+//     StoredError::tl_clear();
+//     match connector.gotten(port) {
+//         Ok(payload_borrow) => payload_borrow,
+//         Err(err) => {
+//             StoredError::tl_debug_store(&err);
+//             std::ptr::null()
+//         }
+//     }
+// }
 
 ///////////////////// PAYLOAD //////////////////////////
-#[no_mangle]
-pub unsafe extern "C" fn payload_new(
-    bytes_ptr: *const u8,
-    bytes_len: usize,
-    out_payload: *mut Payload,
-) {
-    let bytes: &[u8] = &*slice_from_parts(bytes_ptr, bytes_len);
-    out_payload.write(Payload::from(bytes));
-}
+// #[no_mangle]
+// unsafe extern "C" fn payload_new(
+//     bytes_ptr: *const u8,
+//     bytes_len: usize,
+//     out_payload: *mut Payload,
+// ) {
+//     let bytes: &[u8] = &*slice_from_parts(bytes_ptr, bytes_len);
+//     out_payload.write(Payload::from(bytes));
+// }
 
-#[no_mangle]
-pub unsafe extern "C" fn payload_destroy(payload: *mut Payload) {
-    drop(Box::from_raw(payload))
-}
+// #[no_mangle]
+// unsafe extern "C" fn payload_destroy(payload: *mut Payload) {
+//     drop(Box::from_raw(payload))
+// }
 
-#[no_mangle]
-pub unsafe extern "C" fn payload_clone(payload: &Payload, out_payload: *mut Payload) {
-    out_payload.write(payload.clone())
-}
+// #[no_mangle]
+// unsafe extern "C" fn payload_clone(payload: &Payload, out_payload: *mut Payload) {
+//     out_payload.write(payload.clone())
+// }
 
-#[no_mangle]
-pub unsafe extern "C" fn payload_peek_bytes(payload: &Payload, bytes_len: *mut usize) -> *const u8 {
-    let slice = payload.as_slice();
-    bytes_len.write(slice.len());
-    slice.as_ptr()
-}
+// #[no_mangle]
+// unsafe extern "C" fn payload_peek_bytes(payload: &Payload, bytes_len: *mut usize) -> *const u8 {
+//     let slice = payload.as_slice();
+//     bytes_len.write(slice.len());
+//     slice.as_ptr()
+// }
