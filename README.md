@@ -6,3 +6,4 @@
 	- The resulting dylib can be found in target/release/, to be used with the header file reowolf.h.
 	- Note: A list of immediate ancestor dependencies is visible in Cargo.toml.
 	- Note: Run `cargo test --release` to run unit tests with release-level optimizations.
+3. Running `cbindgen > reowolf.h` from the root will overwrite the header file. (WIP) This is only necessary to update it.  

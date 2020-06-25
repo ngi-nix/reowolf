@@ -70,10 +70,13 @@ type ErrorCode = i32;
 /// - pointer is NULL iff there was no last error
 /// - data at pointer is null-delimited
 /// - len does NOT include the length of the null-delimiter
+/// If len is NULL, it will not written to.
 #[no_mangle]
 pub unsafe extern "C" fn reowolf_error_peek(len: *mut usize) -> *const u8 {
     let (err_ptr, err_len) = StoredError::tl_bytes_peek();
-    len.write(err_len);
+    if !len.is_null() {
+        len.write(err_len);
+    }
     err_ptr
 }
 
@@ -118,6 +121,11 @@ pub unsafe extern "C" fn protocol_description_clone(
 #[no_mangle]
 pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
     connector_new_with_id(pd, random_connector_id())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn connector_print_debug(connector: &mut Connector) {
+    println!("Debug print dump {:#?}", connector);
 }
 
 /// Initializes `out` with a new connector using the given protocol description as its configuration.
@@ -243,35 +251,35 @@ pub unsafe extern "C" fn connector_connect(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn connector_put_payload(
-    connector: &mut Connector,
-    port: PortId,
-    payload: *mut Payload,
-) -> ErrorCode {
-    match connector.put(port, payload.read()) {
-        Ok(()) => 0,
-        Err(err) => {
-            StoredError::tl_debug_store(&err);
-            -1
-        }
-    }
-}
+// #[no_mangle]
+// pub unsafe extern "C" fn connector_put_payload(
+//     connector: &mut Connector,
+//     port: PortId,
+//     payload: *mut Payload,
+// ) -> ErrorCode {
+//     match connector.put(port, payload.read()) {
+//         Ok(()) => 0,
+//         Err(err) => {
+//             StoredError::tl_debug_store(&err);
+//             -1
+//         }
+//     }
+// }
 
-#[no_mangle]
-pub unsafe extern "C" fn connector_put_payload_cloning(
-    connector: &mut Connector,
-    port: PortId,
-    payload: &Payload,
-) -> ErrorCode {
-    match connector.put(port, payload.clone()) {
-        Ok(()) => 0,
-        Err(err) => {
-            StoredError::tl_debug_store(&err);
-            -1
-        }
-    }
-}
+// #[no_mangle]
+// pub unsafe extern "C" fn connector_put_payload_cloning(
+//     connector: &mut Connector,
+//     port: PortId,
+//     payload: &Payload,
+// ) -> ErrorCode {
+//     match connector.put(port, payload.clone()) {
+//         Ok(()) => 0,
+//         Err(err) => {
+//             StoredError::tl_debug_store(&err);
+//             -1
+//         }
+//     }
+// }
 
 /// Convenience function combining the functionalities of
 /// "payload_new" with "connector_put_payload".

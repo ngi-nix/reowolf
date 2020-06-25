@@ -22,8 +22,6 @@ typedef struct Arc_ProtocolDescription Arc_ProtocolDescription;
 
 typedef struct Connector Connector;
 
-typedef struct Payload Payload;
-
 typedef int32_t ErrorCode;
 
 typedef uint32_t ConnectorId;
@@ -33,7 +31,9 @@ typedef uint32_t PortSuffix;
 typedef struct {
   ConnectorId connector_id;
   PortSuffix u32_suffix;
-} PortId;
+} Id;
+
+typedef Id PortId;
 
 /**
  * Given
@@ -103,6 +103,8 @@ Connector *connector_new_with_id(const Arc_ProtocolDescription *pd, ConnectorId 
 
 intptr_t connector_next_batch(Connector *connector);
 
+void connector_print_debug(Connector *connector);
+
 /**
  * Convenience function combining the functionalities of
  * "payload_new" with "connector_put_payload".
@@ -111,10 +113,6 @@ ErrorCode connector_put_bytes(Connector *connector,
                               PortId port,
                               const uint8_t *bytes_ptr,
                               uintptr_t bytes_len);
-
-ErrorCode connector_put_payload(Connector *connector, PortId port, Payload *payload);
-
-ErrorCode connector_put_payload_cloning(Connector *connector, PortId port, const Payload *payload);
 
 intptr_t connector_sync(Connector *connector, int64_t timeout_millis);
 
@@ -140,6 +138,7 @@ Arc_ProtocolDescription *protocol_description_parse(const uint8_t *pdl, uintptr_
  * - pointer is NULL iff there was no last error
  * - data at pointer is null-delimited
  * - len does NOT include the length of the null-delimiter
+ * If len is NULL, it will not written to.
  */
 const uint8_t *reowolf_error_peek(uintptr_t *len);
 
