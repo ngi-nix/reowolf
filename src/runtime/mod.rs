@@ -151,6 +151,7 @@ pub struct PortInfo {
     routes: HashMap<PortId, Route>,
 }
 #[derive(Debug)]
+// #[repr(C)]
 pub struct Connector {
     unphased: ConnectorUnphased,
     phased: ConnectorPhased,
@@ -176,7 +177,7 @@ pub struct ConnectorUnphased {
 #[derive(Debug)]
 pub enum ConnectorPhased {
     Setup { endpoint_setups: Vec<(PortId, EndpointSetup)>, surplus_sockets: u16 },
-    Communication(ConnectorCommunication),
+    Communication(Box<ConnectorCommunication>),
 }
 #[derive(Default, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Predicate {
@@ -203,7 +204,12 @@ pub struct SyncProtoContext<'a> {
     inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
-
+pub fn random_connector_id() -> ConnectorId {
+    type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
+    let mut bytes = Bytes8::default();
+    getrandom::getrandom(&mut bytes).unwrap();
+    unsafe { std::mem::transmute::<Bytes8, ConnectorId>(bytes) }
+}
 pub fn would_block(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::WouldBlock
 }

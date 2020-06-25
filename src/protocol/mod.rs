@@ -13,6 +13,7 @@ use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[repr(C)]
 pub struct ProtocolDescription {
     heap: Heap,
     source: InputSource,

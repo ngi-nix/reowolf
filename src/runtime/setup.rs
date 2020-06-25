@@ -26,9 +26,10 @@ impl Connector {
         polarity: Polarity,
         sock_addr: SocketAddr,
         endpoint_polarity: EndpointPolarity,
-    ) -> Result<PortId, ()> {
+    ) -> Result<PortId, NewNetPortError> {
         let Self { unphased: up, phased } = self;
         match phased {
+            ConnectorPhased::Communication { .. } => Err(NewNetPortError::AlreadyConnected),
             ConnectorPhased::Setup { endpoint_setups, .. } => {
                 let endpoint_setup = EndpointSetup { sock_addr, endpoint_polarity };
                 let p = up.id_manager.new_port_id();
@@ -46,7 +47,6 @@ impl Connector {
                 endpoint_setups.push((p, endpoint_setup));
                 Ok(p)
             }
-            ConnectorPhased::Communication { .. } => Err(()),
         }
     }
     pub fn connect(&mut self, timeout: Option<Duration>) -> Result<(), ConnectError> {
@@ -90,7 +90,7 @@ impl Connector {
                 };
                 session_optimize(cu, &mut comm, deadline)?;
                 log!(cu.logger, "connect() finished. setup phase complete");
-                self.phased = ConnectorPhased::Communication(comm);
+                self.phased = ConnectorPhased::Communication(Box::new(comm));
                 Ok(())
             }
         }
@@ -141,10 +141,6 @@ fn new_endpoint_manager(
             recv_peer_port: None,
             endpoint_setup: endpoint_setup.clone(),
         })
-    };
-    struct WakerState {
-        continue_signal: Arc<AtomicBool>,
-        failed_indices: HashSet<usize>,
     }
     ////////////////////////////////////////////
 

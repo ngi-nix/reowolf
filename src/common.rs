@@ -34,6 +34,7 @@ pub type PortSuffix = u32;
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+#[repr(C)]
 pub struct Id {
     pub(crate) connector_id: ConnectorId,
     pub(crate) u32_suffix: PortSuffix,
@@ -48,6 +49,7 @@ pub struct U32Stream {
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+#[repr(transparent)]
 pub struct PortId(Id);
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -59,11 +61,13 @@ pub struct FiringVar(pub(crate) PortId);
 pub struct ProtoComponentId(Id);
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(C)]
 pub struct Payload(Arc<Vec<u8>>);
 
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+#[repr(C)]
 pub enum Polarity {
     Putter, // output port (from the perspective of the component)
     Getter, // input port (from the perspective of the component)
@@ -71,6 +75,7 @@ pub enum Polarity {
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+#[repr(C)]
 pub enum EndpointPolarity {
     Active,  // calls connect()
     Passive, // calls bind() listen() accept()

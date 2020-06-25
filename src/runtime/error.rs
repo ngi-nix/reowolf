@@ -51,3 +51,8 @@ pub enum GottenError {
 pub enum NextBatchError {
     NotConnected,
 }
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum NewNetPortError {
+    AlreadyConnected,
+}

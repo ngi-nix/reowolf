@@ -1,3 +1,5 @@
 language = "C"
 header = "/* CBindgen generated */"
 include_guard = "REOWOLF_HEADER_DEFINED"
+[parse]
+parse_deps = false

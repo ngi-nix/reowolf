@@ -53,13 +53,11 @@ impl Connector {
         let Self { phased, .. } = self;
         match phased {
             ConnectorPhased::Setup { .. } => Err(NoPreviousRound),
-            ConnectorPhased::Communication(ConnectorCommunication { round_result, .. }) => {
-                match round_result {
-                    Err(_) => Err(PreviousSyncFailed),
-                    Ok(None) => Err(NoPreviousRound),
-                    Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(PortDidntGet),
-                }
-            }
+            ConnectorPhased::Communication(comm) => match &comm.round_result {
+                Err(_) => Err(PreviousSyncFailed),
+                Ok(None) => Err(NoPreviousRound),
+                Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(PortDidntGet),
+            },
         }
     }
     pub fn next_batch(&mut self) -> Result<usize, NextBatchError> {
@@ -68,9 +66,9 @@ impl Connector {
         let Self { phased, .. } = self;
         match phased {
             ConnectorPhased::Setup { .. } => Err(NotConnected),
-            ConnectorPhased::Communication(ConnectorCommunication { native_batches, .. }) => {
-                native_batches.push(Default::default());
-                Ok(native_batches.len() - 1)
+            ConnectorPhased::Communication(comm) => {
+                comm.native_batches.push(Default::default());
+                Ok(comm.native_batches.len() - 1)
             }
         }
     }
@@ -91,8 +89,8 @@ impl Connector {
         }
         match phased {
             ConnectorPhased::Setup { .. } => Err(NotConnected),
-            ConnectorPhased::Communication(ConnectorCommunication { native_batches, .. }) => {
-                let batch = native_batches.last_mut().unwrap(); // length >= invariant
+            ConnectorPhased::Communication(comm) => {
+                let batch = comm.native_batches.last_mut().unwrap(); // length >= invariant
                 Ok(batch)
             }
         }
