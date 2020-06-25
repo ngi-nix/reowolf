@@ -1,6 +1,6 @@
 [package]
 name = "reowolf_rs"
-version = "0.1.3"
+version = "0.1.4"
 authors = [
 	"Christopher Esterhuyse <esterhuy@cwi.nl, christopher.esterhuyse@gmail.com>",
 	"Hans-Dieter Hiep <hdh@cwi.nl>"

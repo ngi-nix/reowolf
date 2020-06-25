@@ -1,6 +1,7 @@
 mod communication;
 mod endpoints;
 pub mod error;
+mod ffi;
 mod logging;
 mod setup;
 
@@ -202,6 +203,7 @@ pub struct SyncProtoContext<'a> {
     inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
+
 pub fn would_block(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::WouldBlock
 }

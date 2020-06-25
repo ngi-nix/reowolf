@@ -6,6 +6,3 @@
 	- The resulting dylib can be found in target/release/, to be used with the header file reowolf.h.
 	- Note: A list of immediate ancestor dependencies is visible in Cargo.toml.
 	- Note: Run `cargo test --release` to run unit tests with release-level optimizations.
-
-## Structure
-- The user-facing API is visible in src/runtime/connector.rs
