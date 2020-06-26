@@ -6,4 +6,5 @@ main
 examples/*/*.exe
 examples/*.dll
 examples/reowolf*
+examples/*.txt
 logs

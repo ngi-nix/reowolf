@@ -269,10 +269,11 @@ impl Connector {
             }
             let branch = NativeBranch { index, gotten: Default::default(), to_get };
             if let Some(existing) = branching_native.branches.insert(predicate, branch) {
-                // TODO
                 return Err(Se::IndistinguishableBatches([index, existing.index]));
             }
         }
+        // restore the invariant
+        comm.native_batches.push(Default::default());
         let decision = Self::sync_reach_decision(
             cu,
             comm,
@@ -353,7 +354,6 @@ impl Connector {
             }
         }
         log!(cu.logger, "Done translating native batches into branches");
-        comm.native_batches.push(Default::default());
 
         // run all proto components to their sync blocker
         log!(

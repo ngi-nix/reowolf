@@ -18,16 +18,23 @@ fn next_test_addr() -> SocketAddr {
     SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into()
 }
 
-lazy_static::lazy_static! {
-    static ref MINIMAL_PROTO: Arc<ProtocolDescription> =
-        { Arc::new(reowolf::ProtocolDescription::parse(b"").unwrap()) };
-}
 fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connector {
     let _ = std::fs::create_dir(dir_path); // we will check failure soon
     let path = dir_path.join(format!("cid_{:?}.txt", connector_id));
     let file = File::create(path).unwrap();
     let file_logger = Box::new(FileLogger::new(connector_id, file));
     Connector::new(file_logger, MINIMAL_PROTO.clone(), connector_id, 8)
+}
+
+lazy_static::lazy_static! {
+    static ref MINIMAL_PROTO: Arc<ProtocolDescription> = {
+        Arc::new(reowolf::ProtocolDescription::parse(b"").unwrap())
+    };
+}
+lazy_static::lazy_static! {
+    static ref TEST_MSG: Payload = {
+        Payload::from(b"hello" as &[u8])
+    };
 }
 
 //////////////////////////////////////////
@@ -110,7 +117,7 @@ fn put_no_sync() {
     let mut c = file_logged_connector(0, test_log_path);
     let [o, _] = c.new_port_pair();
     c.connect(Some(Duration::from_secs(1))).unwrap();
-    c.put(o, (b"hi" as &[_]).into()).unwrap();
+    c.put(o, TEST_MSG.clone()).unwrap();
 }
 
 #[test]
@@ -119,7 +126,7 @@ fn wrong_polarity_bad() {
     let mut c = file_logged_connector(0, test_log_path);
     let [_, i] = c.new_port_pair();
     c.connect(Some(Duration::from_secs(1))).unwrap();
-    c.put(i, (b"hi" as &[_]).into()).unwrap_err();
+    c.put(i, TEST_MSG.clone()).unwrap_err();
 }
 
 #[test]
@@ -128,8 +135,8 @@ fn dup_put_bad() {
     let mut c = file_logged_connector(0, test_log_path);
     let [o, _] = c.new_port_pair();
     c.connect(Some(Duration::from_secs(1))).unwrap();
-    c.put(o, (b"hi" as &[_]).into()).unwrap();
-    c.put(o, (b"hi" as &[_]).into()).unwrap_err();
+    c.put(o, TEST_MSG.clone()).unwrap();
+    c.put(o, TEST_MSG.clone()).unwrap_err();
 }
 
 #[test]
@@ -175,10 +182,10 @@ fn native_polarity_checks() {
     c.connect(Some(Duration::from_secs(1))).unwrap();
     // fail...
     c.get(o).unwrap_err();
-    c.put(i, (b"hi" as &[_]).into()).unwrap_err();
+    c.put(i, TEST_MSG.clone()).unwrap_err();
     // succeed..
     c.get(i).unwrap();
-    c.put(o, (b"hi" as &[_]).into()).unwrap();
+    c.put(o, TEST_MSG.clone()).unwrap();
 }
 
 #[test]
@@ -209,7 +216,7 @@ fn native_self_msg() {
     let [o, i] = c.new_port_pair();
     c.connect(Some(Duration::from_secs(1))).unwrap();
     c.get(i).unwrap();
-    c.put(o, (b"hi" as &[_]).into()).unwrap();
+    c.put(o, TEST_MSG.clone()).unwrap();
     c.sync(Some(Duration::from_secs(1))).unwrap();
 }
 
@@ -230,7 +237,7 @@ fn two_natives_msg() {
             let mut c = file_logged_connector(1, test_log_path);
             let p = c.new_net_port(Putter, sock_addr, Passive).unwrap();
             c.connect(Some(Duration::from_secs(1))).unwrap();
-            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.put(p, TEST_MSG.clone()).unwrap();
             c.sync(Some(Duration::from_secs(1))).unwrap();
         });
     })
@@ -269,7 +276,7 @@ fn connector_pair_nondet() {
             let mut c = file_logged_connector(1, test_log_path);
             let p = c.new_net_port(Putter, sock_addr, Passive).unwrap();
             c.connect(Some(Duration::from_secs(1))).unwrap();
-            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.put(p, TEST_MSG.clone()).unwrap();
             c.sync(Some(Duration::from_secs(1))).unwrap();
         });
     })
@@ -287,6 +294,19 @@ fn native_immediately_inconsistent() {
 }
 
 #[test]
+fn native_recovers() {
+    let test_log_path = Path::new("./logs/native_recovers");
+    let mut c = file_logged_connector(0, test_log_path);
+    let [p, g] = c.new_port_pair();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.get(g).unwrap();
+    c.sync(Some(Duration::from_secs(30))).unwrap_err();
+    c.put(p, TEST_MSG.clone()).unwrap();
+    c.get(g).unwrap();
+    c.sync(Some(Duration::from_secs(30))).unwrap();
+}
+
+#[test]
 fn cannot_use_moved_ports() {
     /*
     native p|-->|g sync
@@ -296,7 +316,7 @@ fn cannot_use_moved_ports() {
     let [p, g] = c.new_port_pair();
     c.add_component(b"sync", &[g, p]).unwrap();
     c.connect(Some(Duration::from_secs(1))).unwrap();
-    c.put(p, (b"hello" as &[_]).into()).unwrap_err();
+    c.put(p, TEST_MSG.clone()).unwrap_err();
     c.get(g).unwrap_err();
 }
 
@@ -312,7 +332,7 @@ fn sync_sync() {
     let [p1, g1] = c.new_port_pair();
     c.add_component(b"sync", &[g0, p1]).unwrap();
     c.connect(Some(Duration::from_secs(1))).unwrap();
-    c.put(p0, (b"hello" as &[_]).into()).unwrap();
+    c.put(p0, TEST_MSG.clone()).unwrap();
     c.get(g1).unwrap();
     c.sync(Some(Duration::from_secs(1))).unwrap();
     c.gotten(g1).unwrap();
@@ -377,7 +397,7 @@ fn distributed_msg_bounce() {
                 c.new_net_port(Putter, sock_addrs[1], Passive).unwrap(),
             ];
             c.connect(Some(Duration::from_secs(1))).unwrap();
-            c.put(p, (b"hello" as &[_]).into()).unwrap();
+            c.put(p, TEST_MSG.clone()).unwrap();
             c.get(g).unwrap();
             c.sync(Some(Duration::from_secs(1))).unwrap();
             c.gotten(g).unwrap();

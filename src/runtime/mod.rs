@@ -1,9 +1,11 @@
 mod communication;
 mod endpoints;
 pub mod error;
-mod ffi;
 mod logging;
 mod setup;
+
+#[cfg(feature = "ffi")]
+pub mod ffi;
 
 #[cfg(test)]
 mod tests;
