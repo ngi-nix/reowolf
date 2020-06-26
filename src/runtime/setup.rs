@@ -147,7 +147,9 @@ fn new_endpoint_manager(
     // 1. Start to construct EndpointManager
     const WAKER_TOKEN: Token = Token(usize::MAX);
     const WAKER_PERIOD: Duration = Duration::from_millis(90);
+
     assert!(endpoint_setups.len() < WAKER_TOKEN.0); // using MAX usize as waker token
+
     let mut waker_continue_signal: Option<Arc<AtomicBool>> = None;
     let mut poll = Poll::new().map_err(|_| PollInitFailed)?;
     let mut events = Events::with_capacity(endpoint_setups.len() * 2 + 4);
@@ -294,7 +296,19 @@ fn new_endpoint_manager(
                                 // 2. learned the info of this peer port
                                 port_info.polarities.insert(peer_info.port, peer_info.polarity);
                                 port_info.peers.insert(peer_info.port, todo.local_port);
-                                port_info.routes.insert(peer_info.port, Route::Endpoint { index });
+                                if let Some(route) = port_info.routes.get(&peer_info.port) {
+                                    // check just for logging purposes
+                                    log!(
+                                        logger,
+                                        "Special case! Route to peer {:?} already known to be {:?}. Leave untouched",
+                                        peer_info.port,
+                                        route
+                                    );
+                                }
+                                port_info
+                                    .routes
+                                    .entry(peer_info.port)
+                                    .or_insert(Route::Endpoint { index });
                             }
                             Some(inappropriate_msg) => {
                                 log!(

@@ -58,11 +58,11 @@ ErrorCode connector_add_component(Connector *connector,
  * returns P, a port newly added to the native interface.
  */
 ErrorCode connector_add_net_port(Connector *connector,
+                                 PortId *port,
                                  const uint8_t *addr_str_ptr,
                                  uintptr_t addr_str_len,
                                  Polarity port_polarity,
-                                 EndpointPolarity endpoint_polarity,
-                                 PortId *port);
+                                 EndpointPolarity endpoint_polarity);
 
 /**
  * Given an initialized connector in setup or connecting state,

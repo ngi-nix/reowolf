@@ -217,11 +217,11 @@ pub unsafe extern "C" fn connector_add_component(
 #[no_mangle]
 pub unsafe extern "C" fn connector_add_net_port(
     connector: &mut Connector,
+    port: *mut PortId,
     addr_str_ptr: *const u8,
     addr_str_len: usize,
     port_polarity: Polarity,
     endpoint_polarity: EndpointPolarity,
-    port: *mut PortId,
 ) -> ErrorCode {
     StoredError::tl_clear();
     let addr_bytes = &*slice_from_parts(addr_str_ptr, addr_str_len);

@@ -504,3 +504,16 @@ fn chain_connect() {
     })
     .unwrap();
 }
+
+#[test]
+fn net_self_loop() {
+    let test_log_path = Path::new("./logs/net_self_loop");
+    let sock_addr = next_test_addr();
+    let mut c = file_logged_connector(0, test_log_path);
+    let p = c.new_net_port(Putter, sock_addr, Active).unwrap();
+    let g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.put(p, TEST_MSG.clone()).unwrap();
+    c.get(g).unwrap();
+    c.sync(Some(Duration::from_millis(500))).unwrap();
+}

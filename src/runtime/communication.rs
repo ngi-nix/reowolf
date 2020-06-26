@@ -397,9 +397,12 @@ impl Connector {
         comm.endpoint_manager.undelay_all();
         'undecided: loop {
             // drain payloads_to_get, sending them through endpoints / feeding them to components
+            log!(cu.logger, "Decision loop! have {} messages to recv", payloads_to_get.len());
             while let Some((getter, send_payload_msg)) = payloads_to_get.pop() {
                 assert!(cu.port_info.polarities.get(&getter).copied() == Some(Getter));
-                match cu.port_info.routes.get(&getter) {
+                let route = cu.port_info.routes.get(&getter);
+                log!(cu.logger, "Routing msg {:?} to {:?}", &send_payload_msg, &route);
+                match route {
                     None => {
                         log!(
                             cu.logger,
