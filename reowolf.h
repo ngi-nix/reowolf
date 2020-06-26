@@ -90,16 +90,14 @@ ErrorCode connector_get(Connector *connector, PortId port);
 const uint8_t *connector_gotten_bytes(Connector *connector, PortId port, uintptr_t *len);
 
 /**
- * Allocates a new connector on the heap and returning a pointer,
- * given an initialized protocol description.
- */
-Connector *connector_new(const Arc_ProtocolDescription *pd);
-
-/**
  * Initializes `out` with a new connector using the given protocol description as its configuration.
  * The connector uses the given (internal) connector ID.
  */
-Connector *connector_new_with_id(const Arc_ProtocolDescription *pd, ConnectorId cid);
+Connector *connector_new(const Arc_ProtocolDescription *pd);
+
+Connector *connector_new_logging(const Arc_ProtocolDescription *pd,
+                                 const uint8_t *path_ptr,
+                                 uintptr_t path_len);
 
 intptr_t connector_next_batch(Connector *connector);
 

@@ -1,0 +1,53 @@
+CID(3382080479): Created with connector_id 3382080479
+CID(3382080479): Added port pair (out->in) ptID(3382080479'0) -> ptID(3382080479'1)
+CID(3382080479): ~~~ CONNECT called timeout None
+CID(3382080479): Successfully connected 0 endpoints
+CID(3382080479): beginning neighborhood construction
+CID(3382080479): Edge case of no neighbors! No parent an no children!
+CID(3382080479): Successfully created neighborhood Neighborhood { parent: None, children: {} }
+CID(3382080479): Beginning session optimization
+CID(3382080479): Gathered all children's maps. ConnectorId set is... []
+CID(3382080479): Inserting my own info. Unoptimized subtree map is {3382080479: SessionInfo { serde_proto_description: SerdeProtocolDescription((A big honkin' protocol description)), port_info: PortInfo { polarities: {ptID(3382080479'1): Getter, ptID(3382080479'0): Putter}, peers: {ptID(3382080479'0): ptID(3382080479'1), ptID(3382080479'1): ptID(3382080479'0)}, routes: {ptID(3382080479'0): LocalComponent(Native), ptID(3382080479'1): LocalComponent(Native)} }, proto_components: {} }}
+CID(3382080479): I am the leader! I will optimize this session
+CID(3382080479): Session map optimize START
+CID(3382080479): Session map optimize END
+CID(3382080479): Optimized info map is {3382080479: SessionInfo { serde_proto_description: SerdeProtocolDescription((A big honkin' protocol description)), port_info: PortInfo { polarities: {ptID(3382080479'1): Getter, ptID(3382080479'0): Putter}, peers: {ptID(3382080479'0): ptID(3382080479'1), ptID(3382080479'1): ptID(3382080479'0)}, routes: {ptID(3382080479'0): LocalComponent(Native), ptID(3382080479'1): LocalComponent(Native)} }, proto_components: {} }}. Sending to children Iter([])
+CID(3382080479): All session info dumped!: {
+    3382080479: SessionInfo {
+        serde_proto_description: SerdeProtocolDescription(
+            (A big honkin' protocol description),
+        ),
+        port_info: PortInfo {
+            polarities: {
+                ptID(3382080479'1): Getter,
+                ptID(3382080479'0): Putter,
+            },
+            peers: {
+                ptID(3382080479'0): ptID(3382080479'1),
+                ptID(3382080479'1): ptID(3382080479'0),
+            },
+            routes: {
+                ptID(3382080479'0): LocalComponent(
+                    Native,
+                ),
+                ptID(3382080479'1): LocalComponent(
+                    Native,
+                ),
+            },
+        },
+        proto_components: {},
+    },
+}
+CID(3382080479): Session optimizations applied
+CID(3382080479): connect() finished. setup phase complete
+CID(3382080479): ~~~ SYNC called with timeout Some(5s); starting round 0
+CID(3382080479): Nonsync running 0 proto components...
+CID(3382080479): All 0 proto components are now done with Nonsync phase
+CID(3382080479): Solution storage initialized
+CID(3382080479): Translating 1 native batches into branches...
+CID(3382080479): Native branch index=0 contains internal inconsistency wrt. fvID(3382080479'1). Skipping
+CID(3382080479): Native starts with no branches! Failure!
+CID(3382080479): No parent. Deciding on failure
+CID(3382080479): Committing to decision Failure!
+CID(3382080479): Announcing decision CommMsg(CommMsg { round_index: 0, contents: Announce { decision: Failure } }) through child endpoints {}
+CID(3382080479): Connector dropping. Goodbye!

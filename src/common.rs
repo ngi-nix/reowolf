@@ -186,17 +186,17 @@ impl From<Vec<u8>> for Payload {
 }
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "PID<{},{}>", self.0.connector_id, self.0.u32_suffix)
+        write!(f, "ptID({}'{})", self.0.connector_id, self.0.u32_suffix)
     }
 }
 impl Debug for FiringVar {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "VID<{},{}>", (self.0).0.connector_id, (self.0).0.u32_suffix)
+        write!(f, "fvID({}'{})", (self.0).0.connector_id, (self.0).0.u32_suffix)
     }
 }
 impl Debug for ProtoComponentId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ProtoComponentId({},{})", self.0.connector_id, self.0.u32_suffix)
+        write!(f, "pcID({}'{})", self.0.connector_id, self.0.u32_suffix)
     }
 }
 impl std::ops::Not for Polarity {

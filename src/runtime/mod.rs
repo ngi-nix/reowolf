@@ -16,7 +16,6 @@ pub struct RoundOk {
     batch_index: usize,
     gotten: HashMap<PortId, Payload>,
 }
-#[derive(Debug)]
 pub struct VecSet<T: std::cmp::Ord> {
     // invariant: ordered, deduplicated
     vec: Vec<T>,
@@ -204,12 +203,6 @@ pub struct SyncProtoContext<'a> {
     inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
-pub fn random_connector_id() -> ConnectorId {
-    type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
-    let mut bytes = Bytes8::default();
-    getrandom::getrandom(&mut bytes).unwrap();
-    unsafe { std::mem::transmute::<Bytes8, ConnectorId>(bytes) }
-}
 pub fn would_block(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::WouldBlock
 }
@@ -268,6 +261,12 @@ impl Drop for Connector {
     }
 }
 impl Connector {
+    fn random_id() -> ConnectorId {
+        type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
+        let mut bytes = Bytes8::default();
+        getrandom::getrandom(&mut bytes).unwrap();
+        unsafe { std::mem::transmute::<Bytes8, ConnectorId>(bytes) }
+    }
     pub fn swap_logger(&mut self, mut new_logger: Box<dyn Logger>) -> Box<dyn Logger> {
         std::mem::swap(&mut self.unphased.logger, &mut new_logger);
         new_logger
@@ -436,6 +435,11 @@ impl Predicate {
         self.assigned.get(&var).copied()
     }
 }
+impl<T: Debug + std::cmp::Ord> Debug for VecSet<T> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        f.debug_set().entries(self.vec.iter()).finish()
+    }
+}
 impl Debug for Predicate {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         struct MySet<'a>(&'a Predicate, bool);
@@ -457,7 +461,6 @@ impl Debug for Predicate {
             .finish()
     }
 }
-
 impl serde::Serialize for SerdeProtocolDescription {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

@@ -116,11 +116,33 @@ pub unsafe extern "C" fn protocol_description_clone(
 
 ///////////////////// CONNECTOR //////////////////////////
 
-/// Allocates a new connector on the heap and returning a pointer,
-/// given an initialized protocol description.
 #[no_mangle]
-pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
-    connector_new_with_id(pd, random_connector_id())
+pub unsafe extern "C" fn connector_new_logging(
+    pd: &Arc<ProtocolDescription>,
+    path_ptr: *const u8,
+    path_len: usize,
+) -> *mut Connector {
+    StoredError::tl_clear();
+    let path_bytes = &*slice_from_parts(path_ptr, path_len);
+    let path_str = match std::str::from_utf8(path_bytes) {
+        Ok(path_str) => path_str,
+        Err(err) => {
+            StoredError::tl_debug_store(&err);
+            return std::ptr::null_mut();
+        }
+    };
+    match std::fs::File::create(path_str) {
+        Ok(file) => {
+            let connector_id = Connector::random_id();
+            let file_logger = Box::new(FileLogger::new(connector_id, file));
+            let c = Connector::new(file_logger, pd.clone(), connector_id, 8);
+            Box::into_raw(Box::new(c))
+        }
+        Err(err) => {
+            StoredError::tl_debug_store(&err);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]
@@ -131,11 +153,8 @@ pub unsafe extern "C" fn connector_print_debug(connector: &mut Connector) {
 /// Initializes `out` with a new connector using the given protocol description as its configuration.
 /// The connector uses the given (internal) connector ID.
 #[no_mangle]
-pub unsafe extern "C" fn connector_new_with_id(
-    pd: &Arc<ProtocolDescription>,
-    cid: ConnectorId,
-) -> *mut Connector {
-    let c = Connector::new(Box::new(DummyLogger), pd.clone(), cid, 8);
+pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
+    let c = Connector::new(Box::new(DummyLogger), pd.clone(), Connector::random_id(), 8);
     Box::into_raw(Box::new(c))
 }
 

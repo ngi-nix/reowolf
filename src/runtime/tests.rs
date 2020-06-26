@@ -277,6 +277,16 @@ fn connector_pair_nondet() {
 }
 
 #[test]
+fn native_immediately_inconsistent() {
+    let test_log_path = Path::new("./logs/native_immediately_inconsistent");
+    let mut c = file_logged_connector(0, test_log_path);
+    let [_, g] = c.new_port_pair();
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.get(g).unwrap();
+    c.sync(Some(Duration::from_secs(30))).unwrap_err();
+}
+
+#[test]
 fn cannot_use_moved_ports() {
     /*
     native p|-->|g sync
