@@ -18,13 +18,13 @@ impl Logger for DummyLogger {
 }
 impl Logger for VecLogger {
     fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        let _ = write!(&mut self.1, "CID({}): ", self.0);
+        let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
         self
     }
 }
 impl Logger for FileLogger {
     fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        let _ = write!(&mut self.1, "CID({}): ", self.0);
+        let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
         &mut self.1
     }
 }

@@ -217,15 +217,15 @@ impl<T: std::cmp::Ord> VecSet<T> {
     fn contains(&self, element: &T) -> bool {
         self.vec.binary_search(element).is_ok()
     }
-    fn insert(&mut self, element: T) -> bool {
-        match self.vec.binary_search(&element) {
-            Ok(_) => false,
-            Err(index) => {
-                self.vec.insert(index, element);
-                true
-            }
-        }
-    }
+    // fn insert(&mut self, element: T) -> bool {
+    //     match self.vec.binary_search(&element) {
+    //         Ok(_) => false,
+    //         Err(index) => {
+    //             self.vec.insert(index, element);
+    //             true
+    //         }
+    //     }
+    // }
     fn iter(&self) -> std::slice::Iter<T> {
         self.vec.iter()
     }
@@ -265,9 +265,13 @@ impl Drop for Connector {
 impl Connector {
     fn random_id() -> ConnectorId {
         type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
-        let mut bytes = Bytes8::default();
-        getrandom::getrandom(&mut bytes).unwrap();
-        unsafe { std::mem::transmute::<Bytes8, ConnectorId>(bytes) }
+        unsafe {
+            let mut bytes = std::mem::MaybeUninit::<Bytes8>::uninit();
+            // getrandom is the canonical crate for a small, secure rng
+            getrandom::getrandom(&mut *bytes.as_mut_ptr()).unwrap();
+            // safe! representations of all valid Byte8 values are valid ConnectorId values
+            std::mem::transmute::<_, _>(bytes.assume_init())
+        }
     }
     pub fn swap_logger(&mut self, mut new_logger: Box<dyn Logger>) -> Box<dyn Logger> {
         std::mem::swap(&mut self.unphased.logger, &mut new_logger);

@@ -26,9 +26,19 @@ fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connecto
     Connector::new(file_logger, MINIMAL_PROTO.clone(), connector_id, 8)
 }
 
+static MINIMAL_PDL: &'static [u8] = b"
+primitive together(in ia, in ib, out oa, out ob){
+  while(true) synchronous() {
+    if(fires(ia)) {
+      put(oa, get(ia));
+      put(ob, get(ib));
+    }
+  } 
+}
+";
 lazy_static::lazy_static! {
     static ref MINIMAL_PROTO: Arc<ProtocolDescription> = {
-        Arc::new(reowolf::ProtocolDescription::parse(b"").unwrap())
+        Arc::new(reowolf::ProtocolDescription::parse(MINIMAL_PDL).unwrap())
     };
 }
 lazy_static::lazy_static! {
@@ -516,4 +526,56 @@ fn net_self_loop() {
     c.put(p, TEST_MSG.clone()).unwrap();
     c.get(g).unwrap();
     c.sync(Some(Duration::from_millis(500))).unwrap();
+}
+
+#[test]
+fn nobody_connects_active() {
+    let test_log_path = Path::new("./logs/nobody_connects_active");
+    let sock_addr = next_test_addr();
+    let mut c = file_logged_connector(0, test_log_path);
+    let _g = c.new_net_port(Getter, sock_addr, Active).unwrap();
+    c.connect(Some(Duration::from_secs(5))).unwrap_err();
+}
+#[test]
+fn nobody_connects_passive() {
+    let test_log_path = Path::new("./logs/nobody_connects_passive");
+    let sock_addr = next_test_addr();
+    let mut c = file_logged_connector(0, test_log_path);
+    let _g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+    c.connect(Some(Duration::from_secs(5))).unwrap_err();
+}
+
+#[test]
+fn together() {
+    let test_log_path = Path::new("./logs/together");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = file_logged_connector(0, test_log_path);
+            let [p0, p1] = c.new_port_pair();
+            let p2 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+            let p3 = c.new_net_port(Putter, sock_addrs[1], Active).unwrap();
+            let [p4, p5] = c.new_port_pair();
+            c.add_component(b"together", &[p1, p2, p3, p4]).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.get(p5).unwrap();
+            c.sync(Some(Duration::from_millis(500))).unwrap();
+            c.gotten(p5).unwrap();
+        });
+        s.spawn(|_| {
+            let mut c = file_logged_connector(1, test_log_path);
+            let [p0, p1] = c.new_port_pair();
+            let p2 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
+            let p3 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
+            let [p4, p5] = c.new_port_pair();
+            c.add_component(b"together", &[p1, p2, p3, p4]).unwrap();
+            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.get(p5).unwrap();
+            c.sync(Some(Duration::from_millis(500))).unwrap();
+            c.gotten(p5).unwrap();
+        });
+    })
+    .unwrap();
 }

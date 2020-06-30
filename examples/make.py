@@ -1,4 +1,4 @@
-import os, glob, subprocess
+import os, glob, subprocess, time
 script_path = os.path.dirname(os.path.realpath(__file__));
 for c_file in glob.glob(script_path + "/*/*.c", recursive=False):
   print("compiling", c_file)
@@ -12,4 +12,5 @@ for c_file in glob.glob(script_path + "/*/*.c", recursive=False):
     "-o",           # output flag
     c_file[:-2]     # output filename
   ];
-  subprocess.run(args);
+  subprocess.run(args)
+input("Blocking until newline...");

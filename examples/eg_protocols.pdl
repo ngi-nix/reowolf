@@ -1,1 +1,8 @@
-primitive foo(){}
+primitive together(in ia, in ib, out oa, out ob){
+  while(true) synchronous() {
+    if(fires(ia)) {
+      put(oa, get(ia));
+      put(ob, get(ib));
+    }
+  }	
+}

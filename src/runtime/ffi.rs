@@ -241,7 +241,9 @@ pub unsafe extern "C" fn connector_add_net_port(
     };
     match connector.new_net_port(port_polarity, sock_address, endpoint_polarity) {
         Ok(p) => {
-            port.write(p);
+            if !port.is_null() {
+                port.write(p);
+            }
             0
         }
         Err(err) => {
@@ -360,13 +362,15 @@ pub unsafe extern "C" fn connector_sync(connector: &mut Connector, timeout_milli
 pub unsafe extern "C" fn connector_gotten_bytes(
     connector: &mut Connector,
     port: PortId,
-    len: *mut usize,
+    out_len: *mut usize,
 ) -> *const u8 {
     StoredError::tl_clear();
     match connector.gotten(port) {
         Ok(payload_borrow) => {
             let slice = payload_borrow.as_slice();
-            len.write(slice.len());
+            if !out_len.is_null() {
+                out_len.write(slice.len());
+            }
             slice.as_ptr()
         }
         Err(err) => {

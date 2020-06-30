@@ -15,7 +15,7 @@ enum TryRecyAnyError {
 impl Endpoint {
     pub(super) fn try_recv<T: serde::de::DeserializeOwned>(
         &mut self,
-        logger: &mut dyn Logger,
+        _logger: &mut dyn Logger,
     ) -> Result<Option<T>, EndpointError> {
         use EndpointError::*;
         // populate inbox as much as possible
