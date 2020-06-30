@@ -1611,7 +1611,7 @@ pub enum EvalContinuation {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Prompt {
+pub(crate) struct Prompt {
     definition: DefinitionId,
     store: Store,
     position: Option<StatementId>,

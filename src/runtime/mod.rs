@@ -14,89 +14,10 @@ use crate::common::*;
 use error::*;
 
 #[derive(Debug)]
-pub struct RoundOk {
-    batch_index: usize,
-    gotten: HashMap<PortId, Payload>,
-}
-pub struct VecSet<T: std::cmp::Ord> {
-    // invariant: ordered, deduplicated
-    vec: Vec<T>,
-}
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ComponentId {
-    Native,
-    Proto(ProtoComponentId),
-}
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum Route {
-    LocalComponent(ComponentId),
-    Endpoint { index: usize },
-}
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct MyPortInfo {
-    polarity: Polarity,
-    port: PortId,
-}
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Decision {
-    Failure,
-    Success(Predicate),
-}
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum Msg {
-    SetupMsg(SetupMsg),
-    CommMsg(CommMsg),
-}
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum SetupMsg {
-    MyPortInfo(MyPortInfo),
-    LeaderWave { wave_leader: ConnectorId },
-    LeaderAnnounce { tree_leader: ConnectorId },
-    YouAreMyParent,
-    SessionGather { unoptimized_map: HashMap<ConnectorId, SessionInfo> },
-    SessionScatter { optimized_map: HashMap<ConnectorId, SessionInfo> },
-}
-#[derive(Debug, Clone)]
-pub(crate) struct SerdeProtocolDescription(Arc<ProtocolDescription>);
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SessionInfo {
-    serde_proto_description: SerdeProtocolDescription,
-    port_info: PortInfo,
-    proto_components: HashMap<ProtoComponentId, ProtoComponent>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CommMsg {
-    pub round_index: usize,
-    pub contents: CommMsgContents,
-}
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub enum CommMsgContents {
-    SendPayload(SendPayloadMsg),
-    Suggest { suggestion: Decision }, // SINKWARD
-    Announce { decision: Decision },  // SINKAWAYS
-}
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct SendPayloadMsg {
-    predicate: Predicate,
-    payload: Payload,
-}
-#[derive(Debug, PartialEq)]
-pub enum CommonSatResult {
-    FormerNotLatter,
-    LatterNotFormer,
-    Equivalent,
-    New(Predicate),
-    Nonexistant,
-}
-pub struct Endpoint {
-    inbox: Vec<u8>,
-    stream: TcpStream,
-}
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProtoComponent {
-    state: ComponentState,
-    ports: HashSet<PortId>,
+#[repr(C)]
+pub struct Connector {
+    unphased: ConnectorUnphased,
+    phased: ConnectorPhased,
 }
 pub trait Logger: Debug {
     fn line_writer(&mut self) -> &mut dyn std::io::Write;
@@ -107,34 +28,127 @@ pub struct VecLogger(ConnectorId, Vec<u8>);
 pub struct DummyLogger;
 #[derive(Debug)]
 pub struct FileLogger(ConnectorId, std::fs::File);
-#[derive(Debug, Clone)]
-pub struct EndpointSetup {
-    pub sock_addr: SocketAddr,
-    pub endpoint_polarity: EndpointPolarity,
+pub(crate) struct NonsyncProtoContext<'a> {
+    logger: &'a mut dyn Logger,
+    proto_component_id: ProtoComponentId,
+    port_info: &'a mut PortInfo,
+    id_manager: &'a mut IdManager,
+    proto_component_ports: &'a mut HashSet<PortId>,
+    unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>,
+}
+pub(crate) struct SyncProtoContext<'a> {
+    logger: &'a mut dyn Logger,
+    predicate: &'a Predicate,
+    port_info: &'a PortInfo,
+    inbox: &'a HashMap<PortId, Payload>,
 }
 #[derive(Debug)]
-pub struct EndpointExt {
+struct RoundOk {
+    batch_index: usize,
+    gotten: HashMap<PortId, Payload>,
+}
+struct VecSet<T: std::cmp::Ord> {
+    // invariant: ordered, deduplicated
+    vec: Vec<T>,
+}
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+enum ComponentId {
+    Native,
+    Proto(ProtoComponentId),
+}
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+enum Route {
+    LocalComponent(ComponentId),
+    Endpoint { index: usize },
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct MyPortInfo {
+    polarity: Polarity,
+    port: PortId,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum Decision {
+    Failure,
+    Success(Predicate),
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+enum Msg {
+    SetupMsg(SetupMsg),
+    CommMsg(CommMsg),
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+enum SetupMsg {
+    MyPortInfo(MyPortInfo),
+    LeaderWave { wave_leader: ConnectorId },
+    LeaderAnnounce { tree_leader: ConnectorId },
+    YouAreMyParent,
+    SessionGather { unoptimized_map: HashMap<ConnectorId, SessionInfo> },
+    SessionScatter { optimized_map: HashMap<ConnectorId, SessionInfo> },
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct SessionInfo {
+    serde_proto_description: SerdeProtocolDescription,
+    port_info: PortInfo,
+    proto_components: HashMap<ProtoComponentId, ProtoComponent>,
+}
+#[derive(Debug, Clone)]
+struct SerdeProtocolDescription(Arc<ProtocolDescription>);
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct CommMsg {
+    round_index: usize,
+    contents: CommMsgContents,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+enum CommMsgContents {
+    SendPayload(SendPayloadMsg),
+    Suggest { suggestion: Decision }, // SINKWARD
+    Announce { decision: Decision },  // SINKAWAYS
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct SendPayloadMsg {
+    predicate: Predicate,
+    payload: Payload,
+}
+#[derive(Debug, PartialEq)]
+enum CommonSatResult {
+    FormerNotLatter,
+    LatterNotFormer,
+    Equivalent,
+    New(Predicate),
+    Nonexistant,
+}
+struct Endpoint {
+    inbox: Vec<u8>,
+    stream: TcpStream,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ProtoComponent {
+    state: ComponentState,
+    ports: HashSet<PortId>,
+}
+#[derive(Debug, Clone)]
+struct EndpointSetup {
+    sock_addr: SocketAddr,
+    endpoint_polarity: EndpointPolarity,
+}
+#[derive(Debug)]
+struct EndpointExt {
     endpoint: Endpoint,
     getter_for_incoming: PortId,
 }
 #[derive(Debug)]
-pub struct Neighborhood {
+struct Neighborhood {
     parent: Option<usize>,
     children: VecSet<usize>,
 }
 #[derive(Debug)]
-pub struct MemInMsg {
-    inp: PortId,
-    msg: Payload,
-}
-#[derive(Debug)]
-pub struct IdManager {
+struct IdManager {
     connector_id: ConnectorId,
     port_suffix_stream: U32Stream,
     proto_component_suffix_stream: U32Stream,
 }
 #[derive(Debug)]
-pub struct EndpointManager {
+struct EndpointManager {
     // invariants:
     // 1. endpoint N is registered READ | WRITE with poller
     // 2. Events is empty
@@ -146,28 +160,21 @@ pub struct EndpointManager {
     endpoint_exts: Vec<EndpointExt>,
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct PortInfo {
+struct PortInfo {
     polarities: HashMap<PortId, Polarity>,
     peers: HashMap<PortId, PortId>,
     routes: HashMap<PortId, Route>,
 }
 #[derive(Debug)]
-// #[repr(C)]
-pub struct Connector {
-    unphased: ConnectorUnphased,
-    phased: ConnectorPhased,
-}
-#[derive(Debug)]
-pub struct ConnectorCommunication {
+struct ConnectorCommunication {
     round_index: usize,
     endpoint_manager: EndpointManager,
     neighborhood: Neighborhood,
-    mem_inbox: Vec<MemInMsg>,
     native_batches: Vec<NativeBatch>,
     round_result: Result<Option<RoundOk>, SyncError>,
 }
 #[derive(Debug)]
-pub struct ConnectorUnphased {
+struct ConnectorUnphased {
     proto_description: Arc<ProtocolDescription>,
     proto_components: HashMap<ProtoComponentId, ProtoComponent>,
     logger: Box<dyn Logger>,
@@ -176,33 +183,19 @@ pub struct ConnectorUnphased {
     port_info: PortInfo,
 }
 #[derive(Debug)]
-pub enum ConnectorPhased {
+enum ConnectorPhased {
     Setup { endpoint_setups: Vec<(PortId, EndpointSetup)>, surplus_sockets: u16 },
     Communication(Box<ConnectorCommunication>),
 }
 #[derive(Default, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Predicate {
-    pub assigned: BTreeMap<FiringVar, bool>,
+struct Predicate {
+    assigned: BTreeMap<FiringVar, bool>,
 }
 #[derive(Debug, Default)]
-pub struct NativeBatch {
+struct NativeBatch {
     // invariant: putters' and getters' polarities respected
     to_put: HashMap<PortId, Payload>,
     to_get: HashSet<PortId>,
-}
-pub struct NonsyncProtoContext<'a> {
-    logger: &'a mut dyn Logger,
-    proto_component_id: ProtoComponentId,
-    port_info: &'a mut PortInfo,
-    id_manager: &'a mut IdManager,
-    proto_component_ports: &'a mut HashSet<PortId>,
-    unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>,
-}
-pub struct SyncProtoContext<'a> {
-    logger: &'a mut dyn Logger,
-    predicate: &'a Predicate,
-    port_info: &'a PortInfo,
-    inbox: &'a HashMap<PortId, Payload>,
 }
 ////////////////
 pub fn would_block(err: &std::io::Error) -> bool {
@@ -370,7 +363,7 @@ impl Predicate {
     /// If the resulting predicate is equivlanet to self, other, or both,
     /// FormerNotLatter, LatterNotFormer and Equivalent are returned respectively.
     /// otherwise New(N) is returned.
-    pub fn common_satisfier(&self, other: &Self) -> CommonSatResult {
+    fn common_satisfier(&self, other: &Self) -> CommonSatResult {
         use CommonSatResult as Csr;
         // iterators over assignments of both predicates. Rely on SORTED ordering of BTreeMap's keys.
         let [mut s_it, mut o_it] = [self.assigned.iter(), other.assigned.iter()];

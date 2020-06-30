@@ -1,7 +1,7 @@
 mod arena;
 mod ast;
 mod eval;
-pub mod inputsource;
+pub(crate) mod inputsource;
 mod lexer;
 mod library;
 mod parser;
@@ -20,10 +20,10 @@ pub struct ProtocolDescription {
     root: RootId,
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ComponentState {
+pub(crate) struct ComponentState {
     prompt: Prompt,
 }
-pub enum EvalContext<'a> {
+pub(crate) enum EvalContext<'a> {
     Nonsync(&'a mut NonsyncProtoContext<'a>),
     Sync(&'a mut SyncProtoContext<'a>),
     // None,
@@ -51,7 +51,7 @@ impl ProtocolDescription {
             }
         }
     }
-    pub fn component_polarities(
+    pub(crate) fn component_polarities(
         &self,
         identifier: &[u8],
     ) -> Result<Vec<Polarity>, AddComponentError> {
@@ -95,7 +95,7 @@ impl ProtocolDescription {
         Ok(result)
     }
     // expects port polarities to be correct
-    pub fn new_main_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
+    pub(crate) fn new_main_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
         let mut args = Vec::new();
         for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {
             match y {
@@ -110,7 +110,7 @@ impl ProtocolDescription {
     }
 }
 impl ComponentState {
-    pub fn nonsync_run<'a: 'b, 'b>(
+    pub(crate) fn nonsync_run<'a: 'b, 'b>(
         &'a mut self,
         context: &'b mut NonsyncProtoContext<'b>,
         pd: &'a ProtocolDescription,
@@ -146,7 +146,7 @@ impl ComponentState {
         }
     }
 
-    pub fn sync_run<'a: 'b, 'b>(
+    pub(crate) fn sync_run<'a: 'b, 'b>(
         &'a mut self,
         context: &'b mut SyncProtoContext<'b>,
         pd: &'a ProtocolDescription,

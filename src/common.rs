@@ -1,7 +1,7 @@
 ///////////////////// PRELUDE /////////////////////
 
-pub use crate::protocol::{ComponentState, ProtocolDescription};
-pub use crate::runtime::{NonsyncProtoContext, SyncProtoContext};
+pub(crate) use crate::protocol::{ComponentState, ProtocolDescription};
+pub(crate) use crate::runtime::{NonsyncProtoContext, SyncProtoContext};
 
 pub use core::{
     cmp::Ordering,

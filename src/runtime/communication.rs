@@ -9,7 +9,7 @@ struct BranchingNative {
 struct NativeBranch {
     index: usize,
     gotten: HashMap<PortId, Payload>,
-    to_get: HashSet<PortId>,
+    to_get: HashSet<PortId>, // native branch is ended iff to_get.is_empty()
 }
 #[derive(Debug)]
 struct SolutionStorage {
@@ -26,9 +26,9 @@ struct BranchingProtoComponent {
 }
 #[derive(Debug, Clone)]
 struct ProtoComponentBranch {
-    ended: bool,
     inbox: HashMap<PortId, Payload>,
     state: ComponentState,
+    ended: bool,
 }
 struct CyclicDrainer<'a, K: Eq + Hash, V> {
     input: &'a mut HashMap<K, V>,

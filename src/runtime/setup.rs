@@ -84,7 +84,6 @@ impl Connector {
                     round_index: 0,
                     endpoint_manager,
                     neighborhood,
-                    mem_inbox: Default::default(),
                     native_batches: vec![Default::default()],
                     round_result: Ok(None),
                 };
