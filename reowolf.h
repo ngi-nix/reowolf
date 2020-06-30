@@ -31,9 +31,7 @@ typedef uint32_t PortSuffix;
 typedef struct {
   ConnectorId connector_id;
   PortSuffix u32_suffix;
-} Id;
-
-typedef Id PortId;
+} PortId;
 
 /**
  * Given
@@ -87,7 +85,7 @@ void connector_destroy(Connector *connector);
 
 ErrorCode connector_get(Connector *connector, PortId port);
 
-const uint8_t *connector_gotten_bytes(Connector *connector, PortId port, uintptr_t *len);
+const uint8_t *connector_gotten_bytes(Connector *connector, PortId port, uintptr_t *out_len);
 
 /**
  * Initializes `out` with a new connector using the given protocol description as its configuration.

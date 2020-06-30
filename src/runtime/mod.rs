@@ -14,7 +14,6 @@ use crate::common::*;
 use error::*;
 
 #[derive(Debug)]
-#[repr(C)]
 pub struct Connector {
     unphased: ConnectorUnphased,
     phased: ConnectorPhased,
