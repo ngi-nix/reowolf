@@ -17,7 +17,6 @@ fn next_test_addr() -> SocketAddr {
     let port = TEST_PORT.fetch_add(1, SeqCst);
     SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into()
 }
-
 fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connector {
     let _ = std::fs::create_dir(dir_path); // we will check failure soon
     let path = dir_path.join(format!("cid_{:?}.txt", connector_id));
@@ -25,7 +24,6 @@ fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connecto
     let file_logger = Box::new(FileLogger::new(connector_id, file));
     Connector::new(file_logger, MINIMAL_PROTO.clone(), connector_id, 8)
 }
-
 static MINIMAL_PDL: &'static [u8] = b"
 primitive together(in ia, in ib, out oa, out ob){
   while(true) synchronous() {
@@ -485,31 +483,31 @@ fn chain_connect() {
         s.spawn(|_| {
             let mut c = file_logged_connector(0, test_log_path);
             c.new_net_port(Putter, sock_addrs[0], Passive).unwrap();
-            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.connect(Some(Duration::from_secs(2))).unwrap();
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(10, test_log_path);
             c.new_net_port(Getter, sock_addrs[0], Active).unwrap();
             c.new_net_port(Putter, sock_addrs[1], Passive).unwrap();
-            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.connect(Some(Duration::from_secs(2))).unwrap();
         });
         s.spawn(|_| {
             // LEADER
             let mut c = file_logged_connector(7, test_log_path);
             c.new_net_port(Getter, sock_addrs[1], Active).unwrap();
             c.new_net_port(Putter, sock_addrs[2], Passive).unwrap();
-            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.connect(Some(Duration::from_secs(2))).unwrap();
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(4, test_log_path);
             c.new_net_port(Getter, sock_addrs[2], Active).unwrap();
             c.new_net_port(Putter, sock_addrs[3], Passive).unwrap();
-            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.connect(Some(Duration::from_secs(2))).unwrap();
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(1, test_log_path);
             c.new_net_port(Getter, sock_addrs[3], Active).unwrap();
-            c.connect(Some(Duration::from_secs(1))).unwrap();
+            c.connect(Some(Duration::from_secs(2))).unwrap();
         });
     })
     .unwrap();

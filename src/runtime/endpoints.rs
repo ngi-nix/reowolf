@@ -13,9 +13,12 @@ enum TryRecyAnyError {
 
 /////////////////////
 impl Endpoint {
+    fn bincode_opts() -> impl bincode::config::Options {
+        bincode::config::DefaultOptions::default()
+    }
     pub(super) fn try_recv<T: serde::de::DeserializeOwned>(
         &mut self,
-        _logger: &mut dyn Logger,
+        logger: &mut dyn Logger,
     ) -> Result<Option<T>, EndpointError> {
         use EndpointError::*;
         // populate inbox as much as possible
@@ -29,8 +32,10 @@ impl Endpoint {
                 Err(_e) => return Err(BrokenEndpoint),
             }
         }
+        endptlog!(logger, "Inbox bytes {:x?}", &self.inbox);
         let mut monitored = MonitoredReader::from(&self.inbox[..]);
-        match bincode::deserialize_from(&mut monitored) {
+        use bincode::config::Options;
+        match Self::bincode_opts().deserialize_from(&mut monitored) {
             Ok(msg) => {
                 let msg_size = monitored.bytes_read();
                 self.inbox.drain(0..(msg_size.try_into().unwrap()));
@@ -41,13 +46,14 @@ impl Endpoint {
                     Ok(None)
                 }
                 _ => Err(MalformedMessage),
-                // println!("SERDE ERRKIND {:?}", e);
-                // Err(MalformedMessage)
             },
         }
     }
     pub(super) fn send<T: serde::ser::Serialize>(&mut self, msg: &T) -> Result<(), EndpointError> {
-        bincode::serialize_into(&mut self.stream, msg).map_err(|_| EndpointError::BrokenEndpoint)
+        use bincode::config::Options;
+        Self::bincode_opts()
+            .serialize_into(&mut self.stream, msg)
+            .map_err(|_| EndpointError::BrokenEndpoint)
     }
 }
 

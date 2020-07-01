@@ -485,3 +485,40 @@ impl<'de> serde::Deserialize<'de> for SerdeProtocolDescription {
         Ok(Self(Arc::new(inner)))
     }
 }
+
+#[test]
+fn bincode_serde() {
+    let mut b = Vec::with_capacity(64);
+    use bincode::config::Options;
+    let opt = bincode::config::DefaultOptions::default();
+    opt.serialize_into(&mut b, &Decision::Failure).unwrap();
+    println!("failure  {:x?}", b);
+    b.clear();
+
+    opt.serialize_into(&mut b, &CommMsgContents::Suggest { suggestion: Decision::Failure })
+        .unwrap();
+    println!("decision {:x?}", b);
+    b.clear();
+
+    opt.serialize_into(
+        &mut b,
+        &CommMsg {
+            round_index: 4,
+            contents: CommMsgContents::Suggest { suggestion: Decision::Failure },
+        },
+    )
+    .unwrap();
+    println!("commmsg  {:x?}", b);
+    b.clear();
+
+    opt.serialize_into(
+        &mut b,
+        &Msg::CommMsg(CommMsg {
+            round_index: 4,
+            contents: CommMsgContents::Suggest { suggestion: Decision::Failure },
+        }),
+    )
+    .unwrap();
+    println!("msg      {:x?}", b);
+    b.clear();
+}
