@@ -93,6 +93,7 @@ enum SetupMsg {
 struct SessionInfo {
     serde_proto_description: SerdeProtocolDescription,
     port_info: PortInfo,
+    getter_for_incoming: Vec<PortId>,
     proto_components: HashMap<ProtoComponentId, ProtoComponent>,
 }
 #[derive(Debug, Clone)]

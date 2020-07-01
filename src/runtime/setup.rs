@@ -643,6 +643,12 @@ fn session_optimize(
         port_info: cu.port_info.clone(),
         proto_components: cu.proto_components.clone(),
         serde_proto_description: SerdeProtocolDescription(cu.proto_description.clone()),
+        getter_for_incoming: comm
+            .endpoint_manager
+            .endpoint_exts
+            .iter()
+            .map(|ee| ee.getter_for_incoming)
+            .collect(),
     };
     unoptimized_map.insert(cu.id_manager.connector_id, my_session_info);
     log!(cu.logger, "Inserting my own info. Unoptimized subtree map is {:?}", &unoptimized_map);
@@ -715,12 +721,16 @@ fn leader_session_map_optimize(
 }
 fn apply_optimizations(
     cu: &mut ConnectorUnphased,
-    _comm: &mut ConnectorCommunication,
+    comm: &mut ConnectorCommunication,
     session_info: SessionInfo,
 ) -> Result<(), ConnectError> {
-    let SessionInfo { proto_components, port_info, serde_proto_description } = session_info;
+    let SessionInfo { proto_components, port_info, serde_proto_description, getter_for_incoming } =
+        session_info;
     cu.port_info = port_info;
     cu.proto_components = proto_components;
     cu.proto_description = serde_proto_description.0;
+    for (ee, getter) in comm.endpoint_manager.endpoint_exts.iter_mut().zip(getter_for_incoming) {
+        ee.getter_for_incoming = getter;
+    }
     Ok(())
 }

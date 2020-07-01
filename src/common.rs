@@ -50,7 +50,7 @@ pub struct U32Stream {
 )]
 #[repr(transparent)]
 pub struct PortId(Id);
-#[derive(Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -172,6 +172,11 @@ impl Debug for FiringVar {
 impl Debug for ProtoComponentId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "pcID({}'{})", self.0.connector_id, self.0.u32_suffix)
+    }
+}
+impl Debug for Payload {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Payload{:x?}", self.as_slice())
     }
 }
 impl std::ops::Not for Polarity {

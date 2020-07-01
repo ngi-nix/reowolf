@@ -1,8 +1,7 @@
 macro_rules! endptlog {
     ($logger:expr, $($arg:tt)*) => {{
-        let w = $logger.line_writer();
-        let _ = write!(w, "[ENDPT]");
-        let _ = writeln!(w, $($arg)*);
+        // let w = $logger.line_writer();
+        // let _ = writeln!(w, $($arg)*);
     }};
 }
 macro_rules! log {
