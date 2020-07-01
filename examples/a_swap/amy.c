@@ -18,9 +18,9 @@ int main(int argc, char** argv) {
     PortId ports[6]; 
     connector_add_port_pair(c, &ports[0], &ports[1]);
     printf("Error str `%s`\n", reowolf_error_peek(NULL));
-    connector_add_net_port(c, &ports[2], argv[1], strlen(argv[1]), Getter, Passive);
+    connector_add_net_port(c, &ports[2], argv[1], strlen(argv[1]), Polarity_Getter, EndpointPolarity_Passive);
     printf("Error str `%s`\n", reowolf_error_peek(NULL));
-    connector_add_net_port(c, &ports[3], argv[2], strlen(argv[2]), Putter, Active);
+    connector_add_net_port(c, &ports[3], argv[2], strlen(argv[2]), Polarity_Putter, EndpointPolarity_Active);
     printf("Error str `%s`\n", reowolf_error_peek(NULL));
     connector_add_port_pair(c, &ports[4], &ports[5]);
     printf("Error str `%s`\n", reowolf_error_peek(NULL));

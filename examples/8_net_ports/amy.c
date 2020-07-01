@@ -12,11 +12,11 @@ int main(int argc, char** argv) {
 	PortId putter, getter;
 	char addr_str[] = "127.0.0.1:8000";
 	connector_add_net_port(
-		c, &putter, addr_str, sizeof(addr_str)-1, Putter, Active);
+		c, &putter, addr_str, sizeof(addr_str)-1, Polarity_Putter, EndpointPolarity_Active);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
 	connector_add_net_port(
-		c, &getter, addr_str, sizeof(addr_str)-1, Getter, Passive);
+		c, &getter, addr_str, sizeof(addr_str)-1, Polarity_Getter, EndpointPolarity_Passive);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
 	connector_connect(c, 4000);

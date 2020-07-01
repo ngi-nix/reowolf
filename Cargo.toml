@@ -16,8 +16,6 @@ derive_more = "0.99.2"
 bincode = "1.2.1"
 serde = { version = "1.0.114", features = ["derive"] }
 getrandom = "0.1.14" # tiny crate. used to guess controller-id
-# take_mut = "0.2.2"
-indexmap = "1.4.0" # hashsets/hashmaps with efficient arbitrary element removal
 
 # network
 # integer-encoding = "1.1.5"

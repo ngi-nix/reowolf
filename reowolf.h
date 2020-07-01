@@ -9,13 +9,13 @@
 #include <stdlib.h>
 
 typedef enum {
-  Active,
-  Passive,
+  EndpointPolarity_Active,
+  EndpointPolarity_Passive,
 } EndpointPolarity;
 
 typedef enum {
-  Putter,
-  Getter,
+  Polarity_Putter,
+  Polarity_Getter,
 } Polarity;
 
 typedef struct Arc_ProtocolDescription Arc_ProtocolDescription;

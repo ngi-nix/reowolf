@@ -152,7 +152,7 @@ fn new_endpoint_manager(
     let mut waker_continue_signal: Option<Arc<AtomicBool>> = None;
     let mut poll = Poll::new().map_err(|_| PollInitFailed)?;
     let mut events = Events::with_capacity(endpoint_setups.len() * 2 + 4);
-    let mut polled_undrained = IndexSet::default();
+    let mut polled_undrained = VecSet::default();
     let mut delayed_messages = vec![];
 
     // 2. create a registered (TcpListener/Endpoint) for passive / active respectively

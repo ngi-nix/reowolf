@@ -1,36 +1,38 @@
 ///////////////////// PRELUDE /////////////////////
 
 pub(crate) use crate::protocol::{ComponentState, ProtocolDescription};
-pub(crate) use crate::runtime::{NonsyncProtoContext, SyncProtoContext};
+pub(crate) use crate::runtime::{error::AddComponentError, NonsyncProtoContext, SyncProtoContext};
 
-pub use core::{
+pub(crate) use core::{
     cmp::Ordering,
     fmt::{Debug, Formatter},
-    hash::{Hash, Hasher},
-    ops::{Range, RangeFrom},
+    hash::Hash,
+    ops::Range,
     time::Duration,
 };
-pub use indexmap::{IndexMap, IndexSet};
-pub use maplit::{hashmap, hashset};
-pub use mio::{
+// pub(crate) use indexmap::IndexSet;
+pub(crate) use maplit::hashmap;
+pub(crate) use mio::{
     net::{TcpListener, TcpStream},
     Events, Interest, Poll, Token,
 };
-pub use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},
+pub(crate) use std::{
+    collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
     io::{Read, Write},
     net::SocketAddr,
     sync::Arc,
     time::Instant,
 };
-pub use Polarity::*;
-
-///////////////////// DEFS /////////////////////
+pub(crate) use Polarity::*;
 
 pub type ConnectorId = u32;
 pub type PortSuffix = u32;
-
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+// acquired via error in the Rust API
+pub struct ProtoComponentId(Id);
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -39,31 +41,17 @@ pub struct Id {
     pub(crate) connector_id: ConnectorId,
     pub(crate) u32_suffix: PortSuffix,
 }
-
 #[derive(Debug, Default)]
 pub struct U32Stream {
     next: u32,
 }
-
-// globally unique
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 #[repr(transparent)]
 pub struct PortId(Id);
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
-pub struct FiringVar(pub(crate) PortId);
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
-pub struct ProtoComponentId(Id);
-
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
-// #[repr(C)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
-
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -80,27 +68,19 @@ pub enum EndpointPolarity {
     Active,  // calls connect()
     Passive, // calls bind() listen() accept()
 }
-
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub enum AddComponentError {
-    NoSuchComponent,
-    NonPortTypeParameters,
-    CannotMovePort(PortId),
-    WrongNumberOfParamaters { expected: usize },
-    UnknownPort(PortId),
-    WrongPortPolarity { port: PortId, expected_polarity: Polarity },
-    DuplicateMovedPort(PortId),
-}
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub(crate) struct FiringVar(pub(crate) PortId);
 
 #[derive(Debug, Clone)]
-pub enum NonsyncBlocker {
+pub(crate) enum NonsyncBlocker {
     Inconsistent,
     ComponentExit,
     SyncBlockStart,
 }
-
 #[derive(Debug, Clone)]
-pub enum SyncBlocker {
+pub(crate) enum SyncBlocker {
     Inconsistent,
     SyncBlockEnd,
     CouldntReadMsg(PortId),
@@ -110,7 +90,7 @@ pub enum SyncBlocker {
 
 ///////////////////// IMPL /////////////////////
 impl U32Stream {
-    pub fn next(&mut self) -> u32 {
+    pub(crate) fn next(&mut self) -> u32 {
         if self.next == u32::MAX {
             panic!("NO NEXT!")
         }
@@ -150,7 +130,7 @@ impl Payload {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         Arc::make_mut(&mut self.0) as _
     }
-    pub fn concat_with(&mut self, other: &Self) {
+    pub fn concatenate_with(&mut self, other: &Self) {
         let bytes = other.as_slice().iter().copied();
         let me = Arc::make_mut(&mut self.0);
         me.extend(bytes);
@@ -172,11 +152,6 @@ impl<'de> serde::Deserialize<'de> for Payload {
     {
         let inner: Vec<u8> = Vec::deserialize(deserializer)?;
         Ok(Self(Arc::new(inner)))
-    }
-}
-impl std::iter::FromIterator<u8> for Payload {
-    fn from_iter<I: IntoIterator<Item = u8>>(it: I) -> Self {
-        Self(Arc::new(it.into_iter().collect()))
     }
 }
 impl From<Vec<u8>> for Payload {

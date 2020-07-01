@@ -12,6 +12,16 @@ pub enum ConnectError {
     EndpointSetupError(SocketAddr, EndpointError),
     SetupAlgMisbehavior,
 }
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+pub enum AddComponentError {
+    NoSuchComponent,
+    NonPortTypeParameters,
+    CannotMovePort(PortId),
+    WrongNumberOfParamaters { expected: usize },
+    UnknownPort(PortId),
+    WrongPortPolarity { port: PortId, expected_polarity: Polarity },
+    DuplicateMovedPort(PortId),
+}
 ////////////////////////
 #[derive(Debug, Clone)]
 pub enum SyncError {

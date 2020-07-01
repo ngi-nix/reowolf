@@ -1,7 +1,11 @@
+/// cbindgen:ignore
 mod communication;
+/// cbindgen:ignore
 mod endpoints;
 pub mod error;
+/// cbindgen:ignore
 mod logging;
+/// cbindgen:ignore
 mod setup;
 
 #[cfg(feature = "ffi")]
@@ -46,6 +50,7 @@ struct RoundOk {
     batch_index: usize,
     gotten: HashMap<PortId, Payload>,
 }
+#[derive(Default)]
 struct VecSet<T: std::cmp::Ord> {
     // invariant: ordered, deduplicated
     vec: Vec<T>,
@@ -153,7 +158,7 @@ struct EndpointManager {
     // 2. Events is empty
     poll: Poll,
     events: Events,
-    polled_undrained: IndexSet<usize>,
+    polled_undrained: VecSet<usize>,
     delayed_messages: Vec<(usize, Msg)>,
     undelayed_messages: Vec<(usize, Msg)>,
     endpoint_exts: Vec<EndpointExt>,
@@ -209,17 +214,20 @@ impl<T: std::cmp::Ord> VecSet<T> {
     fn contains(&self, element: &T) -> bool {
         self.vec.binary_search(element).is_ok()
     }
-    // fn insert(&mut self, element: T) -> bool {
-    //     match self.vec.binary_search(&element) {
-    //         Ok(_) => false,
-    //         Err(index) => {
-    //             self.vec.insert(index, element);
-    //             true
-    //         }
-    //     }
-    // }
+    fn insert(&mut self, element: T) -> bool {
+        match self.vec.binary_search(&element) {
+            Ok(_) => false,
+            Err(index) => {
+                self.vec.insert(index, element);
+                true
+            }
+        }
+    }
     fn iter(&self) -> std::slice::Iter<T> {
         self.vec.iter()
+    }
+    fn pop(&mut self) -> Option<T> {
+        self.vec.pop()
     }
 }
 impl PortInfo {

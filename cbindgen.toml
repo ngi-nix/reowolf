@@ -3,3 +3,5 @@ header = "/* CBindgen generated */"
 include_guard = "REOWOLF_HEADER_DEFINED"
 [parse]
 parse_deps = false
+[enum]
+prefix_with_name = true
