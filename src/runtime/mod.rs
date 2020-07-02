@@ -45,6 +45,15 @@ pub(crate) struct SyncProtoContext<'a> {
     port_info: &'a PortInfo,
     inbox: &'a HashMap<PortId, Payload>,
 }
+
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+struct SpecVar(PortId);
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+struct SpecVal(u16);
 #[derive(Debug)]
 struct RoundOk {
     batch_index: usize,
@@ -115,7 +124,7 @@ struct SendPayloadMsg {
     payload: Payload,
 }
 #[derive(Debug, PartialEq)]
-enum CommonSatResult {
+enum AllMapperResult {
     FormerNotLatter,
     LatterNotFormer,
     Equivalent,
@@ -151,6 +160,11 @@ struct IdManager {
     connector_id: ConnectorId,
     port_suffix_stream: U32Stream,
     proto_component_suffix_stream: U32Stream,
+}
+#[derive(Debug)]
+struct SpecVarStream {
+    connector_id: ConnectorId,
+    port_suffix_stream: U32Stream,
 }
 #[derive(Debug)]
 struct EndpointManager {
@@ -194,7 +208,7 @@ enum ConnectorPhased {
 }
 #[derive(Default, Clone, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 struct Predicate {
-    assigned: BTreeMap<FiringVar, bool>,
+    assigned: BTreeMap<SpecVar, SpecVal>,
 }
 #[derive(Debug, Default)]
 struct NativeBatch {
@@ -232,11 +246,19 @@ impl<T: std::cmp::Ord> VecSet<T> {
     }
 }
 impl PortInfo {
-    fn firing_var_for(&self, port: PortId) -> FiringVar {
-        FiringVar(match self.polarities.get(&port).unwrap() {
+    fn spec_var_for(&self, port: PortId) -> SpecVar {
+        SpecVar(match self.polarities.get(&port).unwrap() {
             Getter => port,
             Putter => *self.peers.get(&port).unwrap(),
         })
+    }
+}
+impl SpecVarStream {
+    fn next(&mut self) -> SpecVar {
+        let phantom_port: PortId =
+            Id { connector_id: self.connector_id, u32_suffix: self.port_suffix_stream.next() }
+                .into();
+        SpecVar(phantom_port)
     }
 }
 impl IdManager {
@@ -245,6 +267,12 @@ impl IdManager {
             connector_id,
             port_suffix_stream: Default::default(),
             proto_component_suffix_stream: Default::default(),
+        }
+    }
+    fn new_spec_var_stream(&self) -> SpecVarStream {
+        SpecVarStream {
+            connector_id: self.connector_id,
+            port_suffix_stream: self.port_suffix_stream.clone(),
         }
     }
     fn new_port_id(&mut self) -> PortId {
@@ -338,28 +366,19 @@ impl Connector {
 }
 impl Predicate {
     #[inline]
-    pub fn inserted(mut self, k: FiringVar, v: bool) -> Self {
+    pub fn inserted(mut self, k: SpecVar, v: SpecVal) -> Self {
         self.assigned.insert(k, v);
         self
     }
     // returns true IFF self.unify would return Equivalent OR FormerNotLatter
-    pub fn satisfies(&self, other: &Self) -> bool {
-        let mut s_it = self.assigned.iter();
-        let mut s = if let Some(s) = s_it.next() {
-            s
-        } else {
-            return other.assigned.is_empty();
-        };
-        for (oid, ob) in other.assigned.iter() {
-            while s.0 < oid {
-                s = if let Some(s) = s_it.next() {
-                    s
-                } else {
-                    return false;
-                };
-            }
-            if s.0 > oid || s.1 != ob {
-                return false;
+    pub fn consistent_with(&self, other: &Self) -> bool {
+        let [larger, smaller] =
+            if self.assigned.len() > other.assigned.len() { [self, other] } else { [other, self] };
+
+        for (var, val) in smaller.assigned.iter() {
+            match larger.assigned.get(var) {
+                Some(val2) if val2 != val => return false,
+                _ => {}
             }
         }
         true
@@ -371,8 +390,8 @@ impl Predicate {
     /// If the resulting predicate is equivlanet to self, other, or both,
     /// FormerNotLatter, LatterNotFormer and Equivalent are returned respectively.
     /// otherwise New(N) is returned.
-    fn common_satisfier(&self, other: &Self) -> CommonSatResult {
-        use CommonSatResult as Csr;
+    fn all_mapper(&self, other: &Self) -> AllMapperResult {
+        use AllMapperResult as Amr;
         // iterators over assignments of both predicates. Rely on SORTED ordering of BTreeMap's keys.
         let [mut s_it, mut o_it] = [self.assigned.iter(), other.assigned.iter()];
         let [mut s, mut o] = [s_it.next(), o_it.next()];
@@ -403,7 +422,7 @@ impl Predicate {
                     } else if sb != ob {
                         assert_eq!(sid, oid);
                         // both predicates assign the variable but differ on the value
-                        return Csr::Nonexistant;
+                        return Amr::Nonexistant;
                     } else {
                         // both predicates assign the variable to the same value
                         s = s_it.next();
@@ -414,9 +433,9 @@ impl Predicate {
         }
         // Observed zero inconsistencies. A unified predicate exists...
         match [s_not_o.is_empty(), o_not_s.is_empty()] {
-            [true, true] => Csr::Equivalent,       // ... equivalent to both.
-            [false, true] => Csr::FormerNotLatter, // ... equivalent to self.
-            [true, false] => Csr::LatterNotFormer, // ... equivalent to other.
+            [true, true] => Amr::Equivalent,       // ... equivalent to both.
+            [false, true] => Amr::FormerNotLatter, // ... equivalent to self.
+            [true, false] => Amr::LatterNotFormer, // ... equivalent to other.
             [false, false] => {
                 // ... which is the union of the predicates' assignments but
                 //     is equivalent to neither self nor other.
@@ -424,7 +443,7 @@ impl Predicate {
                 for (&id, &b) in o_not_s {
                     new.assigned.insert(id, b);
                 }
-                Csr::New(new)
+                Amr::New(new)
             }
         }
     }
@@ -438,7 +457,7 @@ impl Predicate {
         }
         Some(res)
     }
-    pub fn query(&self, var: FiringVar) -> Option<bool> {
+    pub fn query(&self, var: SpecVar) -> Option<SpecVal> {
         self.assigned.get(&var).copied()
     }
 }
@@ -449,23 +468,7 @@ impl<T: Debug + std::cmp::Ord> Debug for VecSet<T> {
 }
 impl Debug for Predicate {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        struct MySet<'a>(&'a Predicate, bool);
-        impl Debug for MySet<'_> {
-            fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-                let iter = self.0.assigned.iter().filter_map(|(port, &firing)| {
-                    if firing == self.1 {
-                        Some(port)
-                    } else {
-                        None
-                    }
-                });
-                f.debug_set().entries(iter).finish()
-            }
-        }
-        f.debug_struct("Predicate")
-            .field("Trues", &MySet(self, true))
-            .field("Falses", &MySet(self, false))
-            .finish()
+        f.debug_tuple("Predicate").field(&self.assigned).finish()
     }
 }
 impl serde::Serialize for SerdeProtocolDescription {
@@ -486,40 +489,24 @@ impl<'de> serde::Deserialize<'de> for SerdeProtocolDescription {
         Ok(Self(Arc::new(inner)))
     }
 }
-
-#[test]
-fn bincode_serde() {
-    let mut b = Vec::with_capacity(64);
-    use bincode::config::Options;
-    let opt = bincode::config::DefaultOptions::default();
-    opt.serialize_into(&mut b, &Decision::Failure).unwrap();
-    println!("failure  {:x?}", b);
-    b.clear();
-
-    opt.serialize_into(&mut b, &CommMsgContents::Suggest { suggestion: Decision::Failure })
-        .unwrap();
-    println!("decision {:x?}", b);
-    b.clear();
-
-    opt.serialize_into(
-        &mut b,
-        &CommMsg {
-            round_index: 4,
-            contents: CommMsgContents::Suggest { suggestion: Decision::Failure },
-        },
-    )
-    .unwrap();
-    println!("commmsg  {:x?}", b);
-    b.clear();
-
-    opt.serialize_into(
-        &mut b,
-        &Msg::CommMsg(CommMsg {
-            round_index: 4,
-            contents: CommMsgContents::Suggest { suggestion: Decision::Failure },
-        }),
-    )
-    .unwrap();
-    println!("msg      {:x?}", b);
-    b.clear();
+impl Debug for SpecVar {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        f.debug_tuple("vrID").field(&self.0).finish()
+    }
+}
+impl SpecVal {
+    const FIRING: Self = SpecVal(1);
+    const SILENT: Self = SpecVal(0);
+    fn is_firing(self) -> bool {
+        self == Self::FIRING
+        // all else treated as SILENT
+    }
+    fn iter_domain() -> impl Iterator<Item = Self> {
+        (0..).map(SpecVal)
+    }
+}
+impl Debug for SpecVal {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }

@@ -577,3 +577,12 @@ fn together() {
     })
     .unwrap();
 }
+
+#[test]
+fn native_batch_distinguish() {
+    let test_log_path = Path::new("./logs/native_batch_distinguish");
+    let mut c = file_logged_connector(0, test_log_path);
+    c.connect(Some(Duration::from_secs(1))).unwrap();
+    c.next_batch().unwrap();
+    c.sync(Some(Duration::from_secs(3))).unwrap();
+}

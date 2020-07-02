@@ -87,7 +87,9 @@ impl Connector {
                     native_batches: vec![Default::default()],
                     round_result: Ok(None),
                 };
-                session_optimize(cu, &mut comm, deadline)?;
+                if cfg!(feature = "session_optimization") {
+                    session_optimize(cu, &mut comm, deadline)?;
+                }
                 log!(cu.logger, "connect() finished. setup phase complete");
                 self.phased = ConnectorPhased::Communication(Box::new(comm));
                 Ok(())

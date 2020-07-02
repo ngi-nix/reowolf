@@ -35,6 +35,7 @@ lazy_static = "1.4.0"
 crate-type = ["cdylib"]
 
 [features]
-default = ["ffi"]
+default = ["ffi", "session_optimization"]
 ffi = [] # no feature dependencies
-endpoint_logging = [] # see src/macros where a conditional check include endpoint logging
+endpoint_logging = [] # see src/macros.rs
+session_optimization = [] # see src/runtime/setup.rs

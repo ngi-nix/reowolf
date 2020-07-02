@@ -41,7 +41,7 @@ pub struct Id {
     pub(crate) connector_id: ConnectorId,
     pub(crate) u32_suffix: PortSuffix,
 }
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct U32Stream {
     next: u32,
 }
@@ -68,11 +68,6 @@ pub enum EndpointPolarity {
     Active,  // calls connect()
     Passive, // calls bind() listen() accept()
 }
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
-pub(crate) struct FiringVar(pub(crate) PortId);
-
 #[derive(Debug, Clone)]
 pub(crate) enum NonsyncBlocker {
     Inconsistent,
@@ -163,11 +158,6 @@ impl From<Vec<u8>> for Payload {
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "ptID({}'{})", self.0.connector_id, self.0.u32_suffix)
-    }
-}
-impl Debug for FiringVar {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "fvID({}'{})", (self.0).0.connector_id, (self.0).0.u32_suffix)
     }
 }
 impl Debug for ProtoComponentId {
