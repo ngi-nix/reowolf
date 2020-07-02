@@ -87,6 +87,7 @@ pub(crate) enum SyncBlocker {
     CouldntCheckFiring(PortId),
     PutMsg(PortId, Payload),
 }
+pub(crate) struct DenseDebugHex<'a>(pub &'a [u8]);
 
 ///////////////////// IMPL /////////////////////
 impl U32Stream {
@@ -176,7 +177,7 @@ impl Debug for ProtoComponentId {
 }
 impl Debug for Payload {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Payload{:x?}", self.as_slice())
+        write!(f, "Payload[{:?}]", DenseDebugHex(self.as_slice()))
     }
 }
 impl std::ops::Not for Polarity {
@@ -187,5 +188,13 @@ impl std::ops::Not for Polarity {
             Putter => Getter,
             Getter => Putter,
         }
+    }
+}
+impl Debug for DenseDebugHex<'_> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        for b in self.0 {
+            write!(f, "{:02X?}", b)?;
+        }
+        Ok(())
     }
 }

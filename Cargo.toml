@@ -37,3 +37,4 @@ crate-type = ["cdylib"]
 [features]
 default = ["ffi"]
 ffi = [] # no feature dependencies
+endpoint_logging = [] # see src/macros where a conditional check include endpoint logging

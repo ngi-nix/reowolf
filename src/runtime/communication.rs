@@ -60,23 +60,23 @@ impl ReplaceBoolTrue for bool {
 ////////////////
 impl Connector {
     pub fn gotten(&mut self, port: PortId) -> Result<&Payload, GottenError> {
-        use GottenError::*;
+        use GottenError as Ge;
         let Self { phased, .. } = self;
         match phased {
-            ConnectorPhased::Setup { .. } => Err(NoPreviousRound),
+            ConnectorPhased::Setup { .. } => Err(Ge::NoPreviousRound),
             ConnectorPhased::Communication(comm) => match &comm.round_result {
-                Err(_) => Err(PreviousSyncFailed),
-                Ok(None) => Err(NoPreviousRound),
-                Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(PortDidntGet),
+                Err(_) => Err(Ge::PreviousSyncFailed),
+                Ok(None) => Err(Ge::NoPreviousRound),
+                Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(Ge::PortDidntGet),
             },
         }
     }
     pub fn next_batch(&mut self) -> Result<usize, NextBatchError> {
         // returns index of new batch
-        use NextBatchError::*;
+        use NextBatchError as Nbe;
         let Self { phased, .. } = self;
         match phased {
-            ConnectorPhased::Setup { .. } => Err(NotConnected),
+            ConnectorPhased::Setup { .. } => Err(Nbe::NotConnected),
             ConnectorPhased::Communication(comm) => {
                 comm.native_batches.push(Default::default());
                 Ok(comm.native_batches.len() - 1)
@@ -88,18 +88,18 @@ impl Connector {
         port: PortId,
         expect_polarity: Polarity,
     ) -> Result<&mut NativeBatch, PortOpError> {
-        use PortOpError::*;
+        use PortOpError as Poe;
         let Self { unphased, phased } = self;
         if !unphased.native_ports.contains(&port) {
-            return Err(PortUnavailable);
+            return Err(Poe::PortUnavailable);
         }
         match unphased.port_info.polarities.get(&port) {
             Some(p) if *p == expect_polarity => {}
-            Some(_) => return Err(WrongPolarity),
-            None => return Err(UnknownPolarity),
+            Some(_) => return Err(Poe::WrongPolarity),
+            None => return Err(Poe::UnknownPolarity),
         }
         match phased {
-            ConnectorPhased::Setup { .. } => Err(NotConnected),
+            ConnectorPhased::Setup { .. } => Err(Poe::NotConnected),
             ConnectorPhased::Communication(comm) => {
                 let batch = comm.native_batches.last_mut().unwrap(); // length >= 1 is invariant
                 Ok(batch)
@@ -107,22 +107,22 @@ impl Connector {
         }
     }
     pub fn put(&mut self, port: PortId, payload: Payload) -> Result<(), PortOpError> {
-        use PortOpError::*;
+        use PortOpError as Poe;
         let batch = self.port_op_access(port, Putter)?;
         if batch.to_put.contains_key(&port) {
-            Err(MultipleOpsOnPort)
+            Err(Poe::MultipleOpsOnPort)
         } else {
             batch.to_put.insert(port, payload);
             Ok(())
         }
     }
     pub fn get(&mut self, port: PortId) -> Result<(), PortOpError> {
-        use PortOpError::*;
+        use PortOpError as Poe;
         let batch = self.port_op_access(port, Getter)?;
         if batch.to_get.insert(port) {
             Ok(())
         } else {
-            Err(MultipleOpsOnPort)
+            Err(Poe::MultipleOpsOnPort)
         }
     }
     // entrypoint for caller. overwrites round result enum, and returns what happened
@@ -423,7 +423,6 @@ impl Connector {
                     Some(Route::LocalComponent(ComponentId::Native)) => branching_native.feed_msg(
                         cu,
                         &mut solution_storage,
-                        // &mut Pay
                         getter,
                         &send_payload_msg,
                     ),
@@ -432,7 +431,6 @@ impl Connector {
                             branching_proto_components.get_mut(proto_component_id)
                         {
                             let proto_component_id = *proto_component_id;
-                            // let ConnectorUnphased { port_info, proto_description, .. } = cu;
                             branching_component.feed_msg(
                                 cu,
                                 &mut solution_storage,

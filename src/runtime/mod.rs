@@ -93,7 +93,7 @@ enum SetupMsg {
 struct SessionInfo {
     serde_proto_description: SerdeProtocolDescription,
     port_info: PortInfo,
-    getter_for_incoming: Vec<PortId>,
+    endpoint_incoming_to_getter: Vec<PortId>,
     proto_components: HashMap<ProtoComponentId, ProtoComponent>,
 }
 #[derive(Debug, Clone)]
@@ -304,19 +304,19 @@ impl Connector {
         ports: &[PortId],
     ) -> Result<(), AddComponentError> {
         // called by the USER. moves ports owned by the NATIVE
-        use AddComponentError::*;
+        use AddComponentError as Ace;
         // 1. check if this is OK
         let cu = &mut self.unphased;
         let polarities = cu.proto_description.component_polarities(identifier)?;
         if polarities.len() != ports.len() {
-            return Err(WrongNumberOfParamaters { expected: polarities.len() });
+            return Err(Ace::WrongNumberOfParamaters { expected: polarities.len() });
         }
         for (&expected_polarity, port) in polarities.iter().zip(ports.iter()) {
             if !cu.native_ports.contains(port) {
-                return Err(UnknownPort(*port));
+                return Err(Ace::UnknownPort(*port));
             }
             if expected_polarity != *cu.port_info.polarities.get(port).unwrap() {
-                return Err(WrongPortPolarity { port: *port, expected_polarity });
+                return Err(Ace::WrongPortPolarity { port: *port, expected_polarity });
             }
         }
         // 3. remove ports from old component & update port->route
