@@ -24,13 +24,17 @@ pub enum AddComponentError {
 }
 ////////////////////////
 #[derive(Debug, Clone)]
+pub enum UnrecoverableSyncError {
+    PollFailed,
+    BrokenEndpoint(usize),
+    MalformedStateError(MalformedStateError),
+}
+#[derive(Debug, Clone)]
 pub enum SyncError {
     NotConnected,
     InconsistentProtoComponent(ProtoComponentId),
     RoundFailure,
-    PollFailed,
-    BrokenEndpoint(usize),
-    MalformedStateError(MalformedStateError),
+    Unrecoverable(UnrecoverableSyncError),
 }
 #[derive(Debug, Clone)]
 pub enum MalformedStateError {
@@ -64,4 +68,10 @@ pub enum NextBatchError {
 #[derive(Debug, Eq, PartialEq)]
 pub enum NewNetPortError {
     AlreadyConnected,
+}
+/////////////////////
+impl From<UnrecoverableSyncError> for SyncError {
+    fn from(e: UnrecoverableSyncError) -> Self {
+        Self::Unrecoverable(e)
+    }
 }

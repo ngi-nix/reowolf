@@ -75,9 +75,14 @@ impl EndpointManager {
     pub(super) fn num_endpoints(&self) -> usize {
         self.endpoint_exts.len()
     }
-    pub(super) fn send_to_comms(&mut self, index: usize, msg: &Msg) -> Result<(), SyncError> {
+    pub(super) fn send_to_comms(
+        &mut self,
+        index: usize,
+        msg: &Msg,
+    ) -> Result<(), UnrecoverableSyncError> {
+        use UnrecoverableSyncError as Use;
         let endpoint = &mut self.endpoint_exts[index].endpoint;
-        endpoint.send(msg).map_err(|_| SyncError::BrokenEndpoint(index))
+        endpoint.send(msg).map_err(|_| Use::BrokenEndpoint(index))
     }
     pub(super) fn send_to_setup(&mut self, index: usize, msg: &Msg) -> Result<(), ConnectError> {
         let endpoint = &mut self.endpoint_exts[index].endpoint;
@@ -89,13 +94,13 @@ impl EndpointManager {
         &mut self,
         logger: &mut dyn Logger,
         deadline: Option<Instant>,
-    ) -> Result<Option<(usize, Msg)>, SyncError> {
-        use {SyncError as Se, TryRecyAnyError as Trae};
+    ) -> Result<Option<(usize, Msg)>, UnrecoverableSyncError> {
+        use {TryRecyAnyError as Trae, UnrecoverableSyncError as Use};
         match self.try_recv_any(logger, deadline) {
             Ok(tup) => Ok(Some(tup)),
             Err(Trae::Timeout) => Ok(None),
-            Err(Trae::PollFailed) => Err(Se::PollFailed),
-            Err(Trae::EndpointError { error: _, index }) => Err(Se::BrokenEndpoint(index)),
+            Err(Trae::PollFailed) => Err(Use::PollFailed),
+            Err(Trae::EndpointError { error: _, index }) => Err(Use::BrokenEndpoint(index)),
         }
     }
     pub(super) fn try_recv_any_setup(
