@@ -1,6 +1,8 @@
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 
+// TABBED OUT FOR NOW
+
 pub fn get_declarations(h: &mut Heap, i: ImportId) -> Result<Vec<DeclarationId>, ParseError> {
     if h[i].value == b"std.reo" {
         let mut vec = Vec::new();

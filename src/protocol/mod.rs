@@ -3,7 +3,7 @@ mod ast;
 mod eval;
 pub(crate) mod inputsource;
 mod lexer;
-mod library;
+// mod library;
 mod parser;
 
 use crate::common::*;
@@ -32,7 +32,7 @@ pub(crate) enum EvalContext<'a> {
 
 impl std::fmt::Debug for ProtocolDescription {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "(A big honkin' protocol description)")
+        write!(f, "(An opaque protocol description)")
     }
 }
 impl ProtocolDescription {

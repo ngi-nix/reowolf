@@ -27,7 +27,6 @@ pub enum AddComponentError {
 pub enum SyncError {
     NotConnected,
     InconsistentProtoComponent(ProtoComponentId),
-    IndistinguishableBatches([usize; 2]),
     RoundFailure,
     PollFailed,
     BrokenEndpoint(usize),

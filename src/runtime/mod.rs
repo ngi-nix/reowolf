@@ -41,6 +41,7 @@ pub(crate) struct NonsyncProtoContext<'a> {
 }
 pub(crate) struct SyncProtoContext<'a> {
     logger: &'a mut dyn Logger,
+    untaken_choice: &'a mut Option<u16>,
     predicate: &'a Predicate,
     port_info: &'a PortInfo,
     inbox: &'a HashMap<PortId, Payload>,

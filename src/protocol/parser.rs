@@ -1,7 +1,7 @@
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::lexer::*;
-use crate::protocol::library;
+// use crate::protocol::library;
 
 // The following indirection is needed due to a bug in the cbindgen tool.
 type Unit = ();
@@ -797,12 +797,13 @@ impl Visitor for BuildSymbolDeclarations {
         Ok(())
     }
     fn visit_import(&mut self, h: &mut Heap, import: ImportId) -> VisitorResult {
-        let vec = library::get_declarations(h, import)?;
-        // Destructively iterate over the vector
-        for decl in vec {
-            self.checked_add(h, decl)?;
-        }
-        Ok(())
+        todo!()
+        // let vec = library::get_declarations(h, import)?;
+        // // Destructively iterate over the vector
+        // for decl in vec {
+        //     self.checked_add(h, decl)?;
+        // }
+        // Ok(())
     }
     fn visit_symbol_definition(&mut self, h: &mut Heap, definition: DefinitionId) -> VisitorResult {
         let signature = Signature::from_definition(h, definition);
