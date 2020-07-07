@@ -25,9 +25,9 @@ struct NativeBranch {
 struct SolutionStorage {
     old_local: HashSet<Predicate>,
     new_local: HashSet<Predicate>,
-    // this pair acts as Route -> HashSet<Predicate> which is friendlier to iteration
+    // this pair acts as SubtreeId -> HashSet<Predicate> which is friendlier to iteration
     subtree_solutions: Vec<HashSet<Predicate>>,
-    subtree_id_to_index: HashMap<Route, usize>,
+    subtree_id_to_index: HashMap<SubtreeId, usize>,
 }
 #[derive(Debug)]
 struct BranchingProtoComponent {
@@ -220,14 +220,18 @@ impl Connector {
         // Create temp structures needed for the synchronous phase of the round
         let mut rctx = RoundCtx {
             solution_storage: {
-                let n = std::iter::once(Route::LocalComponent(ComponentId::Native));
+                let n = std::iter::once(SubtreeId::LocalComponent(ComponentId::Native));
                 let c = cu
                     .proto_components
                     .keys()
-                    .map(|&id| Route::LocalComponent(ComponentId::Proto(id)));
-                let e = comm.neighborhood.children.iter().map(|&index| Route::Endpoint { index });
-                let route_iter = n.chain(c).chain(e);
-                SolutionStorage::new(route_iter)
+                    .map(|&id| SubtreeId::LocalComponent(ComponentId::Proto(id)));
+                let e = comm
+                    .neighborhood
+                    .children
+                    .iter()
+                    .map(|&index| SubtreeId::NetEndpoint { index });
+                let subtree_id_iter = n.chain(c).chain(e);
+                SolutionStorage::new(subtree_id_iter)
             },
             spec_var_stream: cu.id_manager.new_spec_var_stream(),
             getter_buffer: Default::default(),
@@ -285,7 +289,7 @@ impl Connector {
                 );
                 rctx.solution_storage.submit_and_digest_subtree_solution(
                     &mut *cu.logger,
-                    Route::LocalComponent(ComponentId::Native),
+                    SubtreeId::LocalComponent(ComponentId::Native),
                     predicate.clone(),
                 );
             }
@@ -431,7 +435,11 @@ impl Connector {
                             &send_payload_msg
                         );
                     }
-                    Some(Route::Endpoint { index }) => {
+                    Some(Route::UdpEndpoint { index }) => {
+                        // TODO UDP RECV
+                        todo!()
+                    }
+                    Some(Route::NetEndpoint { index }) => {
                         let msg = Msg::CommMsg(CommMsg {
                             round_index: comm.round_index,
                             contents: CommMsgContents::SendPayload(send_payload_msg),
@@ -584,10 +592,11 @@ impl Connector {
                                 Decision::Success(predicate) => {
                                     // child solution contributes to local solution
                                     log!(cu.logger, "Child provided solution {:?}", &predicate);
-                                    let route = Route::Endpoint { index: endpoint_index };
+                                    let subtree_id =
+                                        SubtreeId::NetEndpoint { index: endpoint_index };
                                     rctx.solution_storage.submit_and_digest_subtree_solution(
                                         &mut *cu.logger,
-                                        route,
+                                        subtree_id,
                                         predicate,
                                     );
                                 }
@@ -677,10 +686,10 @@ impl BranchingNative {
                         &predicate,
                         &branch.gotten
                     );
-                    let route = Route::LocalComponent(ComponentId::Native);
+                    let subtree_id = SubtreeId::LocalComponent(ComponentId::Native);
                     solution_storage.submit_and_digest_subtree_solution(
                         &mut *cu.logger,
-                        route,
+                        subtree_id,
                         predicate.clone(),
                     );
                 }
@@ -804,9 +813,10 @@ impl BranchingProtoComponent {
                         predicate.assigned.entry(var).or_insert(SpecVal::SILENT);
                     }
                     // submit solution for this component
+                    let subtree_id = SubtreeId::LocalComponent(ComponentId::Proto(proto_component_id));
                     rctx.solution_storage.submit_and_digest_subtree_solution(
                         &mut *cu.logger,
-                        Route::LocalComponent(ComponentId::Proto(proto_component_id)),
+                        subtree_id,
                         predicate.clone(),
                     );
                     branch.ended = true;
@@ -945,11 +955,11 @@ impl BranchingProtoComponent {
     }
 }
 impl SolutionStorage {
-    fn new(routes: impl Iterator<Item = Route>) -> Self {
-        let mut subtree_id_to_index: HashMap<Route, usize> = Default::default();
+    fn new(subtree_ids: impl Iterator<Item = SubtreeId>) -> Self {
+        let mut subtree_id_to_index: HashMap<SubtreeId, usize> = Default::default();
         let mut subtree_solutions = vec![];
-        for key in routes {
-            subtree_id_to_index.insert(key, subtree_solutions.len());
+        for id in subtree_ids {
+            subtree_id_to_index.insert(id, subtree_solutions.len());
             subtree_solutions.push(Default::default())
         }
         Self {
@@ -971,7 +981,7 @@ impl SolutionStorage {
         self.old_local.clear();
         self.new_local.clear();
     }
-    fn reset(&mut self, subtree_ids: impl Iterator<Item = Route>) {
+    fn reset(&mut self, subtree_ids: impl Iterator<Item = SubtreeId>) {
         self.subtree_id_to_index.clear();
         self.subtree_solutions.clear();
         self.old_local.clear();
@@ -991,7 +1001,7 @@ impl SolutionStorage {
     pub(crate) fn submit_and_digest_subtree_solution(
         &mut self,
         logger: &mut dyn Logger,
-        subtree_id: Route,
+        subtree_id: SubtreeId,
         predicate: Predicate,
     ) {
         log!(logger, "NEW COMPONENT SOLUTION {:?} {:?}", subtree_id, &predicate);

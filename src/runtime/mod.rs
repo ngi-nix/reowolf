@@ -74,7 +74,13 @@ enum ComponentId {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 enum Route {
     LocalComponent(ComponentId),
-    Endpoint { index: usize },
+    NetEndpoint { index: usize },
+    UdpEndpoint { index: usize },
+}
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+enum SubtreeId {
+    LocalComponent(ComponentId),
+    NetEndpoint { index: usize },
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct MyPortInfo {

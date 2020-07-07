@@ -383,7 +383,7 @@ fn new_endpoint_manager(
                                     port_info
                                         .routes
                                         .entry(peer_info.port)
-                                        .or_insert(Route::Endpoint { index });
+                                        .or_insert(Route::NetEndpoint { index });
                                 }
                                 Some(inappropriate_msg) => {
                                     log!(
