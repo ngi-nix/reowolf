@@ -74,12 +74,11 @@ impl Connector {
             },
         }
     }
-    pub fn next_batch(&mut self) -> Result<usize, NextBatchError> {
+    pub fn next_batch(&mut self) -> Result<usize, WrongStateError> {
         // returns index of new batch
-        use NextBatchError as Nbe;
         let Self { phased, .. } = self;
         match phased {
-            ConnectorPhased::Setup { .. } => Err(Nbe::NotConnected),
+            ConnectorPhased::Setup { .. } => Err(WrongStateError),
             ConnectorPhased::Communication(comm) => {
                 comm.native_batches.push(Default::default());
                 Ok(comm.native_batches.len() - 1)
@@ -568,8 +567,8 @@ impl Connector {
                 };
                 match comm_msg_contents {
                     CommMsgContents::SendPayload(send_payload_msg) => {
-                        let getter =
-                            comm.endpoint_manager.endpoint_exts[endpoint_index].getter_for_incoming;
+                        let getter = comm.endpoint_manager.net_endpoint_exts[endpoint_index]
+                            .getter_for_incoming;
                         assert!(cu.port_info.polarities.get(&getter) == Some(&Getter));
                         log!(
                             cu.logger,

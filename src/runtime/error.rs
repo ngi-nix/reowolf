@@ -61,14 +61,7 @@ pub enum GottenError {
     PreviousSyncFailed,
 }
 #[derive(Debug, Eq, PartialEq)]
-pub enum NextBatchError {
-    NotConnected,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum NewNetPortError {
-    AlreadyConnected,
-}
+pub struct WrongStateError;
 /////////////////////
 impl From<UnrecoverableSyncError> for SyncError {
     fn from(e: UnrecoverableSyncError) -> Self {

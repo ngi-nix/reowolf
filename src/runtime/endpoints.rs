@@ -11,7 +11,7 @@ enum TryRecyAnyError {
     EndpointError { error: EndpointError, index: usize },
 }
 /////////////////////
-impl Endpoint {
+impl NetEndpoint {
     fn bincode_opts() -> impl bincode::config::Options {
         bincode::config::DefaultOptions::default()
     }
@@ -70,10 +70,10 @@ impl Endpoint {
 
 impl EndpointManager {
     pub(super) fn index_iter(&self) -> Range<usize> {
-        0..self.num_endpoints()
+        0..self.num_net_endpoints()
     }
-    pub(super) fn num_endpoints(&self) -> usize {
-        self.endpoint_exts.len()
+    pub(super) fn num_net_endpoints(&self) -> usize {
+        self.net_endpoint_exts.len()
     }
     pub(super) fn send_to_comms(
         &mut self,
@@ -81,13 +81,13 @@ impl EndpointManager {
         msg: &Msg,
     ) -> Result<(), UnrecoverableSyncError> {
         use UnrecoverableSyncError as Use;
-        let endpoint = &mut self.endpoint_exts[index].endpoint;
-        endpoint.send(msg).map_err(|_| Use::BrokenEndpoint(index))
+        let net_endpoint = &mut self.net_endpoint_exts[index].net_endpoint;
+        net_endpoint.send(msg).map_err(|_| Use::BrokenEndpoint(index))
     }
     pub(super) fn send_to_setup(&mut self, index: usize, msg: &Msg) -> Result<(), ConnectError> {
-        let endpoint = &mut self.endpoint_exts[index].endpoint;
-        endpoint.send(msg).map_err(|err| {
-            ConnectError::EndpointSetupError(endpoint.stream.local_addr().unwrap(), err)
+        let net_endpoint = &mut self.net_endpoint_exts[index].net_endpoint;
+        net_endpoint.send(msg).map_err(|err| {
+            ConnectError::EndpointSetupError(net_endpoint.stream.local_addr().unwrap(), err)
         })
     }
     pub(super) fn try_recv_any_comms(
@@ -113,7 +113,7 @@ impl EndpointManager {
             Trae::Timeout => Ce::Timeout,
             Trae::PollFailed => Ce::PollFailed,
             Trae::EndpointError { error, index } => Ce::EndpointSetupError(
-                self.endpoint_exts[index].endpoint.stream.local_addr().unwrap(),
+                self.net_endpoint_exts[index].net_endpoint.stream.local_addr().unwrap(),
                 error,
             ),
         })
@@ -132,13 +132,13 @@ impl EndpointManager {
         loop {
             // 2. try read a message from an endpoint that raised an event with poll() but wasn't drained
             while let Some(index) = self.polled_undrained.pop() {
-                let endpoint = &mut self.endpoint_exts[index].endpoint;
-                if let Some(msg) = endpoint
+                let net_endpoint = &mut self.net_endpoint_exts[index].net_endpoint;
+                if let Some(msg) = net_endpoint
                     .try_recv(logger)
                     .map_err(|error| Trea::EndpointError { error, index })?
                 {
                     endptlog!(logger, "RECV polled_undrained {:?}", &msg);
-                    if !endpoint.inbox.is_empty() {
+                    if !net_endpoint.inbox.is_empty() {
                         // there may be another message waiting!
                         self.polled_undrained.insert(index);
                     }
@@ -176,7 +176,7 @@ impl EndpointManager {
         self.undelayed_messages.extend(self.delayed_messages.drain(..));
     }
 }
-impl Debug for Endpoint {
+impl Debug for NetEndpoint {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         f.debug_struct("Endpoint").field("inbox", &self.inbox).finish()
     }
