@@ -9,7 +9,7 @@ pub enum ConnectError {
     AcceptFailed(SocketAddr),
     AlreadyConnected,
     PortPeerPolarityMismatch(PortId),
-    EndpointSetupError(SocketAddr, EndpointError),
+    NetEndpointSetupError(SocketAddr, NetEndpointError),
     SetupAlgMisbehavior,
 }
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -26,7 +26,8 @@ pub enum AddComponentError {
 #[derive(Debug, Clone)]
 pub enum UnrecoverableSyncError {
     PollFailed,
-    BrokenEndpoint(usize),
+    BrokenNetEndpoint { index: usize },
+    BrokenUdpEndpoint { index: usize },
     MalformedStateError(MalformedStateError),
 }
 #[derive(Debug, Clone)]
@@ -42,9 +43,9 @@ pub enum MalformedStateError {
     GetterUnknownFor { putter: PortId },
 }
 #[derive(Debug, Clone)]
-pub enum EndpointError {
+pub enum NetEndpointError {
     MalformedMessage,
-    BrokenEndpoint,
+    BrokenNetEndpoint,
 }
 #[derive(Debug)]
 pub enum PortOpError {

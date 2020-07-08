@@ -657,3 +657,13 @@ fn multi_recover() {
     })
     .unwrap();
 }
+
+#[test]
+fn udp_self_connect() {
+    let test_log_path = Path::new("./logs/udp_self_connect");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let mut c = file_logged_connector(0, test_log_path);
+    c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+    c.new_udp_port(Getter, sock_addrs[1], sock_addrs[0]).unwrap();
+    c.connect(SEC1).unwrap();
+}
