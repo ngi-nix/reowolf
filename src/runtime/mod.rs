@@ -136,7 +136,7 @@ struct SendPayloadMsg {
     payload: Payload,
 }
 #[derive(Debug, PartialEq)]
-enum AllMapperResult {
+enum AssignmentUnionResult {
     FormerNotLatter,
     LatterNotFormer,
     Equivalent,
@@ -258,6 +258,7 @@ struct NativeBatch {
     to_put: HashMap<PortId, Payload>,
     to_get: HashSet<PortId>,
 }
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 enum TokenTarget {
     NetEndpoint { index: usize },
     UdpEndpoint { index: usize },
@@ -270,7 +271,7 @@ trait RoundCtxTrait {
 enum CommRecvOk {
     TimeoutWithoutNew,
     NewPayloadMsgs,
-    NewControlMsg { net_endpoint_index: usize, msg: CommCtrlMsg },
+    NewControlMsg { net_index: usize, msg: CommCtrlMsg },
 }
 ////////////////
 fn would_block(err: &std::io::Error) -> bool {
@@ -456,34 +457,31 @@ impl Predicate {
         for (var, val) in self.assigned.iter() {
             match maybe_superset.assigned.get(var) {
                 Some(val2) if val2 == val => {}
-                _ => return false,
+                _ => return false, // var unmapped, or mapped differently
             }
         }
         true
     }
 
     // returns true IFF self.unify would return Equivalent OR FormerNotLatter
-    pub fn consistent_with(&self, other: &Self) -> bool {
-        let [larger, smaller] =
-            if self.assigned.len() > other.assigned.len() { [self, other] } else { [other, self] };
+    // pub fn consistent_with(&self, other: &Self) -> bool {
+    //     let [larger, smaller] =
+    //         if self.assigned.len() > other.assigned.len() { [self, other] } else { [other, self] };
 
-        for (var, val) in smaller.assigned.iter() {
-            match larger.assigned.get(var) {
-                Some(val2) if val2 != val => return false,
-                _ => {}
-            }
-        }
-        true
-    }
+    //     for (var, val) in smaller.assigned.iter() {
+    //         match larger.assigned.get(var) {
+    //             Some(val2) if val2 != val => return false,
+    //             _ => {}
+    //         }
+    //     }
+    //     true
+    // }
 
-    /// Given self and other, two predicates, return the most general Predicate possible, N
-    /// such that n.satisfies(self) && n.satisfies(other).
-    /// If none exists Nonexistant is returned.
-    /// If the resulting predicate is equivlanet to self, other, or both,
-    /// FormerNotLatter, LatterNotFormer and Equivalent are returned respectively.
-    /// otherwise New(N) is returned.
-    fn all_mapper(&self, other: &Self) -> AllMapperResult {
-        use AllMapperResult as Amr;
+    /// Given self and other, two predicates, return the predicate whose
+    /// assignments are the union of those of self and other.
+    ///
+    fn assignment_union(&self, other: &Self) -> AssignmentUnionResult {
+        use AssignmentUnionResult as Aur;
         // iterators over assignments of both predicates. Rely on SORTED ordering of BTreeMap's keys.
         let [mut s_it, mut o_it] = [self.assigned.iter(), other.assigned.iter()];
         let [mut s, mut o] = [s_it.next(), o_it.next()];
@@ -514,7 +512,7 @@ impl Predicate {
                     } else if sb != ob {
                         assert_eq!(sid, oid);
                         // both predicates assign the variable but differ on the value
-                        return Amr::Nonexistant;
+                        return Aur::Nonexistant;
                     } else {
                         // both predicates assign the variable to the same value
                         s = s_it.next();
@@ -525,9 +523,9 @@ impl Predicate {
         }
         // Observed zero inconsistencies. A unified predicate exists...
         match [s_not_o.is_empty(), o_not_s.is_empty()] {
-            [true, true] => Amr::Equivalent,       // ... equivalent to both.
-            [false, true] => Amr::FormerNotLatter, // ... equivalent to self.
-            [true, false] => Amr::LatterNotFormer, // ... equivalent to other.
+            [true, true] => Aur::Equivalent,       // ... equivalent to both.
+            [false, true] => Aur::FormerNotLatter, // ... equivalent to self.
+            [true, false] => Aur::LatterNotFormer, // ... equivalent to other.
             [false, false] => {
                 // ... which is the union of the predicates' assignments but
                 //     is equivalent to neither self nor other.
@@ -535,7 +533,7 @@ impl Predicate {
                 for (&id, &b) in o_not_s {
                     new.assigned.insert(id, b);
                 }
-                Amr::New(new)
+                Aur::New(new)
             }
         }
     }

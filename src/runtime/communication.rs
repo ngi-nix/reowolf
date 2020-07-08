@@ -534,46 +534,46 @@ impl Connector {
             // try recv messages arriving through endpoints
             log!(cu.logger, "No decision yet. Let's recv an endpoint msg...");
             {
-                let (endpoint_index, comm_ctrl_msg): (usize, CommCtrlMsg) = match comm
-                    .endpoint_manager
-                    .try_recv_any_comms(&mut *cu.logger, &cu.port_info, rctx, comm.round_index)?
-                {
-                    CommRecvOk::NewControlMsg { net_endpoint_index, msg } => {
-                        (net_endpoint_index, msg)
-                    }
-                    CommRecvOk::NewPayloadMsgs => continue 'undecided,
-                    CommRecvOk::TimeoutWithoutNew => {
-                        log!(cu.logger, "Reached user-defined deadling without decision...");
-                        if let Some(parent) = comm.neighborhood.parent {
-                            if already_requested_failure.replace_with_true() {
-                                Self::request_failure(cu, comm, parent)?
+                let (net_index, comm_ctrl_msg): (usize, CommCtrlMsg) =
+                    match comm.endpoint_manager.try_recv_any_comms(
+                        &mut *cu.logger,
+                        &cu.port_info,
+                        rctx,
+                        comm.round_index,
+                    )? {
+                        CommRecvOk::NewControlMsg { net_index, msg } => (net_index, msg),
+                        CommRecvOk::NewPayloadMsgs => continue 'undecided,
+                        CommRecvOk::TimeoutWithoutNew => {
+                            log!(cu.logger, "Reached user-defined deadling without decision...");
+                            if let Some(parent) = comm.neighborhood.parent {
+                                if already_requested_failure.replace_with_true() {
+                                    Self::request_failure(cu, comm, parent)?
+                                } else {
+                                    log!(cu.logger, "Already requested failure");
+                                }
                             } else {
-                                log!(cu.logger, "Already requested failure");
+                                log!(cu.logger, "As the leader, deciding on timeout");
+                                return Ok(Decision::Failure);
                             }
-                        } else {
-                            log!(cu.logger, "As the leader, deciding on timeout");
-                            return Ok(Decision::Failure);
+                            rctx.deadline = None;
+                            continue 'undecided;
                         }
-                        rctx.deadline = None;
-                        continue 'undecided;
-                    }
-                };
+                    };
                 log!(
                     cu.logger,
                     "Received from endpoint {} ctrl msg  {:?}",
-                    endpoint_index,
+                    net_index,
                     &comm_ctrl_msg
                 );
                 match comm_ctrl_msg {
                     CommCtrlMsg::Suggest { suggestion } => {
                         // only accept this control msg through a child endpoint
-                        if comm.neighborhood.children.contains(&endpoint_index) {
+                        if comm.neighborhood.children.contains(&net_index) {
                             match suggestion {
                                 Decision::Success(predicate) => {
                                     // child solution contributes to local solution
                                     log!(cu.logger, "Child provided solution {:?}", &predicate);
-                                    let subtree_id =
-                                        SubtreeId::NetEndpoint { index: endpoint_index };
+                                    let subtree_id = SubtreeId::NetEndpoint { index: net_index };
                                     rctx.solution_storage.submit_and_digest_subtree_solution(
                                         &mut *cu.logger,
                                         subtree_id,
@@ -602,12 +602,12 @@ impl Connector {
                                 cu.logger,
                                 "Discarding suggestion {:?} from non-child endpoint idx {:?}",
                                 &suggestion,
-                                endpoint_index
+                                net_index
                             );
                         }
                     }
                     CommCtrlMsg::Announce { decision } => {
-                        if Some(endpoint_index) == comm.neighborhood.parent {
+                        if Some(net_index) == comm.neighborhood.parent {
                             // adopt this decision
                             return Ok(decision);
                         } else {
@@ -615,7 +615,7 @@ impl Connector {
                                 cu.logger,
                                 "Discarding announcement {:?} from non-parent endpoint idx {:?}",
                                 &decision,
-                                endpoint_index
+                                net_index
                             );
                         }
                     }
@@ -684,9 +684,9 @@ impl BranchingNative {
                 finished.insert(predicate, branch);
                 continue;
             }
-            use AllMapperResult as Amr;
-            match predicate.all_mapper(&send_payload_msg.predicate) {
-                Amr::Nonexistant => {
+            use AssignmentUnionResult as Aur;
+            match predicate.assignment_union(&send_payload_msg.predicate) {
+                Aur::Nonexistant => {
                     // this branch does not receive the message
                     log!(
                         cu.logger,
@@ -695,13 +695,13 @@ impl BranchingNative {
                     );
                     finished.insert(predicate, branch);
                 }
-                Amr::Equivalent | Amr::FormerNotLatter => {
+                Aur::Equivalent | Aur::FormerNotLatter => {
                     // retain the existing predicate, but add this payload
                     feed_branch(&mut branch, &predicate);
                     log!(cu.logger, "branch pred covers it! Accept the msg");
                     finished.insert(predicate, branch);
                 }
-                Amr::LatterNotFormer => {
+                Aur::LatterNotFormer => {
                     // fork branch, give fork the message and payload predicate. original branch untouched
                     let mut branch2 = branch.clone();
                     let predicate2 = send_payload_msg.predicate.clone();
@@ -715,7 +715,7 @@ impl BranchingNative {
                     finished.insert(predicate, branch);
                     finished.insert(predicate2, branch2);
                 }
-                Amr::New(predicate2) => {
+                Aur::New(predicate2) => {
                     // fork branch, give fork the message and the new predicate. original branch untouched
                     let mut branch2 = branch.clone();
                     feed_branch(&mut branch2, &predicate2);
@@ -865,21 +865,21 @@ impl BranchingProtoComponent {
                 blocked.insert(predicate, branch);
                 continue;
             }
-            use AllMapperResult as Amr;
+            use AssignmentUnionResult as Aur;
             log!(logger, "visiting branch with pred {:?}", &predicate);
-            match predicate.all_mapper(&send_payload_msg.predicate) {
-                Amr::Nonexistant => {
+            match predicate.assignment_union(&send_payload_msg.predicate) {
+                Aur::Nonexistant => {
                     // this branch does not receive the message
                     log!(logger, "skipping branch");
                     blocked.insert(predicate, branch);
                 }
-                Amr::Equivalent | Amr::FormerNotLatter => {
+                Aur::Equivalent | Aur::FormerNotLatter => {
                     // retain the existing predicate, but add this payload
                     log!(logger, "feeding this branch without altering its predicate");
                     branch.feed_msg(getter, send_payload_msg.payload.clone());
                     unblocked.insert(predicate, branch);
                 }
-                Amr::LatterNotFormer => {
+                Aur::LatterNotFormer => {
                     // fork branch, give fork the message and payload predicate. original branch untouched
                     log!(logger, "Forking this branch, giving it the predicate of the msg");
                     let mut branch2 = branch.clone();
@@ -888,7 +888,7 @@ impl BranchingProtoComponent {
                     blocked.insert(predicate, branch);
                     unblocked.insert(predicate2, branch2);
                 }
-                Amr::New(predicate2) => {
+                Aur::New(predicate2) => {
                     // fork branch, give fork the message and the new predicate. original branch untouched
                     log!(logger, "Forking this branch with new predicate {:?}", &predicate2);
                     let mut branch2 = branch.clone();

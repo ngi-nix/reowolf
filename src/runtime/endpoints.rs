@@ -158,7 +158,7 @@ impl EndpointManager {
                 &mut self,
                 logger: &mut dyn Logger,
                 round_ctx: &mut impl RoundCtxTrait,
-                net_endpoint_index: usize,
+                net_index: usize,
                 msg: Msg,
                 round_index: usize,
                 some_message_enqueued: &mut bool,
@@ -183,19 +183,16 @@ impl EndpointManager {
                                 comm_msg.round_index,
                                 round_index,
                             );
-                            self.delayed_messages
-                                .push((net_endpoint_index, Msg::CommMsg(comm_msg)));
+                            self.delayed_messages.push((net_index, Msg::CommMsg(comm_msg)));
                             return None;
                         }
                     },
                 };
                 match comm_msg_contents {
-                    CommMsgContents::CommCtrl(comm_ctrl_msg) => {
-                        Some((net_endpoint_index, comm_ctrl_msg))
-                    }
+                    CommMsgContents::CommCtrl(comm_ctrl_msg) => Some((net_index, comm_ctrl_msg)),
                     CommMsgContents::SendPayload(send_payload_msg) => {
-                        let getter = self.net_endpoint_store.endpoint_exts[net_endpoint_index]
-                            .getter_for_incoming;
+                        let getter =
+                            self.net_endpoint_store.endpoint_exts[net_index].getter_for_incoming;
                         round_ctx.getter_add(getter, send_payload_msg);
                         *some_message_enqueued = true;
                         None
@@ -207,30 +204,30 @@ impl EndpointManager {
         ///////////////////////////////////////////
         let mut some_message_enqueued = false;
         // try yield undelayed net message
-        while let Some((net_endpoint_index, msg)) = self.undelayed_messages.pop() {
-            if let Some((net_endpoint_index, msg)) = self.handle_msg(
+        while let Some((net_index, msg)) = self.undelayed_messages.pop() {
+            if let Some((net_index, msg)) = self.handle_msg(
                 logger,
                 round_ctx,
-                net_endpoint_index,
+                net_index,
                 msg,
                 round_index,
                 &mut some_message_enqueued,
             ) {
-                return Ok(CommRecvOk::NewControlMsg { net_endpoint_index, msg });
+                return Ok(CommRecvOk::NewControlMsg { net_index, msg });
             }
         }
         loop {
             // try receive a net message
-            while let Some((net_endpoint_index, msg)) = self.try_recv_undrained_net(logger)? {
-                if let Some((net_endpoint_index, msg)) = self.handle_msg(
+            while let Some((net_index, msg)) = self.try_recv_undrained_net(logger)? {
+                if let Some((net_index, msg)) = self.handle_msg(
                     logger,
                     round_ctx,
-                    net_endpoint_index,
+                    net_index,
                     msg,
                     round_index,
                     &mut some_message_enqueued,
                 ) {
-                    return Ok(CommRecvOk::NewControlMsg { net_endpoint_index, msg });
+                    return Ok(CommRecvOk::NewControlMsg { net_index, msg });
                 }
             }
             // try receive a udp message
