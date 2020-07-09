@@ -370,9 +370,10 @@ impl EndpointManager {
                 ee.incoming_round_spec_var = None; // shouldn't be accessed before its overwritten next round; still adding for clarity.
                 for (payload_predicate, payload) in ee.outgoing_payloads.drain() {
                     if payload_predicate.assigns_subset(solution_predicate) {
-                        ee.sock
-                            .send(payload.as_slice())
-                            .map_err(|_| Use::BrokenNetEndpoint { index })?;
+                        ee.sock.send(payload.as_slice()).map_err(|e| {
+                            println!("{:?}", e);
+                            Use::BrokenUdpEndpoint { index }
+                        })?;
                         log!(
                             logger,
                             "Sent payload {:?} with pred {:?} through Udp endpoint {}",

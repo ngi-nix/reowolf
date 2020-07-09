@@ -154,12 +154,14 @@ struct ProtoComponent {
 }
 #[derive(Debug, Clone)]
 struct NetEndpointSetup {
+    local_port: PortId,
     sock_addr: SocketAddr,
     endpoint_polarity: EndpointPolarity,
 }
 
 #[derive(Debug, Clone)]
 struct UdpEndpointSetup {
+    local_port: PortId,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
 }
@@ -239,8 +241,8 @@ struct ConnectorUnphased {
 }
 #[derive(Debug)]
 struct ConnectorSetup {
-    net_endpoint_setups: Vec<(PortId, NetEndpointSetup)>,
-    udp_endpoint_setups: Vec<(PortId, UdpEndpointSetup)>,
+    net_endpoint_setups: Vec<NetEndpointSetup>,
+    udp_endpoint_setups: Vec<UdpEndpointSetup>,
     surplus_sockets: u16,
 }
 #[derive(Debug)]
@@ -258,7 +260,7 @@ struct NativeBatch {
     to_put: HashMap<PortId, Payload>,
     to_get: HashSet<PortId>,
 }
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 enum TokenTarget {
     NetEndpoint { index: usize },
     UdpEndpoint { index: usize },

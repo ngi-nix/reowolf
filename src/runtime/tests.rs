@@ -43,9 +43,10 @@ lazy_static::lazy_static! {
         Arc::new(reowolf::ProtocolDescription::parse(MINIMAL_PDL).unwrap())
     };
 }
+static TEST_MSG_BYTES: &'static [u8] = b"hello";
 lazy_static::lazy_static! {
     static ref TEST_MSG: Payload = {
-        Payload::from(b"hello" as &[u8])
+        Payload::from(TEST_MSG_BYTES)
     };
 }
 
@@ -82,9 +83,9 @@ fn new_sync() {
 fn new_net_port() {
     let test_log_path = Path::new("./logs/new_net_port");
     let mut c = file_logged_connector(0, test_log_path);
-    let sock_addr = next_test_addr();
-    let _ = c.new_net_port(Getter, sock_addr, Passive).unwrap();
-    let _ = c.new_net_port(Putter, sock_addr, Active).unwrap();
+    let sock_addrs = [next_test_addr()];
+    let _ = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+    let _ = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
 }
 
 #[test]
@@ -96,27 +97,27 @@ fn trivial_connect() {
 
 #[test]
 fn single_node_connect() {
-    let sock_addr = next_test_addr();
     let test_log_path = Path::new("./logs/single_node_connect");
+    let sock_addrs = [next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let _ = c.new_net_port(Getter, sock_addr, Passive).unwrap();
-    let _ = c.new_net_port(Putter, sock_addr, Active).unwrap();
+    let _ = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+    let _ = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
     c.connect(SEC1).unwrap();
 }
 
 #[test]
 fn minimal_net_connect() {
-    let sock_addr = next_test_addr();
     let test_log_path = Path::new("./logs/minimal_net_connect");
+    let sock_addrs = [next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
             let mut c = file_logged_connector(0, test_log_path);
-            let _ = c.new_net_port(Getter, sock_addr, Active).unwrap();
+            let _ = c.new_net_port(Getter, sock_addrs[0], Active).unwrap();
             c.connect(SEC1).unwrap();
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(1, test_log_path);
-            let _ = c.new_net_port(Putter, sock_addr, Passive).unwrap();
+            let _ = c.new_net_port(Putter, sock_addrs[0], Passive).unwrap();
             c.connect(SEC1).unwrap();
         });
     })
@@ -235,11 +236,11 @@ fn native_self_msg() {
 #[test]
 fn two_natives_msg() {
     let test_log_path = Path::new("./logs/two_natives_msg");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
             let mut c = file_logged_connector(0, test_log_path);
-            let g = c.new_net_port(Getter, sock_addr, Active).unwrap();
+            let g = c.new_net_port(Getter, sock_addrs[0], Active).unwrap();
             c.connect(SEC1).unwrap();
             c.get(g).unwrap();
             c.sync(SEC1).unwrap();
@@ -247,7 +248,7 @@ fn two_natives_msg() {
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(1, test_log_path);
-            let p = c.new_net_port(Putter, sock_addr, Passive).unwrap();
+            let p = c.new_net_port(Putter, sock_addrs[0], Passive).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p, TEST_MSG.clone()).unwrap();
             c.sync(SEC1).unwrap();
@@ -273,11 +274,11 @@ fn trivial_nondet() {
 #[test]
 fn connector_pair_nondet() {
     let test_log_path = Path::new("./logs/connector_pair_nondet");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
             let mut c = file_logged_connector(0, test_log_path);
-            let g = c.new_net_port(Getter, sock_addr, Active).unwrap();
+            let g = c.new_net_port(Getter, sock_addrs[0], Active).unwrap();
             c.connect(SEC1).unwrap();
             c.next_batch().unwrap();
             c.get(g).unwrap();
@@ -286,7 +287,7 @@ fn connector_pair_nondet() {
         });
         s.spawn(|_| {
             let mut c = file_logged_connector(1, test_log_path);
-            let p = c.new_net_port(Putter, sock_addr, Passive).unwrap();
+            let p = c.new_net_port(Putter, sock_addrs[0], Passive).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p, TEST_MSG.clone()).unwrap();
             c.sync(SEC1).unwrap();
@@ -434,19 +435,19 @@ fn local_timeout() {
 #[test]
 fn parent_timeout() {
     let test_log_path = Path::new("./logs/parent_timeout");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
             // parent; times out
             let mut c = file_logged_connector(999, test_log_path);
-            let _ = c.new_net_port(Putter, sock_addr, Active).unwrap();
+            let _ = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
             c.connect(SEC1).unwrap();
             c.sync(MS300).unwrap_err(); // timeout
         });
         s.spawn(|_| {
             // child
             let mut c = file_logged_connector(000, test_log_path);
-            let g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+            let g = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
             c.connect(SEC1).unwrap();
             c.get(g).unwrap(); // not matched by put
             c.sync(None).unwrap_err(); // no timeout
@@ -458,19 +459,19 @@ fn parent_timeout() {
 #[test]
 fn child_timeout() {
     let test_log_path = Path::new("./logs/child_timeout");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
             // child; times out
             let mut c = file_logged_connector(000, test_log_path);
-            let _ = c.new_net_port(Putter, sock_addr, Active).unwrap();
+            let _ = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
             c.connect(SEC1).unwrap();
             c.sync(MS300).unwrap_err(); // timeout
         });
         s.spawn(|_| {
             // parent
             let mut c = file_logged_connector(999, test_log_path);
-            let g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+            let g = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
             c.connect(SEC1).unwrap();
             c.get(g).unwrap(); // not matched by put
             c.sync(None).unwrap_err(); // no timeout
@@ -520,10 +521,10 @@ fn chain_connect() {
 #[test]
 fn net_self_loop() {
     let test_log_path = Path::new("./logs/net_self_loop");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let p = c.new_net_port(Putter, sock_addr, Active).unwrap();
-    let g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+    let p = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
+    let g = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
     c.connect(SEC1).unwrap();
     c.put(p, TEST_MSG.clone()).unwrap();
     c.get(g).unwrap();
@@ -533,17 +534,17 @@ fn net_self_loop() {
 #[test]
 fn nobody_connects_active() {
     let test_log_path = Path::new("./logs/nobody_connects_active");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let _g = c.new_net_port(Getter, sock_addr, Active).unwrap();
+    let _g = c.new_net_port(Getter, sock_addrs[0], Active).unwrap();
     c.connect(Some(Duration::from_secs(5))).unwrap_err();
 }
 #[test]
 fn nobody_connects_passive() {
     let test_log_path = Path::new("./logs/nobody_connects_passive");
-    let sock_addr = next_test_addr();
+    let sock_addrs = [next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let _g = c.new_net_port(Getter, sock_addr, Passive).unwrap();
+    let _g = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
     c.connect(Some(Duration::from_secs(5))).unwrap_err();
 }
 
@@ -658,12 +659,100 @@ fn multi_recover() {
     .unwrap();
 }
 
-// #[test]
-// fn udp_self_connect() {
-//     let test_log_path = Path::new("./logs/udp_self_connect");
-//     let sock_addrs = [next_test_addr(), next_test_addr()];
-//     let mut c = file_logged_connector(0, test_log_path);
-//     c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
-//     c.new_udp_port(Getter, sock_addrs[1], sock_addrs[0]).unwrap();
-//     c.connect(SEC1).unwrap();
-// }
+#[test]
+fn udp_self_connect() {
+    let test_log_path = Path::new("./logs/udp_self_connect");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let mut c = file_logged_connector(0, test_log_path);
+    c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+    c.new_udp_port(Getter, sock_addrs[1], sock_addrs[0]).unwrap();
+    c.connect(SEC1).unwrap();
+}
+
+#[test]
+fn solo_udp_put_success() {
+    let test_log_path = Path::new("./logs/solo_udp_put_success");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let mut c = file_logged_connector(0, test_log_path);
+    let p0 = c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+    c.connect(SEC1).unwrap();
+    c.put(p0, TEST_MSG.clone()).unwrap();
+    c.sync(MS300).unwrap();
+}
+
+#[test]
+fn solo_udp_get_fail() {
+    let test_log_path = Path::new("./logs/solo_udp_get_fail");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let mut c = file_logged_connector(0, test_log_path);
+    let p0 = c.new_udp_port(Getter, sock_addrs[0], sock_addrs[1]).unwrap();
+    c.connect(SEC1).unwrap();
+    c.get(p0).unwrap();
+    c.sync(MS300).unwrap_err();
+}
+
+#[test]
+fn reowolf_to_udp() {
+    let test_log_path = Path::new("./logs/reowolf_to_udp");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let barrier = std::sync::Barrier::new(2);
+    scope(|s| {
+        s.spawn(|_| {
+            barrier.wait();
+            // reowolf thread
+            let mut c = file_logged_connector(0, test_log_path);
+            let p0 = c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+            c.connect(SEC1).unwrap();
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.sync(MS300).unwrap();
+            barrier.wait();
+        });
+        s.spawn(|_| {
+            barrier.wait();
+            // udp thread
+            let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
+            udp.connect(sock_addrs[0]).unwrap();
+            let mut buf = unsafe {
+                // canonical way to create uninitalized byte buffer
+                let mut v = Vec::with_capacity(256);
+                v.set_len(256);
+                v
+            };
+            let len = udp.recv(&mut buf).unwrap();
+            assert_eq!(TEST_MSG_BYTES, &buf[0..len]);
+            barrier.wait();
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn udp_to_reowolf() {
+    let test_log_path = Path::new("./logs/udp_to_reowolf");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let barrier = std::sync::Barrier::new(2);
+    scope(|s| {
+        s.spawn(|_| {
+            barrier.wait();
+            // reowolf thread
+            let mut c = file_logged_connector(0, test_log_path);
+            let p0 = c.new_udp_port(Getter, sock_addrs[0], sock_addrs[1]).unwrap();
+            c.connect(SEC1).unwrap();
+            c.get(p0).unwrap();
+            c.sync(SEC1).unwrap();
+            assert_eq!(c.gotten(p0).unwrap().as_slice(), TEST_MSG_BYTES);
+            barrier.wait();
+        });
+        s.spawn(|_| {
+            barrier.wait();
+            // udp thread
+            let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
+            udp.connect(sock_addrs[0]).unwrap();
+            for _ in 0..5 {
+                udp.send(TEST_MSG_BYTES).unwrap();
+            }
+            barrier.wait();
+        });
+    })
+    .unwrap();
+}

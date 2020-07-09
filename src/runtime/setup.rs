@@ -35,7 +35,6 @@ impl Connector {
         match phased {
             ConnectorPhased::Communication(..) => Err(WrongStateError),
             ConnectorPhased::Setup(setup) => {
-                let udp_endpoint_setup = UdpEndpointSetup { local_addr, peer_addr };
                 let udp_index = setup.udp_endpoint_setups.len();
                 let [port_nat, port_udp] =
                     [cu.id_manager.new_port_id(), cu.id_manager.new_port_id()];
@@ -46,7 +45,11 @@ impl Connector {
                 cu.port_info.routes.insert(port_udp, Route::UdpEndpoint { index: udp_index });
                 cu.port_info.polarities.insert(port_nat, polarity);
                 cu.port_info.polarities.insert(port_udp, !polarity);
-                setup.udp_endpoint_setups.push((port_nat, udp_endpoint_setup));
+                setup.udp_endpoint_setups.push(UdpEndpointSetup {
+                    local_addr,
+                    peer_addr,
+                    local_port: port_nat,
+                });
                 Ok(port_nat)
             }
         }
@@ -61,21 +64,25 @@ impl Connector {
         match phased {
             ConnectorPhased::Communication(..) => Err(WrongStateError),
             ConnectorPhased::Setup(setup) => {
-                let endpoint_setup = NetEndpointSetup { sock_addr, endpoint_polarity };
-                let p = cu.id_manager.new_port_id();
-                cu.native_ports.insert(p);
+                let local_port = cu.id_manager.new_port_id();
+                cu.native_ports.insert(local_port);
                 // {polarity, route} known. {peer} unknown.
-                cu.port_info.polarities.insert(p, polarity);
-                cu.port_info.routes.insert(p, Route::LocalComponent(ComponentId::Native));
+                cu.port_info.polarities.insert(local_port, polarity);
+                cu.port_info.routes.insert(local_port, Route::LocalComponent(ComponentId::Native));
                 log!(
                     cu.logger,
-                    "Added net port {:?} with polarity {:?} and endpoint setup {:?} ",
-                    p,
+                    "Added net port {:?} with polarity {:?} addr {:?} endpoint_polarity {:?}",
+                    local_port,
                     polarity,
-                    &endpoint_setup
+                    &sock_addr,
+                    endpoint_polarity
                 );
-                setup.net_endpoint_setups.push((p, endpoint_setup));
-                Ok(p)
+                setup.net_endpoint_setups.push(NetEndpointSetup {
+                    sock_addr,
+                    endpoint_polarity,
+                    local_port,
+                });
+                Ok(local_port)
             }
         }
     }
@@ -130,8 +137,8 @@ impl Connector {
 }
 fn new_endpoint_manager(
     logger: &mut dyn Logger,
-    net_endpoint_setups: &[(PortId, NetEndpointSetup)],
-    udp_endpoint_setups: &[(PortId, UdpEndpointSetup)],
+    net_endpoint_setups: &[NetEndpointSetup],
+    udp_endpoint_setups: &[UdpEndpointSetup],
     port_info: &mut PortInfo,
     deadline: &Option<Instant>,
 ) -> Result<EndpointManager, ConnectError> {
@@ -142,7 +149,6 @@ fn new_endpoint_manager(
     struct Todo {
         todo_endpoint: TodoEndpoint,
         endpoint_setup: NetEndpointSetup,
-        local_port: PortId,
         sent_local_port: bool,          // true <-> I've sent my local port
         recv_peer_port: Option<PortId>, // Some(..) <-> I've received my peer's port
     }
@@ -173,7 +179,7 @@ fn new_endpoint_manager(
     let mut net_todos = net_endpoint_setups
         .iter()
         .enumerate()
-        .map(|(index, (local_port, endpoint_setup))| {
+        .map(|(index, endpoint_setup)| {
             let token = TokenTarget::NetEndpoint { index }.into();
             let todo_endpoint = if let EndpointPolarity::Active = endpoint_setup.endpoint_polarity {
                 let mut stream = TcpStream::connect(endpoint_setup.sock_addr)
@@ -188,7 +194,6 @@ fn new_endpoint_manager(
             };
             Ok(Todo {
                 todo_endpoint,
-                local_port: *local_port,
                 sent_local_port: false,
                 recv_peer_port: None,
                 endpoint_setup: endpoint_setup.clone(),
@@ -198,13 +203,15 @@ fn new_endpoint_manager(
     let udp_todos = udp_endpoint_setups
         .iter()
         .enumerate()
-        .map(|(index, (local_port, endpoint_setup))| {
+        .map(|(index, endpoint_setup)| {
             let mut sock = UdpSocket::bind(endpoint_setup.local_addr)
                 .map_err(|_| Ce::BindFailed(endpoint_setup.local_addr))?;
+            sock.connect(endpoint_setup.peer_addr)
+                .map_err(|_| Ce::UdpConnectFailed(endpoint_setup.peer_addr))?;
             poll.registry()
                 .register(&mut sock, TokenTarget::UdpEndpoint { index }.into(), Interest::WRITABLE)
                 .unwrap();
-            Ok(UdpTodo { sock, local_port: *local_port })
+            Ok(UdpTodo { sock, local_port: endpoint_setup.local_port })
         })
         .collect::<Result<Vec<UdpTodo>, ConnectError>>()?;
 
@@ -357,12 +364,12 @@ fn new_endpoint_manager(
                             continue;
                         }
                         let local_polarity =
-                            *port_info.polarities.get(&net_todo.local_port).unwrap();
+                            *port_info.polarities.get(&net_todo.endpoint_setup.local_port).unwrap();
                         if event.is_writable() && !net_todo.sent_local_port {
                             // can write and didn't send setup msg yet? Do so!
                             let msg = Msg::SetupMsg(SetupMsg::MyPortInfo(MyPortInfo {
                                 polarity: local_polarity,
-                                port: net_todo.local_port,
+                                port: net_todo.endpoint_setup.local_port,
                             }));
                             net_endpoint
                                 .send(&msg)
@@ -398,15 +405,19 @@ fn new_endpoint_manager(
                                     );
                                     if peer_info.polarity == local_polarity {
                                         return Err(ConnectError::PortPeerPolarityMismatch(
-                                            net_todo.local_port,
+                                            net_todo.endpoint_setup.local_port,
                                         ));
                                     }
                                     net_todo.recv_peer_port = Some(peer_info.port);
                                     // 1. finally learned the peer of this port!
-                                    port_info.peers.insert(net_todo.local_port, peer_info.port);
+                                    port_info
+                                        .peers
+                                        .insert(net_todo.endpoint_setup.local_port, peer_info.port);
                                     // 2. learned the info of this peer port
                                     port_info.polarities.insert(peer_info.port, peer_info.polarity);
-                                    port_info.peers.insert(peer_info.port, net_todo.local_port);
+                                    port_info
+                                        .peers
+                                        .insert(peer_info.port, net_todo.endpoint_setup.local_port);
                                     if let Some(route) = port_info.routes.get(&peer_info.port) {
                                         // check just for logging purposes
                                         log!(
@@ -453,7 +464,7 @@ fn new_endpoint_manager(
     let net_endpoint_exts = net_todos
         .into_iter()
         .enumerate()
-        .map(|(index, Todo { todo_endpoint, local_port, .. })| NetEndpointExt {
+        .map(|(index, Todo { todo_endpoint, endpoint_setup, .. })| NetEndpointExt {
             net_endpoint: match todo_endpoint {
                 TodoEndpoint::NetEndpoint(mut net_endpoint) => {
                     let token = TokenTarget::NetEndpoint { index }.into();
@@ -464,7 +475,7 @@ fn new_endpoint_manager(
                 }
                 _ => unreachable!(),
             },
-            getter_for_incoming: local_port,
+            getter_for_incoming: endpoint_setup.local_port,
         })
         .collect();
     let udp_endpoint_exts = udp_todos

@@ -438,19 +438,21 @@ impl Connector {
             while let Some((getter, send_payload_msg)) = rctx.getter_buffer.pop() {
                 assert!(cu.port_info.polarities.get(&getter).copied() == Some(Getter));
                 let route = cu.port_info.routes.get(&getter);
-                log!(cu.logger, "Routing msg {:?} to {:?}", &send_payload_msg, &route);
+                log!(
+                    cu.logger,
+                    "Routing msg {:?} to {:?} via {:?}",
+                    &send_payload_msg,
+                    getter,
+                    &route
+                );
                 match route {
-                    None => {
-                        log!(
-                            cu.logger,
-                            "Delivery to getter {:?} msg {:?} failed. Physical route unmapped!",
-                            getter,
-                            &send_payload_msg
-                        );
-                    }
+                    None => log!(cu.logger, "Delivery failed. Physical route unmapped!"),
                     Some(Route::UdpEndpoint { index }) => {
-                        // TODO UDP RECV
-                        todo!()
+                        let udp_endpoint_ext =
+                            &mut comm.endpoint_manager.udp_endpoint_store.endpoint_exts[*index];
+                        let SendPayloadMsg { predicate, payload } = send_payload_msg;
+                        log!(cu.logger, "Delivering to udp endpoint index={}", index);
+                        udp_endpoint_ext.outgoing_payloads.insert(predicate, payload);
                     }
                     Some(Route::NetEndpoint { index }) => {
                         let msg = Msg::CommMsg(CommMsg {

@@ -3,6 +3,7 @@ use crate::common::*;
 #[derive(Debug)]
 pub enum ConnectError {
     BindFailed(SocketAddr),
+    UdpConnectFailed(SocketAddr),
     PollInitFailed,
     Timeout,
     PollFailed,
