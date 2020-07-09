@@ -64,6 +64,22 @@ thread_local! {
 
 type ErrorCode = i32;
 
+unsafe fn tl_socketaddr_from_raw(
+    bytes_ptr: *const u8,
+    bytes_len: usize,
+) -> Result<SocketAddr, i32> {
+    std::str::from_utf8(&*slice_from_parts(bytes_ptr, bytes_len))
+        .map_err(|err| {
+            StoredError::tl_debug_store(&err);
+            -1
+        })?
+        .parse()
+        .map_err(|err| {
+            StoredError::tl_debug_store(&err);
+            -2
+        })
+}
+
 ///////////////////// REOWOLF //////////////////////////
 
 /// Returns length (via out pointer) and pointer (via return value) of the last Reowolf error.
@@ -224,25 +240,57 @@ pub unsafe extern "C" fn connector_add_net_port(
     endpoint_polarity: EndpointPolarity,
 ) -> ErrorCode {
     StoredError::tl_clear();
-    let addr_bytes = &*slice_from_parts(addr_str_ptr, addr_str_len);
-    let addr_str = match std::str::from_utf8(addr_bytes) {
-        Ok(addr_str) => addr_str,
-        Err(err) => {
-            StoredError::tl_debug_store(&err);
-            return -1;
-        }
+    let addr = match tl_socketaddr_from_raw(addr_str_ptr, addr_str_len) {
+        Ok(local) => local,
+        Err(errcode) => return errcode,
     };
-    let sock_address: SocketAddr = match addr_str.parse() {
-        Ok(addr) => addr,
-        Err(err) => {
-            StoredError::tl_debug_store(&err);
-            return -2;
-        }
-    };
-    match connector.new_net_port(port_polarity, sock_address, endpoint_polarity) {
+    match connector.new_net_port(port_polarity, addr, endpoint_polarity) {
         Ok(p) => {
             if !port.is_null() {
                 port.write(p);
+            }
+            0
+        }
+        Err(err) => {
+            StoredError::tl_debug_store(&err);
+            -3
+        }
+    }
+}
+
+/// Given
+/// - an initialized connector in setup or connecting state,
+/// - a utf-8 encoded BIND socket addresses (i.e., "local"),
+/// - a utf-8 encoded CONNECT socket addresses (i.e., "peer"),
+/// returns [P, G] via out pointers [putter, getter],
+/// - where P is a Putter port that sends messages into the socket
+/// - where G is a Getter port that recvs messages from the socket
+#[no_mangle]
+pub unsafe extern "C" fn connector_add_udp_port(
+    connector: &mut Connector,
+    putter: *mut PortId,
+    getter: *mut PortId,
+    local_addr_str_ptr: *const u8,
+    local_addr_str_len: usize,
+    peer_addr_str_ptr: *const u8,
+    peer_addr_str_len: usize,
+) -> ErrorCode {
+    StoredError::tl_clear();
+    let local = match tl_socketaddr_from_raw(local_addr_str_ptr, local_addr_str_len) {
+        Ok(local) => local,
+        Err(errcode) => return errcode,
+    };
+    let peer = match tl_socketaddr_from_raw(peer_addr_str_ptr, peer_addr_str_len) {
+        Ok(local) => local,
+        Err(errcode) => return errcode,
+    };
+    match connector.new_udp_port(local, peer) {
+        Ok([p, g]) => {
+            if !putter.is_null() {
+                putter.write(p);
+            }
+            if !getter.is_null() {
+                getter.write(g);
             }
             0
         }
