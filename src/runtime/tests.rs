@@ -8,10 +8,11 @@ use reowolf::{
 };
 use std::{fs::File, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 //////////////////////////////////////////
+const MS100: Option<Duration> = Some(Duration::from_millis(100));
+const MS300: Option<Duration> = Some(Duration::from_millis(300));
 const SEC1: Option<Duration> = Some(Duration::from_secs(1));
 const SEC5: Option<Duration> = Some(Duration::from_secs(5));
 const SEC15: Option<Duration> = Some(Duration::from_secs(15));
-const MS300: Option<Duration> = Some(Duration::from_millis(300));
 fn next_test_addr() -> SocketAddr {
     use std::{
         net::{Ipv4Addr, SocketAddrV4},
@@ -664,8 +665,8 @@ fn udp_self_connect() {
     let test_log_path = Path::new("./logs/udp_self_connect");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
-    c.new_udp_port(Getter, sock_addrs[1], sock_addrs[0]).unwrap();
+    c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+    c.new_udp_port(sock_addrs[1], sock_addrs[0]).unwrap();
     c.connect(SEC1).unwrap();
 }
 
@@ -674,7 +675,7 @@ fn solo_udp_put_success() {
     let test_log_path = Path::new("./logs/solo_udp_put_success");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let p0 = c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+    let [p0, _] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
     c.connect(SEC1).unwrap();
     c.put(p0, TEST_MSG.clone()).unwrap();
     c.sync(MS300).unwrap();
@@ -685,7 +686,7 @@ fn solo_udp_get_fail() {
     let test_log_path = Path::new("./logs/solo_udp_get_fail");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let p0 = c.new_udp_port(Getter, sock_addrs[0], sock_addrs[1]).unwrap();
+    let [_, p0] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
     c.connect(SEC1).unwrap();
     c.get(p0).unwrap();
     c.sync(MS300).unwrap_err();
@@ -701,7 +702,7 @@ fn reowolf_to_udp() {
             barrier.wait();
             // reowolf thread
             let mut c = file_logged_connector(0, test_log_path);
-            let p0 = c.new_udp_port(Putter, sock_addrs[0], sock_addrs[1]).unwrap();
+            let [p0, _] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p0, TEST_MSG.clone()).unwrap();
             c.sync(MS300).unwrap();
@@ -736,10 +737,10 @@ fn udp_to_reowolf() {
             barrier.wait();
             // reowolf thread
             let mut c = file_logged_connector(0, test_log_path);
-            let p0 = c.new_udp_port(Getter, sock_addrs[0], sock_addrs[1]).unwrap();
+            let [_, p0] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
             c.connect(SEC1).unwrap();
             c.get(p0).unwrap();
-            c.sync(SEC1).unwrap();
+            c.sync(SEC5).unwrap();
             assert_eq!(c.gotten(p0).unwrap().as_slice(), TEST_MSG_BYTES);
             barrier.wait();
         });
@@ -748,9 +749,48 @@ fn udp_to_reowolf() {
             // udp thread
             let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
             udp.connect(sock_addrs[0]).unwrap();
-            for _ in 0..5 {
+            for _ in 0..15 {
                 udp.send(TEST_MSG_BYTES).unwrap();
+                std::thread::sleep(MS100.unwrap());
             }
+            barrier.wait();
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn udp_reowolf_swap() {
+    let test_log_path = Path::new("./logs/udp_reowolf_swap");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    let barrier = std::sync::Barrier::new(2);
+    scope(|s| {
+        s.spawn(|_| {
+            barrier.wait();
+            // reowolf thread
+            let mut c = file_logged_connector(0, test_log_path);
+            let [p0, p1] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+            c.connect(SEC1).unwrap();
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.get(p1).unwrap();
+            c.sync(SEC5).unwrap();
+            assert_eq!(c.gotten(p1).unwrap().as_slice(), TEST_MSG_BYTES);
+            barrier.wait();
+        });
+        s.spawn(|_| {
+            barrier.wait();
+            // udp thread
+            let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
+            udp.connect(sock_addrs[0]).unwrap();
+            let mut buf = unsafe {
+                // canonical way to create uninitalized byte buffer
+                let mut v = Vec::with_capacity(256);
+                v.set_len(256);
+                v
+            };
+            udp.send(TEST_MSG_BYTES).unwrap();
+            let len = udp.recv(&mut buf).unwrap();
+            assert_eq!(TEST_MSG_BYTES, &buf[0..len]);
             barrier.wait();
         });
     })

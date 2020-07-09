@@ -24,7 +24,7 @@ pub struct Connector {
     phased: ConnectorPhased,
 }
 pub trait Logger: Debug {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write;
+    fn line_writer(&mut self) -> Option<&mut dyn std::io::Write>;
 }
 #[derive(Debug)]
 pub struct VecLogger(ConnectorId, Vec<u8>);
@@ -154,14 +154,14 @@ struct ProtoComponent {
 }
 #[derive(Debug, Clone)]
 struct NetEndpointSetup {
-    local_port: PortId,
+    getter_for_incoming: PortId,
     sock_addr: SocketAddr,
     endpoint_polarity: EndpointPolarity,
 }
 
 #[derive(Debug, Clone)]
 struct UdpEndpointSetup {
-    local_port: PortId,
+    getter_for_incoming: PortId,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
 }
@@ -193,7 +193,7 @@ struct SpecVarStream {
 #[derive(Debug)]
 struct EndpointManager {
     // invariants:
-    // 1. endpoint N is registered READ | WRITE with poller
+    // 1. net and udp endpoints are registered with poll. Poll token computed with TargetToken::into
     // 2. Events is empty
     poll: Poll,
     events: Events,

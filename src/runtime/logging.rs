@@ -12,20 +12,20 @@ impl VecLogger {
 }
 /////////////////
 impl Logger for DummyLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
-        self
+    fn line_writer(&mut self) -> Option<&mut dyn std::io::Write> {
+        None
     }
 }
 impl Logger for VecLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
+    fn line_writer(&mut self) -> Option<&mut dyn std::io::Write> {
         let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
-        self
+        Some(self)
     }
 }
 impl Logger for FileLogger {
-    fn line_writer(&mut self) -> &mut dyn std::io::Write {
+    fn line_writer(&mut self) -> Option<&mut dyn std::io::Write> {
         let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
-        &mut self.1
+        Some(&mut self.1)
     }
 }
 ///////////////////
@@ -44,13 +44,5 @@ impl std::io::Write for VecLogger {
     fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.1.extend_from_slice(data);
         Ok(data.len())
-    }
-}
-impl std::io::Write for DummyLogger {
-    fn flush(&mut self) -> Result<(), std::io::Error> {
-        Ok(())
-    }
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, std::io::Error> {
-        Ok(bytes.len())
     }
 }
