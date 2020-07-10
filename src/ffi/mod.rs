@@ -1,10 +1,11 @@
-use super::*;
+use crate::{common::*, runtime::*};
+use core::{cell::RefCell, convert::TryFrom};
+use std::slice::from_raw_parts as slice_from_raw_parts;
 
-use core::cell::RefCell;
-use core::convert::TryFrom;
-use std::slice::from_raw_parts as slice_from_parts;
-// use std::os::raw::{c_char, c_int, c_uchar, c_uint};
-
+#[cfg(feature = "ffi_socket_api")]
+pub mod socket_api;
+///////////////////////////////////////////////
+type ErrorCode = std::os::raw::c_int;
 #[derive(Default)]
 struct StoredError {
     // invariant: len is zero IFF its occupied
@@ -61,14 +62,11 @@ impl StoredError {
 thread_local! {
     static STORED_ERROR: RefCell<StoredError> = RefCell::new(StoredError::default());
 }
-
-type ErrorCode = i32;
-
 unsafe fn tl_socketaddr_from_raw(
     bytes_ptr: *const u8,
     bytes_len: usize,
-) -> Result<SocketAddr, i32> {
-    std::str::from_utf8(&*slice_from_parts(bytes_ptr, bytes_len))
+) -> Result<SocketAddr, ErrorCode> {
+    std::str::from_utf8(&*slice_from_raw_parts(bytes_ptr, bytes_len))
         .map_err(|err| {
             StoredError::tl_debug_store(&err);
             -1
@@ -107,7 +105,7 @@ pub unsafe extern "C" fn protocol_description_parse(
     pdl_len: usize,
 ) -> *mut Arc<ProtocolDescription> {
     StoredError::tl_clear();
-    match ProtocolDescription::parse(&*slice_from_parts(pdl, pdl_len)) {
+    match ProtocolDescription::parse(&*slice_from_raw_parts(pdl, pdl_len)) {
         Ok(new) => Box::into_raw(Box::new(Arc::new(new))),
         Err(err) => {
             StoredError::tl_bytes_store(err.as_bytes());
@@ -139,7 +137,7 @@ pub unsafe extern "C" fn connector_new_logging(
     path_len: usize,
 ) -> *mut Connector {
     StoredError::tl_clear();
-    let path_bytes = &*slice_from_parts(path_ptr, path_len);
+    let path_bytes = &*slice_from_raw_parts(path_ptr, path_len);
     let path_str = match std::str::from_utf8(path_bytes) {
         Ok(path_str) => path_str,
         Err(err) => {
@@ -213,8 +211,8 @@ pub unsafe extern "C" fn connector_add_component(
 ) -> ErrorCode {
     StoredError::tl_clear();
     match connector.add_component(
-        &*slice_from_parts(ident_ptr, ident_len),
-        &*slice_from_parts(ports_ptr, ports_len),
+        &*slice_from_raw_parts(ident_ptr, ident_len),
+        &*slice_from_raw_parts(ports_ptr, ports_len),
     ) {
         Ok(()) => 0,
         Err(err) => {
@@ -360,7 +358,7 @@ pub unsafe extern "C" fn connector_put_bytes(
     bytes_len: usize,
 ) -> ErrorCode {
     StoredError::tl_clear();
-    let bytes = &*slice_from_parts(bytes_ptr, bytes_len);
+    let bytes = &*slice_from_raw_parts(bytes_ptr, bytes_len);
     match connector.put(port, Payload::from(bytes)) {
         Ok(()) => 0,
         Err(err) => {
@@ -450,7 +448,7 @@ pub unsafe extern "C" fn connector_gotten_bytes(
 //     bytes_len: usize,
 //     out_payload: *mut Payload,
 // ) {
-//     let bytes: &[u8] = &*slice_from_parts(bytes_ptr, bytes_len);
+//     let bytes: &[u8] = &*slice_from_raw_parts(bytes_ptr, bytes_len);
 //     out_payload.write(Payload::from(bytes));
 // }
 

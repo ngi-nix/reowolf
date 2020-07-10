@@ -50,7 +50,12 @@ lazy_static::lazy_static! {
         Payload::from(TEST_MSG_BYTES)
     };
 }
-
+fn new_u8_buffer(cap: usize) -> Vec<u8> {
+    let mut v = Vec::with_capacity(cap);
+    // Safe! len will cover owned bytes in valid state
+    unsafe { v.set_len(cap) }
+    v
+}
 //////////////////////////////////////////
 
 #[test]
@@ -713,12 +718,7 @@ fn reowolf_to_udp() {
             // udp thread
             let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
             udp.connect(sock_addrs[0]).unwrap();
-            let mut buf = unsafe {
-                // canonical way to create uninitalized byte buffer
-                let mut v = Vec::with_capacity(256);
-                v.set_len(256);
-                v
-            };
+            let mut buf = new_u8_buffer(256);
             let len = udp.recv(&mut buf).unwrap();
             assert_eq!(TEST_MSG_BYTES, &buf[0..len]);
             barrier.wait();
@@ -782,12 +782,7 @@ fn udp_reowolf_swap() {
             // udp thread
             let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
             udp.connect(sock_addrs[0]).unwrap();
-            let mut buf = unsafe {
-                // canonical way to create uninitalized byte buffer
-                let mut v = Vec::with_capacity(256);
-                v.set_len(256);
-                v
-            };
+            let mut buf = new_u8_buffer(256);
             udp.send(TEST_MSG_BYTES).unwrap();
             let len = udp.recv(&mut buf).unwrap();
             assert_eq!(TEST_MSG_BYTES, &buf[0..len]);

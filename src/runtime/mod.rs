@@ -8,9 +8,6 @@ mod logging;
 /// cbindgen:ignore
 mod setup;
 
-#[cfg(feature = "ffi")]
-pub mod ffi;
-
 #[cfg(test)]
 mod tests;
 
@@ -376,7 +373,7 @@ impl Drop for Connector {
     }
 }
 impl Connector {
-    fn random_id() -> ConnectorId {
+    pub(crate) fn random_id() -> ConnectorId {
         type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
         unsafe {
             let mut bytes = std::mem::MaybeUninit::<Bytes8>::uninit();
