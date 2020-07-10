@@ -1,11 +1,11 @@
 use crate::{common::*, runtime::*};
 use core::{cell::RefCell, convert::TryFrom};
+use std::os::raw::c_int;
 use std::slice::from_raw_parts as slice_from_raw_parts;
 
 #[cfg(feature = "ffi_socket_api")]
 pub mod socket_api;
 ///////////////////////////////////////////////
-type ErrorCode = std::os::raw::c_int;
 #[derive(Default)]
 struct StoredError {
     // invariant: len is zero IFF its occupied
@@ -65,18 +65,25 @@ thread_local! {
 unsafe fn tl_socketaddr_from_raw(
     bytes_ptr: *const u8,
     bytes_len: usize,
-) -> Result<SocketAddr, ErrorCode> {
+) -> Result<SocketAddr, c_int> {
     std::str::from_utf8(&*slice_from_raw_parts(bytes_ptr, bytes_len))
         .map_err(|err| {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF
         })?
         .parse()
         .map_err(|err| {
             StoredError::tl_debug_store(&err);
-            -2
+            ERR_REOWOLF
         })
 }
+
+pub const ERR_OK: c_int = 0;
+pub const ERR_REOWOLF: c_int = -1;
+pub const WRONG_STATE: c_int = -2;
+pub const FD_LOCK_POISONED: c_int = -3;
+pub const CLOSE_FAIL: c_int = -4;
+pub const BAD_FD: c_int = -5;
 
 ///////////////////// REOWOLF //////////////////////////
 
@@ -208,16 +215,16 @@ pub unsafe extern "C" fn connector_add_component(
     ident_len: usize,
     ports_ptr: *const PortId,
     ports_len: usize,
-) -> ErrorCode {
+) -> c_int {
     StoredError::tl_clear();
     match connector.add_component(
         &*slice_from_raw_parts(ident_ptr, ident_len),
         &*slice_from_raw_parts(ports_ptr, ports_len),
     ) {
-        Ok(()) => 0,
+        Ok(()) => ERR_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF
         }
     }
 }
@@ -236,7 +243,7 @@ pub unsafe extern "C" fn connector_add_net_port(
     addr_str_len: usize,
     port_polarity: Polarity,
     endpoint_polarity: EndpointPolarity,
-) -> ErrorCode {
+) -> c_int {
     StoredError::tl_clear();
     let addr = match tl_socketaddr_from_raw(addr_str_ptr, addr_str_len) {
         Ok(local) => local,
@@ -247,11 +254,11 @@ pub unsafe extern "C" fn connector_add_net_port(
             if !port.is_null() {
                 port.write(p);
             }
-            0
+            ERR_OK
         }
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -3
+            ERR_REOWOLF
         }
     }
 }
@@ -272,7 +279,7 @@ pub unsafe extern "C" fn connector_add_udp_port(
     local_addr_str_len: usize,
     peer_addr_str_ptr: *const u8,
     peer_addr_str_len: usize,
-) -> ErrorCode {
+) -> c_int {
     StoredError::tl_clear();
     let local = match tl_socketaddr_from_raw(local_addr_str_ptr, local_addr_str_len) {
         Ok(local) => local,
@@ -290,11 +297,11 @@ pub unsafe extern "C" fn connector_add_udp_port(
             if !getter.is_null() {
                 getter.write(g);
             }
-            0
+            ERR_OK
         }
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -3
+            ERR_REOWOLF
         }
     }
 }
@@ -305,15 +312,15 @@ pub unsafe extern "C" fn connector_add_udp_port(
 pub unsafe extern "C" fn connector_connect(
     connector: &mut Connector,
     timeout_millis: i64,
-) -> ErrorCode {
+) -> c_int {
     StoredError::tl_clear();
     let option_timeout_millis: Option<u64> = TryFrom::try_from(timeout_millis).ok();
     let timeout = option_timeout_millis.map(Duration::from_millis);
     match connector.connect(timeout) {
-        Ok(()) => 0,
+        Ok(()) => ERR_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF
         }
     }
 }
@@ -323,7 +330,7 @@ pub unsafe extern "C" fn connector_connect(
 //     connector: &mut Connector,
 //     port: PortId,
 //     payload: *mut Payload,
-// ) -> ErrorCode {
+// ) -> c_int {
 //     match connector.put(port, payload.read()) {
 //         Ok(()) => 0,
 //         Err(err) => {
@@ -338,7 +345,7 @@ pub unsafe extern "C" fn connector_connect(
 //     connector: &mut Connector,
 //     port: PortId,
 //     payload: &Payload,
-// ) -> ErrorCode {
+// ) -> c_int {
 //     match connector.put(port, payload.clone()) {
 //         Ok(()) => 0,
 //         Err(err) => {
@@ -356,25 +363,25 @@ pub unsafe extern "C" fn connector_put_bytes(
     port: PortId,
     bytes_ptr: *const u8,
     bytes_len: usize,
-) -> ErrorCode {
+) -> c_int {
     StoredError::tl_clear();
     let bytes = &*slice_from_raw_parts(bytes_ptr, bytes_len);
     match connector.put(port, Payload::from(bytes)) {
-        Ok(()) => 0,
+        Ok(()) => ERR_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn connector_get(connector: &mut Connector, port: PortId) -> ErrorCode {
+pub unsafe extern "C" fn connector_get(connector: &mut Connector, port: PortId) -> c_int {
     match connector.get(port) {
-        Ok(()) => 0,
+        Ok(()) => ERR_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF
         }
     }
 }
@@ -385,7 +392,7 @@ pub unsafe extern "C" fn connector_next_batch(connector: &mut Connector) -> isiz
         Ok(n) => n as isize,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF as isize
         }
     }
 }
@@ -399,7 +406,7 @@ pub unsafe extern "C" fn connector_sync(connector: &mut Connector, timeout_milli
         Ok(n) => n as isize,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            -1
+            ERR_REOWOLF as isize
         }
     }
 }
