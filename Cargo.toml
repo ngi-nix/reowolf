@@ -37,7 +37,7 @@ lazy_static = "1.4.0"
 crate-type = ["cdylib"]
 
 [features]
-default = ["ffi", "session_optimization"]
+default = ["ffi", "session_optimization", "ffi_socket_api"]
 ffi = [] # see src/ffi.rs
 ffi_socket_api = ["ffi", "lazy_static", "atomic_refcell"]
 endpoint_logging = [] # see src/macros.rs

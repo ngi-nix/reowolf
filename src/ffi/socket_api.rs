@@ -1,5 +1,6 @@
 use super::*;
 use atomic_refcell::AtomicRefCell;
+use mio::net::UdpSocket;
 use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 ///////////////////////////////////////////////////////////////////
 
@@ -20,6 +21,7 @@ struct ConnectorStorage {
     fd_allocator: FdAllocator,
 }
 ///////////////////////////////////////////////////////////////////
+
 impl Default for FdAllocator {
     fn default() -> Self {
         Self {
@@ -49,18 +51,18 @@ lazy_static::lazy_static! {
 ///////////////////////////////////////////////////////////////////
 
 #[no_mangle]
-pub extern "C" fn socket(_domain: c_int, _type: c_int) -> c_int {
+pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let w = if let Some(w) = CONNECTOR_STORAGE.write() { w } else { return FD_LOCK_POISONED };
+    let mut w = if let Ok(w) = CONNECTOR_STORAGE.write() { w } else { return FD_LOCK_POISONED };
     let fd = w.fd_allocator.alloc();
     w.fd_to_connector.insert(fd, AtomicRefCell::new(MaybeConnector::New));
     fd
 }
 
 #[no_mangle]
-pub extern "C" fn close(fd: ConnectorFd, _how: c_int) -> c_int {
+pub extern "C" fn rw_close(fd: ConnectorFd, _how: c_int) -> c_int {
     // ignoring HOW
-    let w = if let Some(w) = CONNECTOR_STORAGE.write() { w } else { return FD_LOCK_POISONED };
+    let mut w = if let Ok(w) = CONNECTOR_STORAGE.write() { w } else { return FD_LOCK_POISONED };
     w.fd_allocator.free(fd);
     if w.fd_to_connector.remove(&fd).is_some() {
         ERR_OK
@@ -70,40 +72,50 @@ pub extern "C" fn close(fd: ConnectorFd, _how: c_int) -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn bind(fd: ConnectorFd, address: *const SocketAddr, _address_len: usize) -> c_int {
+pub unsafe extern "C" fn rw_bind(
+    fd: ConnectorFd,
+    address: *const SocketAddr,
+    _address_len: usize,
+) -> c_int {
     use MaybeConnector as Mc;
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Some(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
+    let r = if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
     let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD };
-    let mc: &mut Mc = &mut maybe_conn.borrow_mut();
+    let mc: &mut Mc = &mut mc.borrow_mut();
     let _ = if let Mc::New = mc { () } else { return WRONG_STATE };
     *mc = Mc::Bound(address.read());
     ERR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn connect(
+pub extern "C" fn rw_connect(
     fd: ConnectorFd,
     _address: *const SocketAddr,
     _address_len: usize,
 ) -> c_int {
     use MaybeConnector as Mc;
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Some(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
+    let r = if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
     let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD };
-    let mc: &mut Mc = &mut maybe_conn.borrow_mut();
-    let local = if let Mc::Bound(local) = mc { local } else { return WRONG_STATE };
+    let mc: &mut Mc = &mut mc.borrow_mut();
+    let _local = if let Mc::Bound(local) = mc { local } else { return WRONG_STATE };
     *mc = Mc::Connected(Connector {});
     ERR_OK
 }
 #[no_mangle]
-pub extern "C" fn send(fd: ConnectorFd, msg: *const c_void, len: usize, flags: c_int) -> isize {
+pub extern "C" fn rw_send(
+    fd: ConnectorFd,
+    _msg: *const c_void,
+    _len: usize,
+    _flags: c_int,
+) -> isize {
     use MaybeConnector as Mc;
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Some(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
-    let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD };
-    let mc: &mut Mc = &mut maybe_conn.borrow_mut();
-    let c = if let Mc::Connected(c) = mc { c } else { return WRONG_STATE };
+    let r =
+        if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD as isize };
+    let mc: &mut Mc = &mut mc.borrow_mut();
+    let _c = if let Mc::Connected(c) = mc { c } else { return WRONG_STATE as isize };
     // TODO
-    ERR_OK
+    ERR_OK as isize
 }

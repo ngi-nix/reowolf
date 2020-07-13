@@ -203,6 +203,7 @@ fn new_endpoint_manager(
         .enumerate()
         .map(|(index, endpoint_setup)| {
             let token = TokenTarget::NetEndpoint { index }.into();
+            log!(logger, "Net endpoint {} beginning setup with {:?}", index, &endpoint_setup);
             let todo_endpoint = if let EndpointPolarity::Active = endpoint_setup.endpoint_polarity {
                 let mut stream = TcpStream::connect(endpoint_setup.sock_addr)
                     .expect("mio::TcpStream connect should not fail!");

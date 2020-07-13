@@ -70,28 +70,37 @@ impl RoundCtxTrait for RoundCtx {
     }
 }
 impl Connector {
+    fn get_comm_mut(&mut self) -> Option<&mut ConnectorCommunication> {
+        if let ConnectorPhased::Communication(comm) = &mut self.phased {
+            Some(comm)
+        } else {
+            None
+        }
+    }
+    // pub(crate) fn get_mut_udp_sock(&mut self, index: usize) -> Option<&mut UdpSocket> {
+    //     let sock = &mut self
+    //         .get_comm_mut()?
+    //         .endpoint_manager
+    //         .udp_endpoint_store
+    //         .endpoint_exts
+    //         .get_mut(index)?
+    //         .sock;
+    //     Some(sock)
+    // }
     pub fn gotten(&mut self, port: PortId) -> Result<&Payload, GottenError> {
         use GottenError as Ge;
-        let Self { phased, .. } = self;
-        match phased {
-            ConnectorPhased::Setup { .. } => Err(Ge::NoPreviousRound),
-            ConnectorPhased::Communication(comm) => match &comm.round_result {
-                Err(_) => Err(Ge::PreviousSyncFailed),
-                Ok(None) => Err(Ge::NoPreviousRound),
-                Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(Ge::PortDidntGet),
-            },
+        let comm = self.get_comm_mut().ok_or(Ge::NoPreviousRound)?;
+        match &comm.round_result {
+            Err(_) => Err(Ge::PreviousSyncFailed),
+            Ok(None) => Err(Ge::NoPreviousRound),
+            Ok(Some(round_ok)) => round_ok.gotten.get(&port).ok_or(Ge::PortDidntGet),
         }
     }
     pub fn next_batch(&mut self) -> Result<usize, WrongStateError> {
         // returns index of new batch
-        let Self { phased, .. } = self;
-        match phased {
-            ConnectorPhased::Setup { .. } => Err(WrongStateError),
-            ConnectorPhased::Communication(comm) => {
-                comm.native_batches.push(Default::default());
-                Ok(comm.native_batches.len() - 1)
-            }
-        }
+        let comm = self.get_comm_mut().ok_or(WrongStateError)?;
+        comm.native_batches.push(Default::default());
+        Ok(comm.native_batches.len() - 1)
     }
     fn port_op_access(
         &mut self,
