@@ -1,5 +1,11 @@
 use super::*;
 
+fn secs_since_unix_epoch() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|dur| dur.as_secs_f64())
+        .unwrap_or(0.)
+}
 impl FileLogger {
     pub fn new(connector_id: ConnectorId, file: std::fs::File) -> Self {
         Self(connector_id, file)
@@ -16,15 +22,16 @@ impl Logger for DummyLogger {
         None
     }
 }
+
 impl Logger for VecLogger {
     fn line_writer(&mut self) -> Option<&mut dyn std::io::Write> {
-        let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
+        let _ = write!(&mut self.1, "CID({}) at {:.6} ", self.0, secs_since_unix_epoch());
         Some(self)
     }
 }
 impl Logger for FileLogger {
     fn line_writer(&mut self) -> Option<&mut dyn std::io::Write> {
-        let _ = write!(&mut self.1, "CID({}) at {:?} ", self.0, Instant::now());
+        let _ = write!(&mut self.1, "CID({}) at {:.6} ", self.0, secs_since_unix_epoch());
         Some(&mut self.1)
     }
 }

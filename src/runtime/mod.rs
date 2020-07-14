@@ -351,10 +351,12 @@ impl IdManager {
         }
     }
     fn new_spec_var_stream(&self) -> SpecVarStream {
-        SpecVarStream {
-            connector_id: self.connector_id,
-            port_suffix_stream: self.port_suffix_stream.clone(),
+        let mut port_suffix_stream = self.port_suffix_stream.clone();
+        const JUMP_OVER: usize = 100; // Jumping is entirely unnecessary. It's only used to make spec vars easier to spot in logs
+        for _ in 0..JUMP_OVER {
+            port_suffix_stream.next(); // throw away an ID
         }
+        SpecVarStream { connector_id: self.connector_id, port_suffix_stream }
     }
     fn new_port_id(&mut self) -> PortId {
         Id { connector_id: self.connector_id, u32_suffix: self.port_suffix_stream.next() }.into()
@@ -557,7 +559,13 @@ impl<T: Debug + std::cmp::Ord> Debug for VecSet<T> {
 }
 impl Debug for Predicate {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        f.debug_tuple("Predicate").field(&self.assigned).finish()
+        struct Assignment<'a>((&'a SpecVar, &'a SpecVal));
+        impl Debug for Assignment<'_> {
+            fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+                write!(f, "{:?}={:?}", (self.0).0, (self.0).1)
+            }
+        }
+        f.debug_set().entries(self.assigned.iter().map(Assignment)).finish()
     }
 }
 impl serde::Serialize for SerdeProtocolDescription {
@@ -578,9 +586,15 @@ impl<'de> serde::Deserialize<'de> for SerdeProtocolDescription {
         Ok(Self(Arc::new(inner)))
     }
 }
+impl IdParts for SpecVar {
+    fn id_parts(self) -> (ConnectorId, U32Suffix) {
+        self.0.id_parts()
+    }
+}
 impl Debug for SpecVar {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        f.debug_tuple("vrID").field(&self.0).finish()
+        let (a, b) = self.id_parts();
+        write!(f, "v{}_{}", a, b)
     }
 }
 impl SpecVal {

@@ -377,6 +377,7 @@ pub unsafe extern "C" fn connector_put_bytes(
 
 #[no_mangle]
 pub unsafe extern "C" fn connector_get(connector: &mut Connector, port: PortId) -> c_int {
+    StoredError::tl_clear();
     match connector.get(port) {
         Ok(()) => ERR_OK,
         Err(err) => {
@@ -388,6 +389,7 @@ pub unsafe extern "C" fn connector_get(connector: &mut Connector, port: PortId) 
 
 #[no_mangle]
 pub unsafe extern "C" fn connector_next_batch(connector: &mut Connector) -> isize {
+    StoredError::tl_clear();
     match connector.next_batch() {
         Ok(n) => n as isize,
         Err(err) => {

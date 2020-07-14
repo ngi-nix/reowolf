@@ -3,6 +3,20 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#include "../reowolf.h"
+
+size_t get_user_msg(char * buf, size_t cap) {
+	memset(buf, 0, cap);
+	printf("Insert a msg of max len %d: ", cap);
+	fgets(buf, cap, stdin);
+	for(size_t len = 0; len<cap; len++)
+		if(buf[len]==0 || buf[len]=='\n')
+			return len;
+	return cap;
+}
+void rw_err_peek(Connector * c) {
+	printf("Error str `%s`\n", reowolf_error_peek(NULL));
+}
 
 // allocates a buffer!
 char * buffer_pdl(char * filename) {

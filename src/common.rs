@@ -26,8 +26,11 @@ pub(crate) use std::{
 };
 pub(crate) use Polarity::*;
 
+pub(crate) trait IdParts {
+    fn id_parts(self) -> (ConnectorId, U32Suffix);
+}
 pub type ConnectorId = u32;
-pub type PortSuffix = u32;
+pub type U32Suffix = u32;
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -39,7 +42,7 @@ pub struct ProtoComponentId(Id);
 #[repr(C)]
 pub struct Id {
     pub(crate) connector_id: ConnectorId,
-    pub(crate) u32_suffix: PortSuffix,
+    pub(crate) u32_suffix: U32Suffix,
 }
 #[derive(Clone, Debug, Default)]
 pub struct U32Stream {
@@ -86,6 +89,21 @@ pub(crate) enum SyncBlocker {
 pub(crate) struct DenseDebugHex<'a>(pub &'a [u8]);
 
 ///////////////////// IMPL /////////////////////
+impl IdParts for Id {
+    fn id_parts(self) -> (ConnectorId, U32Suffix) {
+        (self.connector_id, self.u32_suffix)
+    }
+}
+impl IdParts for PortId {
+    fn id_parts(self) -> (ConnectorId, U32Suffix) {
+        self.0.id_parts()
+    }
+}
+impl IdParts for ProtoComponentId {
+    fn id_parts(self) -> (ConnectorId, U32Suffix) {
+        self.0.id_parts()
+    }
+}
 impl U32Stream {
     pub(crate) fn next(&mut self) -> u32 {
         if self.next == u32::MAX {
@@ -158,12 +176,14 @@ impl From<Vec<u8>> for Payload {
 }
 impl Debug for PortId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ptID({}'{})", self.0.connector_id, self.0.u32_suffix)
+        let (a, b) = self.id_parts();
+        write!(f, "pid{}_{}", a, b)
     }
 }
 impl Debug for ProtoComponentId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "pcID({}'{})", self.0.connector_id, self.0.u32_suffix)
+        let (a, b) = self.id_parts();
+        write!(f, "cid{}_{}", a, b)
     }
 }
 impl Debug for Payload {

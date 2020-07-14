@@ -791,3 +791,46 @@ fn udp_reowolf_swap() {
     })
     .unwrap();
 }
+
+#[test]
+fn pres_3() {
+    let test_log_path = Path::new("./logs/pres_3");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            // "amy"
+            let mut c = file_logged_connector(0, test_log_path);
+            let p0 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
+            let p1 = c.new_net_port(Putter, sock_addrs[1], Active).unwrap();
+            c.connect(SEC1).unwrap();
+            // put {A} and FAIL
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.sync(SEC1).unwrap_err();
+            // put {B} and FAIL
+            c.put(p1, TEST_MSG.clone()).unwrap();
+            c.sync(SEC1).unwrap_err();
+            // put {A, B} and SUCCEED
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.put(p1, TEST_MSG.clone()).unwrap();
+            c.sync(SEC1).unwrap();
+        });
+        s.spawn(|_| {
+            // "bob"
+            let mut c = file_logged_connector(1, test_log_path);
+            let p0 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+            let p1 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
+            c.connect(SEC1).unwrap();
+            for _ in 0..2 {
+                // get {A, B} and FAIL
+                c.get(p0).unwrap();
+                c.get(p1).unwrap();
+                c.sync(SEC1).unwrap_err();
+            }
+            // get {A, B} and SUCCEED
+            c.get(p0).unwrap();
+            c.get(p1).unwrap();
+            c.sync(SEC1).unwrap();
+        });
+    })
+    .unwrap();
+}
