@@ -23,11 +23,18 @@ fn next_test_addr() -> SocketAddr {
     SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into()
 }
 fn file_logged_connector(connector_id: ConnectorId, dir_path: &Path) -> Connector {
+    file_logged_configured_connector(connector_id, dir_path, MINIMAL_PROTO.clone())
+}
+fn file_logged_configured_connector(
+    connector_id: ConnectorId,
+    dir_path: &Path,
+    pd: Arc<ProtocolDescription>,
+) -> Connector {
     let _ = std::fs::create_dir(dir_path); // we will check failure soon
     let path = dir_path.join(format!("cid_{:?}.txt", connector_id));
     let file = File::create(path).unwrap();
     let file_logger = Box::new(FileLogger::new(connector_id, file));
-    Connector::new(file_logger, MINIMAL_PROTO.clone(), connector_id, 8)
+    Connector::new(file_logger, pd, connector_id, 8)
 }
 static MINIMAL_PDL: &'static [u8] = b"
 primitive together(in ia, in ib, out oa, out ob){
@@ -793,8 +800,8 @@ fn udp_reowolf_swap() {
 }
 
 #[test]
-fn pres_3() {
-    let test_log_path = Path::new("./logs/pres_3");
+fn example_pres_3() {
+    let test_log_path = Path::new("./logs/example_pres_3");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     scope(|s| {
         s.spawn(|_| {
@@ -830,6 +837,45 @@ fn pres_3() {
             c.get(p0).unwrap();
             c.get(p1).unwrap();
             c.sync(SEC1).unwrap();
+        });
+    })
+    .unwrap();
+}
+
+#[test]
+fn ac_not_b() {
+    let test_log_path = Path::new("./logs/ac_not_b");
+    let sock_addrs = [next_test_addr(), next_test_addr()];
+    scope(|s| {
+        s.spawn(|_| {
+            // "amy"
+            let mut c = file_logged_connector(0, test_log_path);
+            let p0 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
+            let p1 = c.new_net_port(Putter, sock_addrs[1], Active).unwrap();
+            c.connect(SEC1).unwrap();
+
+            // put both A and B
+            c.put(p0, TEST_MSG.clone()).unwrap();
+            c.put(p1, TEST_MSG.clone()).unwrap();
+            c.sync(SEC1).unwrap_err();
+        });
+        s.spawn(|_| {
+            // "bob"
+            let pdl = b"
+            primitive ac_not_b(in a, in b, out c){
+                // forward A to C but keep B silent
+                synchronous{ put(c, get(a)); }
+            }";
+            let pd = Arc::new(reowolf::ProtocolDescription::parse(pdl).unwrap());
+            let mut c = file_logged_configured_connector(1, test_log_path, pd);
+            let p0 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+            let p1 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
+            let [a, b] = c.new_port_pair();
+            c.add_component(b"ac_not_b", &[p0, p1, a]).unwrap();
+            c.connect(SEC1).unwrap();
+
+            c.get(b).unwrap();
+            c.sync(SEC1).unwrap_err();
         });
     })
     .unwrap();

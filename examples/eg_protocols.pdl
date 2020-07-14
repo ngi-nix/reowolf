@@ -1,6 +1,6 @@
 primitive pres_2(in i, out o) {
   synchronous {
-    //put(o, get(i));
+    put(o, get(i));
   }
 }
 primitive together(in ia, in ib, out oa, out ob){
@@ -9,5 +9,12 @@ primitive together(in ia, in ib, out oa, out ob){
       put(oa, get(ia));
       put(ob, get(ib));
     }
+  }	
+}
+
+primitive alt_round_merger(in a, in b, out c){
+  while(true) {
+    synchronous{ put(c, get(a)); }
+    synchronous{ put(c, get(b)); }
   }	
 }

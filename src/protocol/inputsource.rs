@@ -23,8 +23,8 @@ primitive sync(in i, out o) {
 }
 primitive alternator_2(in i, out l, out r) {
     while(true) {
-        synchronous() put(l, get(i));
-        synchronous() put(r, get(i));
+        synchronous() if(fires(i)) put(l, get(i));
+        synchronous() if(fires(i)) put(r, get(i));
     }
 }
 primitive replicator_2(in i, out l, out r) {
@@ -36,8 +36,8 @@ primitive replicator_2(in i, out l, out r) {
 }
 primitive merger_2(in l, in r, out o) {
     while(true) synchronous {
-        if(fires(l)) put(o, get(l));
-        else         put(o, get(r));
+        if(fires(l))      put(o, get(l));
+        else if(fires(r)) put(o, get(r));
     }
 }";
 
