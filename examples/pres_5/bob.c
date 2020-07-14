@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 	rw_err_peek(c);
 
 	for(int round=0; round<3; round++) {
-		printf("\nRound %d\n", round);
+		printf("\----------Round %d\n", round);
 		connector_get(c, ports[3]);
 		rw_err_peek(c);
 		connector_sync(c, 1000);
