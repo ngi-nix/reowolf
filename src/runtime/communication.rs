@@ -1,12 +1,11 @@
 use super::*;
 use crate::common::*;
-use core::ops::Deref;
-use core::ops::DerefMut;
+use core::ops::{Deref, DerefMut};
 
 ////////////////
 // Guard protecting an incrementally unfoldable slice of MapTempGuard elements
 struct MapTempsGuard<'a, K, V>(&'a mut [HashMap<K, V>]);
-// Type protecting a temporary map; At the start and end of the Guard's lifetime, self.0.is_empty()
+// Type protecting a temporary map; At the start and end of the Guard's lifetime, self.0.is_empty() must be true
 struct MapTempGuard<'a, K, V>(&'a mut HashMap<K, V>);
 
 #[derive(Default)]
@@ -73,20 +72,20 @@ impl<'a, K, V> MapTempsGuard<'a, K, V> {
     fn reborrow(&mut self) -> MapTempsGuard<'_, K, V> {
         MapTempsGuard(self.0)
     }
-    fn split_first_mut(&mut self) -> (MapTempGuard<'_, K, V>, MapTempsGuard<'_, K, V>) {
+    fn split_first_mut(self) -> (MapTempGuard<'a, K, V>, MapTempsGuard<'a, K, V>) {
         let (head, tail) = self.0.split_first_mut().expect("Cache exhausted");
         (MapTempGuard::new(head), MapTempsGuard(tail))
     }
 }
 impl<'a, K, V> MapTempGuard<'a, K, V> {
     fn new(map: &'a mut HashMap<K, V>) -> Self {
-        map.clear();
+        assert!(map.is_empty()); // sanity check
         Self(map)
     }
 }
 impl<'a, K, V> Drop for MapTempGuard<'a, K, V> {
     fn drop(&mut self) {
-        self.0.clear()
+        assert!(self.0.is_empty()); // sanity check
     }
 }
 impl<'a, K, V> Deref for MapTempGuard<'a, K, V> {
@@ -457,7 +456,8 @@ impl Connector {
         );
         for (&proto_component_id, proto_component) in branching_proto_components.iter_mut() {
             let BranchingProtoComponent { ports, branches } = proto_component;
-            let (swap, mut pcb_temps) = pcb_temps.split_first_mut();
+            // must reborrow to constrain the lifetime of pcb_temps to inside the loop
+            let (swap, pcb_temps) = pcb_temps.reborrow().split_first_mut();
             let (blocked, _pcb_temps) = pcb_temps.split_first_mut();
             // initially, no components have .ended==true
             // drain from branches --> blocked
@@ -972,7 +972,7 @@ impl BranchingProtoComponent {
         proto_component_id: ProtoComponentId,
         getter: PortId,
         send_payload_msg: &SendPayloadMsg,
-        mut pcb_temps: MapTempsGuard<'_, Predicate, ProtoComponentBranch>,
+        pcb_temps: MapTempsGuard<'_, Predicate, ProtoComponentBranch>,
     ) -> Result<(), UnrecoverableSyncError> {
         let logger = &mut *cu.logger;
         log!(
@@ -983,8 +983,8 @@ impl BranchingProtoComponent {
             &send_payload_msg
         );
         let BranchingProtoComponent { branches, ports } = self;
-        let (mut unblocked, mut pcb_temps) = pcb_temps.split_first_mut();
-        let (mut blocked, mut pcb_temps) = pcb_temps.split_first_mut();
+        let (mut unblocked, pcb_temps) = pcb_temps.split_first_mut();
+        let (mut blocked, pcb_temps) = pcb_temps.split_first_mut();
         // partition drain from branches -> {unblocked, blocked}
         log!(logger, "visiting {} blocked branches...", branches.len());
         for (predicate, mut branch) in branches.drain() {
@@ -1078,28 +1078,28 @@ impl SolutionStorage {
             new_local: Default::default(),
         }
     }
-    fn is_clear(&self) -> bool {
-        self.subtree_id_to_index.is_empty()
-            && self.subtree_solutions.is_empty()
-            && self.old_local.is_empty()
-            && self.new_local.is_empty()
-    }
-    fn clear(&mut self) {
-        self.subtree_id_to_index.clear();
-        self.subtree_solutions.clear();
-        self.old_local.clear();
-        self.new_local.clear();
-    }
-    fn reset(&mut self, subtree_ids: impl Iterator<Item = SubtreeId>) {
-        self.subtree_id_to_index.clear();
-        self.subtree_solutions.clear();
-        self.old_local.clear();
-        self.new_local.clear();
-        for key in subtree_ids {
-            self.subtree_id_to_index.insert(key, self.subtree_solutions.len());
-            self.subtree_solutions.push(Default::default())
-        }
-    }
+    // fn is_clear(&self) -> bool {
+    //     self.subtree_id_to_index.is_empty()
+    //         && self.subtree_solutions.is_empty()
+    //         && self.old_local.is_empty()
+    //         && self.new_local.is_empty()
+    // }
+    // fn clear(&mut self) {
+    //     self.subtree_id_to_index.clear();
+    //     self.subtree_solutions.clear();
+    //     self.old_local.clear();
+    //     self.new_local.clear();
+    // }
+    // fn reset(&mut self, subtree_ids: impl Iterator<Item = SubtreeId>) {
+    //     self.subtree_id_to_index.clear();
+    //     self.subtree_solutions.clear();
+    //     self.old_local.clear();
+    //     self.new_local.clear();
+    //     for key in subtree_ids {
+    //         self.subtree_id_to_index.insert(key, self.subtree_solutions.len());
+    //         self.subtree_solutions.push(Default::default())
+    //     }
+    // }
     pub(crate) fn iter_new_local_make_old(&mut self) -> impl Iterator<Item = Predicate> + '_ {
         let Self { old_local, new_local, .. } = self;
         new_local.drain().map(move |local| {
@@ -1113,7 +1113,7 @@ impl SolutionStorage {
         subtree_id: SubtreeId,
         predicate: Predicate,
     ) {
-        log!(logger, "NEW COMPONENT SOLUTION {:?} {:?}", subtree_id, &predicate);
+        log!(logger, "++ new component solution {:?} {:?}", subtree_id, &predicate);
         let index = self.subtree_id_to_index[&subtree_id];
         let left = 0..index;
         let right = (index + 1)..self.subtree_solutions.len();

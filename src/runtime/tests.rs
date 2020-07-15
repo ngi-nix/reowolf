@@ -883,3 +883,44 @@ fn ac_not_b() {
     })
     .unwrap();
 }
+
+#[test]
+fn many_rounds_net() {
+    let test_log_path = Path::new("./logs/many_rounds_net");
+    let sock_addrs = [next_test_addr()];
+    const NUM_ROUNDS: usize = 1_000;
+    scope(|s| {
+        s.spawn(|_| {
+            let mut c = file_logged_connector(0, test_log_path);
+            let p0 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
+            c.connect(SEC1).unwrap();
+            for _ in 0..NUM_ROUNDS {
+                c.put(p0, TEST_MSG.clone()).unwrap();
+                c.sync(SEC1).unwrap();
+            }
+        });
+        s.spawn(|_| {
+            let mut c = file_logged_connector(1, test_log_path);
+            let p0 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
+            c.connect(SEC1).unwrap();
+            for _ in 0..NUM_ROUNDS {
+                c.get(p0).unwrap();
+                c.sync(SEC1).unwrap();
+            }
+        });
+    })
+    .unwrap();
+}
+#[test]
+fn many_rounds_mem() {
+    let test_log_path = Path::new("./logs/many_rounds_mem");
+    const NUM_ROUNDS: usize = 1_000;
+    let mut c = file_logged_connector(0, test_log_path);
+    let [p0, p1] = c.new_port_pair();
+    c.connect(SEC1).unwrap();
+    for _ in 0..NUM_ROUNDS {
+        c.put(p0, TEST_MSG.clone()).unwrap();
+        c.get(p1).unwrap();
+        c.sync(SEC1).unwrap();
+    }
+}
