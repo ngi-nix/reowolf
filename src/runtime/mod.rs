@@ -30,20 +30,22 @@ pub struct DummyLogger;
 #[derive(Debug)]
 pub struct FileLogger(ConnectorId, std::fs::File);
 pub(crate) struct NonsyncProtoContext<'a> {
-    logger: &'a mut dyn Logger,
-    proto_component_id: ProtoComponentId,
-    port_info: &'a mut PortInfo,
-    id_manager: &'a mut IdManager,
+    cu_inner: &'a mut ConnectorUnphasedInner,
     proto_component_ports: &'a mut HashSet<PortId>,
     unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>,
+    proto_component_id: ProtoComponentId,
 }
 pub(crate) struct SyncProtoContext<'a> {
-    logger: &'a mut dyn Logger,
-    did_put_or_get: &'a mut HashSet<PortId>,
-    untaken_choice: &'a mut Option<u16>,
+    cu_inner: &'a mut ConnectorUnphasedInner,
+    branch_inner: &'a mut ProtoComponentBranchInner,
     predicate: &'a Predicate,
-    port_info: &'a PortInfo,
-    inbox: &'a HashMap<PortId, Payload>,
+}
+
+#[derive(Default, Debug, Clone)]
+struct ProtoComponentBranchInner {
+    untaken_choice: Option<u16>,
+    did_put_or_get: HashSet<PortId>,
+    inbox: HashMap<PortId, Payload>,
 }
 
 #[derive(
@@ -232,6 +234,10 @@ struct ConnectorCommunication {
 struct ConnectorUnphased {
     proto_description: Arc<ProtocolDescription>,
     proto_components: HashMap<ProtoComponentId, ProtoComponent>,
+    inner: ConnectorUnphasedInner,
+}
+#[derive(Debug)]
+struct ConnectorUnphasedInner {
     logger: Box<dyn Logger>,
     id_manager: IdManager,
     native_ports: HashSet<PortId>,
@@ -372,7 +378,7 @@ impl IdManager {
 }
 impl Drop for Connector {
     fn drop(&mut self) {
-        log!(&mut *self.unphased.logger, "Connector dropping. Goodbye!");
+        log!(&mut *self.unphased.inner.logger, "Connector dropping. Goodbye!");
     }
 }
 impl Connector {
@@ -387,27 +393,27 @@ impl Connector {
         }
     }
     pub fn swap_logger(&mut self, mut new_logger: Box<dyn Logger>) -> Box<dyn Logger> {
-        std::mem::swap(&mut self.unphased.logger, &mut new_logger);
+        std::mem::swap(&mut self.unphased.inner.logger, &mut new_logger);
         new_logger
     }
     pub fn get_logger(&mut self) -> &mut dyn Logger {
-        &mut *self.unphased.logger
+        &mut *self.unphased.inner.logger
     }
     pub fn new_port_pair(&mut self) -> [PortId; 2] {
         let cu = &mut self.unphased;
         // adds two new associated ports, related to each other, and exposed to the native
-        let [o, i] = [cu.id_manager.new_port_id(), cu.id_manager.new_port_id()];
-        cu.native_ports.insert(o);
-        cu.native_ports.insert(i);
+        let [o, i] = [cu.inner.id_manager.new_port_id(), cu.inner.id_manager.new_port_id()];
+        cu.inner.native_ports.insert(o);
+        cu.inner.native_ports.insert(i);
         // {polarity, peer, route} known. {} unknown.
-        cu.port_info.polarities.insert(o, Putter);
-        cu.port_info.polarities.insert(i, Getter);
-        cu.port_info.peers.insert(o, i);
-        cu.port_info.peers.insert(i, o);
+        cu.inner.port_info.polarities.insert(o, Putter);
+        cu.inner.port_info.polarities.insert(i, Getter);
+        cu.inner.port_info.peers.insert(o, i);
+        cu.inner.port_info.peers.insert(i, o);
         let route = Route::LocalComponent(ComponentId::Native);
-        cu.port_info.routes.insert(o, route);
-        cu.port_info.routes.insert(i, route);
-        log!(cu.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
+        cu.inner.port_info.routes.insert(o, route);
+        cu.inner.port_info.routes.insert(i, route);
+        log!(cu.inner.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
         [o, i]
     }
     pub fn add_component(
@@ -424,19 +430,22 @@ impl Connector {
             return Err(Ace::WrongNumberOfParamaters { expected: polarities.len() });
         }
         for (&expected_polarity, port) in polarities.iter().zip(ports.iter()) {
-            if !cu.native_ports.contains(port) {
+            if !cu.inner.native_ports.contains(port) {
                 return Err(Ace::UnknownPort(*port));
             }
-            if expected_polarity != *cu.port_info.polarities.get(port).unwrap() {
+            if expected_polarity != *cu.inner.port_info.polarities.get(port).unwrap() {
                 return Err(Ace::WrongPortPolarity { port: *port, expected_polarity });
             }
         }
         // 3. remove ports from old component & update port->route
-        let new_id = cu.id_manager.new_proto_component_id();
+        let new_id = cu.inner.id_manager.new_proto_component_id();
         for port in ports.iter() {
-            cu.port_info.routes.insert(*port, Route::LocalComponent(ComponentId::Proto(new_id)));
+            cu.inner
+                .port_info
+                .routes
+                .insert(*port, Route::LocalComponent(ComponentId::Proto(new_id)));
         }
-        cu.native_ports.retain(|port| !ports.contains(port));
+        cu.inner.native_ports.retain(|port| !ports.contains(port));
         // 4. add new component
         cu.proto_components.insert(
             new_id,
