@@ -4,6 +4,7 @@ for c_file in glob.glob(script_path + "/*/*.c", recursive=False):
   print("compiling", c_file)
   args = [
     "gcc",          # compiler
+    "-std=c11"      # C11 mode
     "-L",           # lib path flag
     "./",           # where to look for libs
     "-lreowolf_rs", # add lib called "reowolf_rs"

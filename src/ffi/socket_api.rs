@@ -1,23 +1,21 @@
 use super::*;
 use atomic_refcell::AtomicRefCell;
-use mio::net::UdpSocket;
+
 use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 ///////////////////////////////////////////////////////////////////
 
-type ConnectorFd = c_int;
-struct Connector {}
 struct FdAllocator {
-    next: Option<ConnectorFd>,
-    freed: Vec<ConnectorFd>,
+    next: Option<c_int>,
+    freed: Vec<c_int>,
 }
 enum MaybeConnector {
     New,
-    Bound(SocketAddr),
-    Connected(Connector),
+    Bound { local_addr: SocketAddr },
+    Connected { connector: Connector, putter: PortId, getter: PortId },
 }
 #[derive(Default)]
 struct ConnectorStorage {
-    fd_to_connector: HashMap<ConnectorFd, AtomicRefCell<MaybeConnector>>,
+    fd_to_connector: HashMap<c_int, AtomicRefCell<MaybeConnector>>,
     fd_allocator: FdAllocator,
 }
 ///////////////////////////////////////////////////////////////////
@@ -31,7 +29,7 @@ impl Default for FdAllocator {
     }
 }
 impl FdAllocator {
-    fn alloc(&mut self) -> ConnectorFd {
+    fn alloc(&mut self) -> c_int {
         if let Some(fd) = self.freed.pop() {
             return fd;
         }
@@ -41,7 +39,7 @@ impl FdAllocator {
         }
         panic!("No more Connector FDs to allocate!")
     }
-    fn free(&mut self, fd: ConnectorFd) {
+    fn free(&mut self, fd: c_int) {
         self.freed.push(fd);
     }
 }
@@ -60,7 +58,7 @@ pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn rw_close(fd: ConnectorFd, _how: c_int) -> c_int {
+pub extern "C" fn rw_close(fd: c_int, _how: c_int) -> c_int {
     // ignoring HOW
     let mut w = if let Ok(w) = CONNECTOR_STORAGE.write() { w } else { return FD_LOCK_POISONED };
     w.fd_allocator.free(fd);
@@ -73,9 +71,9 @@ pub extern "C" fn rw_close(fd: ConnectorFd, _how: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn rw_bind(
-    fd: ConnectorFd,
-    address: *const SocketAddr,
-    _address_len: usize,
+    fd: c_int,
+    local_addr: *const SocketAddr,
+    _addr_len: usize,
 ) -> c_int {
     use MaybeConnector as Mc;
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
@@ -83,14 +81,14 @@ pub unsafe extern "C" fn rw_bind(
     let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD };
     let mc: &mut Mc = &mut mc.borrow_mut();
     let _ = if let Mc::New = mc { () } else { return WRONG_STATE };
-    *mc = Mc::Bound(address.read());
+    *mc = Mc::Bound { local_addr: local_addr.read() };
     ERR_OK
 }
 
 #[no_mangle]
-pub extern "C" fn rw_connect(
-    fd: ConnectorFd,
-    _address: *const SocketAddr,
+pub unsafe extern "C" fn rw_connect(
+    fd: c_int,
+    peer_addr: *const SocketAddr,
     _address_len: usize,
 ) -> c_int {
     use MaybeConnector as Mc;
@@ -98,24 +96,75 @@ pub extern "C" fn rw_connect(
     let r = if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED };
     let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD };
     let mc: &mut Mc = &mut mc.borrow_mut();
-    let _local = if let Mc::Bound(local) = mc { local } else { return WRONG_STATE };
-    *mc = Mc::Connected(Connector {});
+    let local_addr =
+        if let Mc::Bound { local_addr } = mc { local_addr } else { return WRONG_STATE };
+    let peer_addr = peer_addr.read();
+    let (connector, [putter, getter]) = {
+        let mut c = Connector::new(
+            Box::new(DummyLogger),
+            crate::TRIVIAL_PD.clone(),
+            Connector::random_id(),
+            8,
+        );
+        let [putter, getter] = c.new_udp_port(*local_addr, peer_addr).unwrap();
+        (c, [putter, getter])
+    };
+    *mc = Mc::Connected { connector, putter, getter };
     ERR_OK
 }
 #[no_mangle]
-pub extern "C" fn rw_send(
-    fd: ConnectorFd,
-    _msg: *const c_void,
-    _len: usize,
+pub unsafe extern "C" fn rw_send(
+    fd: c_int,
+    bytes_ptr: *const c_void,
+    bytes_len: usize,
     _flags: c_int,
 ) -> isize {
     use MaybeConnector as Mc;
-    // assuming _domain is AF_INET and _type is SOCK_DGRAM
+    // ignoring flags
     let r =
         if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
     let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD as isize };
     let mc: &mut Mc = &mut mc.borrow_mut();
-    let _c = if let Mc::Connected(c) = mc { c } else { return WRONG_STATE as isize };
-    // TODO
-    ERR_OK as isize
+    let (connector, putter) = if let Mc::Connected { connector, putter, .. } = mc {
+        (connector, *putter)
+    } else {
+        return WRONG_STATE as isize;
+    };
+    match connector_put_bytes(connector, putter, bytes_ptr as _, bytes_len) {
+        ERR_OK => {}
+        err => return err as isize,
+    }
+    connector_sync(connector, -1)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rw_recv(
+    fd: c_int,
+    bytes_ptr: *mut c_void,
+    bytes_len: usize,
+    _flags: c_int,
+) -> isize {
+    use MaybeConnector as Mc;
+    // ignoring flags
+    let r =
+        if let Ok(r) = CONNECTOR_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_connector.get(&fd) { mc } else { return BAD_FD as isize };
+    let mc: &mut Mc = &mut mc.borrow_mut();
+    let (connector, getter) = if let Mc::Connected { connector, getter, .. } = mc {
+        (connector, *getter)
+    } else {
+        return WRONG_STATE as isize;
+    };
+    match connector_get(connector, getter) {
+        ERR_OK => {}
+        err => return err as isize,
+    }
+    match connector_sync(connector, -1) {
+        0 => {} // singleton batch index
+        err => return err as isize,
+    };
+    let slice = connector.gotten(getter).unwrap().as_slice();
+    let copied_bytes = slice.len().min(bytes_len);
+    std::ptr::copy_nonoverlapping(slice.as_ptr(), bytes_ptr as *mut u8, copied_bytes);
+    copied_bytes as isize
 }

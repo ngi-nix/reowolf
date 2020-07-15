@@ -790,7 +790,10 @@ fn udp_reowolf_swap() {
             let udp = std::net::UdpSocket::bind(sock_addrs[1]).unwrap();
             udp.connect(sock_addrs[0]).unwrap();
             let mut buf = new_u8_buffer(256);
-            udp.send(TEST_MSG_BYTES).unwrap();
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_millis(60));
+                udp.send(TEST_MSG_BYTES).unwrap();
+            }
             let len = udp.recv(&mut buf).unwrap();
             assert_eq!(TEST_MSG_BYTES, &buf[0..len]);
             barrier.wait();

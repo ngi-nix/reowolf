@@ -6,6 +6,12 @@ mod lexer;
 // mod library;
 mod parser;
 
+lazy_static::lazy_static! {
+    pub static ref TRIVIAL_PD: std::sync::Arc<ProtocolDescription> = {
+        std::sync::Arc::new(ProtocolDescription::parse(b"").unwrap())
+    };
+}
+
 use crate::common::*;
 use crate::protocol::ast::*;
 use crate::protocol::eval::*;

@@ -6,7 +6,7 @@ mod protocol;
 mod runtime;
 
 pub use common::{ConnectorId, EndpointPolarity, Payload, Polarity, PortId};
-pub use protocol::ProtocolDescription;
+pub use protocol::{ProtocolDescription, TRIVIAL_PD};
 pub use runtime::{error, Connector, DummyLogger, FileLogger, VecLogger};
 
 #[cfg(feature = "ffi")]

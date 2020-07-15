@@ -20,7 +20,7 @@ pub struct Connector {
     unphased: ConnectorUnphased,
     phased: ConnectorPhased,
 }
-pub trait Logger: Debug {
+pub trait Logger: Debug + Send + Sync {
     fn line_writer(&mut self) -> Option<&mut dyn std::io::Write>;
 }
 #[derive(Debug)]
@@ -39,6 +39,7 @@ pub(crate) struct NonsyncProtoContext<'a> {
 }
 pub(crate) struct SyncProtoContext<'a> {
     logger: &'a mut dyn Logger,
+    did_put_or_get: &'a mut HashSet<PortId>,
     untaken_choice: &'a mut Option<u16>,
     predicate: &'a Predicate,
     port_info: &'a PortInfo,

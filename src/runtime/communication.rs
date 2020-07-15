@@ -36,7 +36,7 @@ struct BranchingProtoComponent {
 }
 #[derive(Debug, Clone)]
 struct ProtoComponentBranch {
-    did_put: HashSet<PortId>,
+    did_put_or_get: HashSet<PortId>,
     inbox: HashMap<PortId, Payload>,
     state: ComponentState,
     untaken_choice: Option<u16>,
@@ -824,6 +824,7 @@ impl BranchingProtoComponent {
                 predicate: &predicate,
                 port_info: &cu.port_info,
                 inbox: &branch.inbox,
+                did_put_or_get: &mut branch.did_put_or_get,
             };
             let blocker = branch.state.sync_run(&mut ctx, &cu.proto_description);
             log!(
@@ -852,10 +853,7 @@ impl BranchingProtoComponent {
                     // make concrete all variables
                     for port in ports.iter() {
                         let var = cu.port_info.spec_var_for(*port);
-                        let should_have_fired = match cu.port_info.polarities.get(port).unwrap() {
-                            Polarity::Getter => branch.inbox.contains_key(port),
-                            Polarity::Putter => branch.did_put.contains(port),
-                        };
+                        let should_have_fired = branch.did_put_or_get.contains(port);
                         let val = *predicate.assigned.entry(var).or_insert(SpecVal::SILENT);
                         let did_fire = val == SpecVal::FIRING;
                         if did_fire != should_have_fired {
@@ -901,7 +899,7 @@ impl BranchingProtoComponent {
                         drop((predicate, branch));
                     } else {
                         // keep in "unblocked"
-                        branch.did_put.insert(putter);
+                        branch.did_put_or_get.insert(putter);
                         log!(cu.logger, "Proto component {:?} putting payload {:?} on port {:?} (using var {:?})", proto_component_id, &payload, putter, var);
                         let msg = SendPayloadMsg { predicate: predicate.clone(), payload };
                         rctx.getter_buffer.putter_add(cu, putter, msg);
@@ -1011,7 +1009,7 @@ impl BranchingProtoComponent {
     fn initial(ProtoComponent { state, ports }: ProtoComponent) -> Self {
         let branch = ProtoComponentBranch {
             inbox: Default::default(),
-            did_put: Default::default(),
+            did_put_or_get: Default::default(),
             state,
             ended: false,
             untaken_choice: None,
@@ -1142,6 +1140,7 @@ impl SyncProtoContext<'_> {
         self.predicate.query(var).map(SpecVal::is_firing)
     }
     pub(crate) fn read_msg(&mut self, port: PortId) -> Option<&Payload> {
+        self.did_put_or_get.insert(port);
         self.inbox.get(&port)
     }
     pub(crate) fn take_choice(&mut self) -> Option<u16> {
