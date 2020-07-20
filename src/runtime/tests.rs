@@ -34,7 +34,7 @@ fn file_logged_configured_connector(
     let path = dir_path.join(format!("cid_{:?}.txt", connector_id));
     let file = File::create(path).unwrap();
     let file_logger = Box::new(FileLogger::new(connector_id, file));
-    Connector::new(file_logger, pd, connector_id, 8)
+    Connector::new(file_logger, pd, connector_id)
 }
 static MINIMAL_PDL: &'static [u8] = b"
 primitive together(in ia, in ib, out oa, out ob){
@@ -67,7 +67,7 @@ fn new_u8_buffer(cap: usize) -> Vec<u8> {
 
 #[test]
 fn basic_connector() {
-    Connector::new(Box::new(DummyLogger), MINIMAL_PROTO.clone(), 0, 0);
+    Connector::new(Box::new(DummyLogger), MINIMAL_PROTO.clone(), 0);
 }
 
 #[test]

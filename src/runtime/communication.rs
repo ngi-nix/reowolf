@@ -113,16 +113,17 @@ impl Connector {
             None
         }
     }
-    // pub(crate) fn get_mut_udp_sock(&mut self, index: usize) -> Option<&mut UdpSocket> {
-    //     let sock = &mut self
-    //         .get_comm_mut()?
-    //         .endpoint_manager
-    //         .udp_endpoint_store
-    //         .endpoint_exts
-    //         .get_mut(index)?
-    //         .sock;
-    //     Some(sock)
-    // }
+    // #[cfg(ffi_socket_api)]
+    pub(crate) fn get_mut_udp_sock(&mut self, index: usize) -> Option<&mut UdpSocket> {
+        let sock = &mut self
+            .get_comm_mut()?
+            .endpoint_manager
+            .udp_endpoint_store
+            .endpoint_exts
+            .get_mut(index)?
+            .sock;
+        Some(sock)
+    }
     pub fn gotten(&mut self, port: PortId) -> Result<&Payload, GottenError> {
         use GottenError as Ge;
         let comm = self.get_comm_mut().ok_or(Ge::NoPreviousRound)?;
@@ -238,9 +239,6 @@ impl Connector {
             );
             let mut ctx = NonsyncProtoContext {
                 cu_inner: &mut cu.inner,
-                // logger: &mut *cu.inner.logger,
-                // port_info: &mut cu.inner.port_info,
-                // id_manager: &mut cu.inner.id_manager,
                 proto_component_id,
                 unrun_components: &mut unrun_components,
                 proto_component_ports: &mut cu
@@ -419,7 +417,6 @@ impl Connector {
             }
         };
         log!(cu.inner.logger, "Sync round ending! Cleaning up");
-        // dropping {solution_storage, payloads_to_get}
         ret
     }
 
@@ -892,6 +889,7 @@ impl BranchingProtoComponent {
             );
             use SyncBlocker as B;
             match blocker {
+                B::Inconsistent => drop((predicate, branch)), // EXPLICIT inconsistency
                 B::NondetChoice { n } => {
                     let var = rctx.spec_var_stream.next();
                     for val in SpecVal::iter_domain().take(n as usize) {
@@ -900,35 +898,6 @@ impl BranchingProtoComponent {
                         branch_n.inner.untaken_choice = Some(val.0);
                         drainer.add_input(pred, branch_n);
                     }
-                }
-                B::Inconsistent => {
-                    // EXPLICIT inconsistency
-                    drop((predicate, branch));
-                }
-                B::SyncBlockEnd => {
-                    // make concrete all variables
-                    for port in ports.iter() {
-                        let var = cu.inner.port_info.spec_var_for(*port);
-                        let should_have_fired = branch.inner.did_put_or_get.contains(port);
-                        let val = *predicate.assigned.entry(var).or_insert(SpecVal::SILENT);
-                        let did_fire = val == SpecVal::FIRING;
-                        if did_fire != should_have_fired {
-                            log!(cu.inner.logger, "Inconsistent wrt. port {:?} var {:?} val {:?} did_fire={}, should_have_fired={}", port, var, val, did_fire, should_have_fired);
-                            // IMPLICIT inconsistency
-                            drop((predicate, branch));
-                            return Ok(());
-                        }
-                    }
-                    // submit solution for this component
-                    let subtree_id = SubtreeId::LocalComponent(ComponentId::Proto(proto_component_id));
-                    rctx.solution_storage.submit_and_digest_subtree_solution(
-                        &mut *cu.inner.logger,
-                        subtree_id,
-                        predicate.clone(),
-                    );
-                    branch.ended = true;
-                    // move to "blocked"
-                    drainer.add_output(predicate, branch);
                 }
                 B::CouldntReadMsg(port) => {
                     // move to "blocked"
@@ -961,6 +930,31 @@ impl BranchingProtoComponent {
                         rctx.getter_buffer.putter_add(cu, putter, msg);
                         drainer.add_input(predicate, branch);
                     }
+                }
+                B::SyncBlockEnd => {
+                    // make concrete all variables
+                    for port in ports.iter() {
+                        let var = cu.inner.port_info.spec_var_for(*port);
+                        let should_have_fired = branch.inner.did_put_or_get.contains(port);
+                        let val = *predicate.assigned.entry(var).or_insert(SpecVal::SILENT);
+                        let did_fire = val == SpecVal::FIRING;
+                        if did_fire != should_have_fired {
+                            log!(cu.inner.logger, "Inconsistent wrt. port {:?} var {:?} val {:?} did_fire={}, should_have_fired={}", port, var, val, did_fire, should_have_fired);
+                            // IMPLICIT inconsistency
+                            drop((predicate, branch));
+                            return Ok(());
+                        }
+                    }
+                    // submit solution for this component
+                    let subtree_id = SubtreeId::LocalComponent(ComponentId::Proto(proto_component_id));
+                    rctx.solution_storage.submit_and_digest_subtree_solution(
+                        &mut *cu.inner.logger,
+                        subtree_id,
+                        predicate.clone(),
+                    );
+                    branch.ended = true;
+                    // move to "blocked"
+                    drainer.add_output(predicate, branch);
                 }
             }
             Ok(())

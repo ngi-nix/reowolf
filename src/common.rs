@@ -112,6 +112,10 @@ impl U32Stream {
         self.next += 1;
         self.next - 1
     }
+    pub(crate) fn n_skipped(mut self, n: u32) -> Self {
+        self.next = self.next.saturating_add(n);
+        self
+    }
 }
 impl From<Id> for PortId {
     fn from(id: Id) -> PortId {

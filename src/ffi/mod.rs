@@ -84,6 +84,7 @@ pub const WRONG_STATE: c_int = -2;
 pub const FD_LOCK_POISONED: c_int = -3;
 pub const CLOSE_FAIL: c_int = -4;
 pub const BAD_FD: c_int = -5;
+pub const CONNECT_FAILED: c_int = -6;
 
 ///////////////////// REOWOLF //////////////////////////
 
@@ -156,7 +157,7 @@ pub unsafe extern "C" fn connector_new_logging(
         Ok(file) => {
             let connector_id = Connector::random_id();
             let file_logger = Box::new(FileLogger::new(connector_id, file));
-            let c = Connector::new(file_logger, pd.clone(), connector_id, 8);
+            let c = Connector::new(file_logger, pd.clone(), connector_id);
             Box::into_raw(Box::new(c))
         }
         Err(err) => {
@@ -175,7 +176,7 @@ pub unsafe extern "C" fn connector_print_debug(connector: &mut Connector) {
 /// The connector uses the given (internal) connector ID.
 #[no_mangle]
 pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
-    let c = Connector::new(Box::new(DummyLogger), pd.clone(), Connector::random_id(), 8);
+    let c = Connector::new(Box::new(DummyLogger), pd.clone(), Connector::random_id());
     Box::into_raw(Box::new(c))
 }
 

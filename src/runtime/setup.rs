@@ -6,7 +6,6 @@ impl Connector {
         mut logger: Box<dyn Logger>,
         proto_description: Arc<ProtocolDescription>,
         connector_id: ConnectorId,
-        surplus_sockets: u16,
     ) -> Self {
         log!(&mut *logger, "Created with connector_id {:?}", connector_id);
         Self {
@@ -23,7 +22,6 @@ impl Connector {
             phased: ConnectorPhased::Setup(Box::new(ConnectorSetup {
                 net_endpoint_setups: Default::default(),
                 udp_endpoint_setups: Default::default(),
-                surplus_sockets,
             })),
         }
     }

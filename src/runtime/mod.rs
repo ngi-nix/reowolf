@@ -30,24 +30,22 @@ pub struct DummyLogger;
 #[derive(Debug)]
 pub struct FileLogger(ConnectorId, std::fs::File);
 pub(crate) struct NonsyncProtoContext<'a> {
-    cu_inner: &'a mut ConnectorUnphasedInner,
-    proto_component_ports: &'a mut HashSet<PortId>,
-    unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>,
-    proto_component_id: ProtoComponentId,
+    cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
+    proto_component_ports: &'a mut HashSet<PortId>, // sub-structure of component
+    unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>, // lives for Nonsync phase
+    proto_component_id: ProtoComponentId,     // KEY in id->component map
 }
 pub(crate) struct SyncProtoContext<'a> {
-    cu_inner: &'a mut ConnectorUnphasedInner,
-    branch_inner: &'a mut ProtoComponentBranchInner,
-    predicate: &'a Predicate,
+    cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
+    branch_inner: &'a mut ProtoComponentBranchInner, // sub-structure of component branch
+    predicate: &'a Predicate,                 // KEY in pred->branch map
 }
-
 #[derive(Default, Debug, Clone)]
 struct ProtoComponentBranchInner {
     untaken_choice: Option<u16>,
     did_put_or_get: HashSet<PortId>,
     inbox: HashMap<PortId, Payload>,
 }
-
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -247,7 +245,6 @@ struct ConnectorUnphasedInner {
 struct ConnectorSetup {
     net_endpoint_setups: Vec<NetEndpointSetup>,
     udp_endpoint_setups: Vec<UdpEndpointSetup>,
-    surplus_sockets: u16,
 }
 #[derive(Debug)]
 enum ConnectorPhased {
@@ -358,11 +355,12 @@ impl IdManager {
         }
     }
     fn new_spec_var_stream(&self) -> SpecVarStream {
-        let mut port_suffix_stream = self.port_suffix_stream.clone();
-        const JUMP_OVER: usize = 100; // Jumping is entirely unnecessary. It's only used to make spec vars easier to spot in logs
-        for _ in 0..JUMP_OVER {
-            port_suffix_stream.next(); // throw away an ID
-        }
+        // Spec var stream starts where the current port_id stream ends, with gap of SKIP_N.
+        // This gap is entirely unnecessary (i.e. 0 is fine)
+        // It's purpose is only to make SpecVars easier to spot in logs.
+        // E.g. spot the spec var: { v0_0, v1_2, v1_103 }
+        const SKIP_N: u32 = 100;
+        let port_suffix_stream = self.port_suffix_stream.clone().n_skipped(SKIP_N);
         SpecVarStream { connector_id: self.connector_id, port_suffix_stream }
     }
     fn new_port_id(&mut self) -> PortId {
@@ -490,7 +488,6 @@ impl Predicate {
 
     /// Given self and other, two predicates, return the predicate whose
     /// assignments are the union of those of self and other.
-    ///
     fn assignment_union(&self, other: &Self) -> AssignmentUnionResult {
         use AssignmentUnionResult as Aur;
         // iterators over assignments of both predicates. Rely on SORTED ordering of BTreeMap's keys.

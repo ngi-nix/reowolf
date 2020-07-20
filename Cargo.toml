@@ -19,6 +19,7 @@ getrandom = "0.1.14" # tiny crate. used to guess controller-id
 
 # network
 mio = { version = "0.7.0", package = "mio", features = ["udp", "tcp", "os-poll"] }
+socket2 = { version = "0.3.12", optional = true }
 
 # protocol
 backtrace = "0.3"
@@ -39,6 +40,6 @@ crate-type = ["cdylib"]
 [features]
 default = ["ffi", "ffi_socket_api"] # // "session_optimization", 
 ffi = [] # see src/ffi.rs
-ffi_socket_api = ["ffi", "atomic_refcell"]
+ffi_socket_api = ["ffi", "atomic_refcell", "socket2"]
 endpoint_logging = [] # see src/macros.rs
 session_optimization = [] # see src/runtime/setup.rs
