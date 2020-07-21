@@ -272,7 +272,7 @@ pub unsafe extern "C" fn connector_add_net_port(
 /// - where P is a Putter port that sends messages into the socket
 /// - where G is a Getter port that recvs messages from the socket
 #[no_mangle]
-pub unsafe extern "C" fn connector_add_udp_port(
+pub unsafe extern "C" fn connector_add_udp_port_pair(
     connector: &mut Connector,
     putter: *mut PortId,
     getter: *mut PortId,
@@ -290,7 +290,7 @@ pub unsafe extern "C" fn connector_add_udp_port(
         Ok(local) => local,
         Err(errcode) => return errcode,
     };
-    match connector.new_udp_port(local, peer) {
+    match connector.new_udp_mediator_component(local, peer) {
         Ok([p, g]) => {
             if !putter.is_null() {
                 putter.write(p);

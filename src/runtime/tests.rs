@@ -677,8 +677,8 @@ fn udp_self_connect() {
     let test_log_path = Path::new("./logs/udp_self_connect");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
-    c.new_udp_port(sock_addrs[1], sock_addrs[0]).unwrap();
+    c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
+    c.new_udp_mediator_component(sock_addrs[1], sock_addrs[0]).unwrap();
     c.connect(SEC1).unwrap();
 }
 
@@ -687,7 +687,7 @@ fn solo_udp_put_success() {
     let test_log_path = Path::new("./logs/solo_udp_put_success");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let [p0, _] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+    let [p0, _] = c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
     c.connect(SEC1).unwrap();
     c.put(p0, TEST_MSG.clone()).unwrap();
     c.sync(MS300).unwrap();
@@ -698,7 +698,7 @@ fn solo_udp_get_fail() {
     let test_log_path = Path::new("./logs/solo_udp_get_fail");
     let sock_addrs = [next_test_addr(), next_test_addr()];
     let mut c = file_logged_connector(0, test_log_path);
-    let [_, p0] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+    let [_, p0] = c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
     c.connect(SEC1).unwrap();
     c.get(p0).unwrap();
     c.sync(MS300).unwrap_err();
@@ -714,7 +714,7 @@ fn reowolf_to_udp() {
             barrier.wait();
             // reowolf thread
             let mut c = file_logged_connector(0, test_log_path);
-            let [p0, _] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+            let [p0, _] = c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p0, TEST_MSG.clone()).unwrap();
             c.sync(MS300).unwrap();
@@ -744,7 +744,7 @@ fn udp_to_reowolf() {
             barrier.wait();
             // reowolf thread
             let mut c = file_logged_connector(0, test_log_path);
-            let [_, p0] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+            let [_, p0] = c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
             c.connect(SEC1).unwrap();
             c.get(p0).unwrap();
             c.sync(SEC5).unwrap();
@@ -776,7 +776,7 @@ fn udp_reowolf_swap() {
             barrier.wait();
             // reowolf thread
             let mut c = file_logged_connector(0, test_log_path);
-            let [p0, p1] = c.new_udp_port(sock_addrs[0], sock_addrs[1]).unwrap();
+            let [p0, p1] = c.new_udp_mediator_component(sock_addrs[0], sock_addrs[1]).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p0, TEST_MSG.clone()).unwrap();
             c.get(p1).unwrap();

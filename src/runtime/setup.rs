@@ -25,7 +25,12 @@ impl Connector {
             })),
         }
     }
-    pub fn new_udp_port(
+    /// Conceptually, this returning [p0, g1] is sugar for:
+    /// 1. create port pair [p0, g0]
+    /// 2. create port pair [p1, g1]
+    /// 3. create udp component with interface of moved ports [p1, g0]
+    /// 4. return [p0, g1]
+    pub fn new_udp_mediator_component(
         &mut self,
         local_addr: SocketAddr,
         peer_addr: SocketAddr,

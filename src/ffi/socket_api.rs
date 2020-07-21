@@ -27,8 +27,8 @@ struct MaybeConnector {
     connector_bound: Option<ConnectorBound>,
 }
 #[derive(Default)]
-struct CspStorage {
-    fd_to_mc: HashMap<c_int, RwLock<MaybeConnector>>,
+struct FdcStorage {
+    fd_to_c: HashMap<c_int, RwLock<MaybeConnector>>,
     fd_allocator: FdAllocator,
 }
 fn trivial_peer_addr() -> SocketAddr {
@@ -61,7 +61,7 @@ impl FdAllocator {
     }
 }
 lazy_static::lazy_static! {
-    static ref CSP_STORAGE: RwLock<CspStorage> = Default::default();
+    static ref FDC_STORAGE: RwLock<FdcStorage> = Default::default();
 }
 impl MaybeConnector {
     fn connect(&mut self, peer_addr: SocketAddr) -> c_int {
@@ -110,19 +110,19 @@ impl MaybeConnector {
 #[no_mangle]
 pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
     // ignoring domain and type
-    let mut w = if let Ok(w) = CSP_STORAGE.write() { w } else { return FD_LOCK_POISONED };
+    let mut w = if let Ok(w) = FDC_STORAGE.write() { w } else { return FD_LOCK_POISONED };
     let fd = w.fd_allocator.alloc();
     let mc = MaybeConnector { peer_addr: trivial_peer_addr(), connector_bound: None };
-    w.fd_to_mc.insert(fd, RwLock::new(mc));
+    w.fd_to_c.insert(fd, RwLock::new(mc));
     fd
 }
 
 #[no_mangle]
 pub extern "C" fn rw_close(fd: c_int, _how: c_int) -> c_int {
     // ignoring HOW
-    let mut w = if let Ok(w) = CSP_STORAGE.write() { w } else { return FD_LOCK_POISONED };
-    w.fd_allocator.free(fd);
-    if w.fd_to_mc.remove(&fd).is_some() {
+    let mut w = if let Ok(w) = FDC_STORAGE.write() { w } else { return FD_LOCK_POISONED };
+    if w.fd_to_c.remove(&fd).is_some() {
+        w.fd_allocator.free(fd);
         ERR_OK
     } else {
         CLOSE_FAIL
@@ -136,8 +136,8 @@ pub unsafe extern "C" fn rw_bind(
     _addr_len: usize,
 ) -> c_int {
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED };
     let mc: &mut MaybeConnector = &mut mc;
     if mc.connector_bound.is_some() {
@@ -149,7 +149,8 @@ pub unsafe extern "C" fn rw_bind(
             crate::TRIVIAL_PD.clone(),
             Connector::random_id(),
         );
-        let [putter, getter] = connector.new_udp_port(local_addr.read(), mc.peer_addr).unwrap();
+        let [putter, getter] =
+            connector.new_udp_mediator_component(local_addr.read(), mc.peer_addr).unwrap();
         Some(ConnectorBound { connector, putter, getter })
     };
     ERR_OK
@@ -162,8 +163,8 @@ pub unsafe extern "C" fn rw_connect(
     _address_len: usize,
 ) -> c_int {
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED };
     let mc: &mut MaybeConnector = &mut mc;
     mc.connect(peer_addr.read())
@@ -177,8 +178,8 @@ pub unsafe extern "C" fn rw_send(
     _flags: c_int,
 ) -> isize {
     // ignoring flags
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD as isize };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
     let mc: &mut MaybeConnector = &mut mc;
     mc.send(bytes_ptr, bytes_len)
@@ -192,8 +193,8 @@ pub unsafe extern "C" fn rw_recv(
     _flags: c_int,
 ) -> isize {
     // ignoring flags
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD as isize };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
     let mc: &mut MaybeConnector = &mut mc;
     mc.recv(bytes_ptr, bytes_len)
@@ -208,8 +209,8 @@ pub unsafe extern "C" fn rw_sendto(
     peer_addr: *const SocketAddr,
     _addr_len: usize,
 ) -> isize {
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD as isize };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
     let mc: &mut MaybeConnector = &mut mc;
     // copy currently connected peer addr
@@ -239,8 +240,8 @@ pub unsafe extern "C" fn rw_recvfrom(
     peer_addr: *const SocketAddr,
     _addr_len: usize,
 ) -> isize {
-    let r = if let Ok(r) = CSP_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_mc.get(&fd) { mc } else { return BAD_FD as isize };
+    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
+    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
     let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
     let mc: &mut MaybeConnector = &mut mc;
     // copy currently connected peer addr

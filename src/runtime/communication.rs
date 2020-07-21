@@ -23,7 +23,7 @@ struct BranchingNative {
 }
 #[derive(Clone, Debug)]
 struct NativeBranch {
-    index: usize,
+    batch_index: usize,
     gotten: HashMap<PortId, Payload>,
     to_get: HashSet<PortId>,
 }
@@ -303,10 +303,9 @@ impl Connector {
             "Translating {} native batches into branches...",
             comm.native_batches.len()
         );
-        let native_branch_spec_var = rctx.spec_var_stream.next();
-        log!(cu.inner.logger, "Native branch spec var is {:?}", native_branch_spec_var);
+        let mut native_spec_assign_stream = None;
         let mut branching_native = BranchingNative { branches: Default::default() };
-        'native_branches: for ((native_branch, index), branch_spec_val) in
+        'native_branches: for ((native_branch, batch_index), branch_spec_val) in
             comm.native_batches.drain(..).zip(0..).zip(SpecVal::iter_domain())
         {
             let NativeBatch { to_get, to_put } = native_branch;
@@ -323,31 +322,58 @@ impl Connector {
                 for &port in cu.inner.native_ports.difference(&firing_ports) {
                     let var = cu.inner.port_info.spec_var_for(port);
                     if let Some(SpecVal::FIRING) = predicate.assigned.insert(var, SpecVal::SILENT) {
-                        log!(cu.inner.logger, "Native branch index={} contains internal inconsistency wrt. {:?}. Skipping", index, var);
+                        log!(cu.inner.logger, "Native branch index={} contains internal inconsistency wrt. {:?}. Skipping", batch_index, var);
                         continue 'native_branches;
                     }
                 }
-                // this branch is consistent. distinguish it with a unique var:val mapping and proceed
-                predicate.inserted(native_branch_spec_var, branch_spec_val)
+                predicate
             };
             log!(
                 cu.inner.logger,
-                "Native branch index={:?} has consistent {:?}",
-                index,
+                "Native batch_index={:?} has consistent {:?}",
+                batch_index,
                 &predicate
             );
             // send all outgoing messages (by buffering them)
             for (putter, payload) in to_put {
                 let msg = SendPayloadMsg { predicate: predicate.clone(), payload };
-                log!(cu.inner.logger, "Native branch {} sending msg {:?}", index, &msg);
+                log!(cu.inner.logger, "Native branch {} sending msg {:?}", batch_index, &msg);
                 rctx.getter_buffer.putter_add(cu, putter, msg);
             }
-            let branch = NativeBranch { index, gotten: Default::default(), to_get };
+            let branch = NativeBranch { batch_index, gotten: Default::default(), to_get };
+            if let Some(old_branch) = branching_native.branches.remove(&predicate) {
+                let (var, vals): (SpecVar, [SpecVal; 2]) = {
+                    let (var, val_iter) = native_spec_assign_stream.get_or_insert_with(|| {
+                        (rctx.spec_var_stream.next(), SpecVal::iter_domain())
+                    });
+                    let vals = [
+                        val_iter.next().expect("Exhausted specval space!"),
+                        val_iter.next().expect("Exhausted specval space!"),
+                    ];
+                    (*var, vals)
+                };
+                log!(
+                    cu.inner.logger,
+                    "Branch collision on {:?}. Going to distinguish them with a spec var {:?} ands vals {:?}",
+                    &predicate,
+                    var,
+                    vals
+                );
+                branching_native
+                    .branches
+                    .insert(predicate.clone().inserted(var, vals[0]), old_branch);
+                branching_native.branches.insert(predicate.inserted(var, vals[1]), branch);
+            } else {
+                // no branch collision
+                branching_native.branches.insert(predicate, branch);
+            }
+        }
+        for (predicate, branch) in branching_native.branches.iter() {
             if branch.is_ended() {
                 log!(
                     cu.inner.logger,
-                    "Native submitting solution for batch {} with {:?}",
-                    index,
+                    "Native submitting solution for branch {} with {:?}",
+                    branch.batch_index,
                     &predicate
                 );
                 rctx.solution_storage.submit_and_digest_subtree_solution(
@@ -355,10 +381,6 @@ impl Connector {
                     SubtreeId::LocalComponent(ComponentId::Native),
                     predicate.clone(),
                 );
-            }
-            if let Some(_) = branching_native.branches.insert(predicate, branch) {
-                // thanks to the native_branch_spec_var, each batch has a distinct predicate
-                unreachable!()
             }
         }
         // restore the invariant: !native_batches.is_empty()
@@ -857,9 +879,9 @@ impl BranchingNative {
                 &branch.gotten
             );
             if branch.is_ended() && branch_predicate.assigns_subset(solution_predicate) {
-                let NativeBranch { index, gotten, .. } = branch;
+                let NativeBranch { batch_index, gotten, .. } = branch;
                 log!(logger, "Collapsed native has gotten {:?}", &gotten);
-                return RoundOk { batch_index: index, gotten };
+                return RoundOk { batch_index, gotten };
             }
         }
         panic!("Native had no branches matching pred {:?}", solution_predicate);
