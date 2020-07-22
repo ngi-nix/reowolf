@@ -3,11 +3,11 @@ use super::*;
 use std::{
     collections::HashMap,
     ffi::c_void,
-    libc::{sockaddr, socklen_t},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::raw::c_int,
     sync::RwLock,
 };
+use libc::{sockaddr, socklen_t};
 ///////////////////////////////////////////////////////////////////
 
 struct FdAllocator {
@@ -34,8 +34,8 @@ struct CcMap {
     fd_allocator: FdAllocator,
 }
 ///////////////////////////////////////////////////////////////////
-fn addr_from_raw(addr: *const sockaddr, addr_len: socklen_t) -> Option<SocketAddr> {
-    os_socketaddr::OsSocketAddr::from_raw_parts(addr, addr_len as usize).into_addr()
+unsafe fn addr_from_raw(addr: *const sockaddr, addr_len: socklen_t) -> Option<SocketAddr> {
+    os_socketaddr::OsSocketAddr::from_raw_parts(addr as _, addr_len as usize).into_addr()
 }
 fn trivial_peer_addr() -> SocketAddr {
     // SocketAddrV4::new isn't a constant-time func
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn rw_sendto(
 ) -> isize {
     let addr = match addr_from_raw(addr, addr_len) {
         Some(addr) => addr,
-        _ => return BAD_SOCKADDR,
+        _ => return BAD_SOCKADDR as isize,
     };
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn rw_recvfrom(
 ) -> isize {
     let addr = match addr_from_raw(addr, addr_len) {
         Some(addr) => addr,
-        _ => return BAD_SOCKADDR,
+        _ => return BAD_SOCKADDR as isize,
     };
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn rw_recvfrom(
     // copy currently old_addr
     let old_addr = cc.peer_addr;
     // connect to given peer_addr
-    match cc.connect(peer_addr.read()) {
+    match cc.connect(addr) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
