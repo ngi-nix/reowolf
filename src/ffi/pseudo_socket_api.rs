@@ -3,6 +3,7 @@ use super::*;
 use std::{
     collections::HashMap,
     ffi::c_void,
+    libc::{sockaddr, socklen_t},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::raw::c_int,
     sync::RwLock,
@@ -32,12 +33,14 @@ struct CcMap {
     fd_to_cc: HashMap<c_int, RwLock<ConnectorComplex>>,
     fd_allocator: FdAllocator,
 }
+///////////////////////////////////////////////////////////////////
+fn addr_from_raw(addr: *const sockaddr, addr_len: socklen_t) -> Option<SocketAddr> {
+    os_socketaddr::OsSocketAddr::from_raw_parts(addr, addr_len as usize).into_addr()
+}
 fn trivial_peer_addr() -> SocketAddr {
     // SocketAddrV4::new isn't a constant-time func
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0))
 }
-///////////////////////////////////////////////////////////////////
-
 impl Default for FdAllocator {
     fn default() -> Self {
         Self {
@@ -132,11 +135,11 @@ pub extern "C" fn rw_close(fd: c_int, _how: c_int) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rw_bind(
-    fd: c_int,
-    local_addr: *const SocketAddr,
-    _addr_len: usize,
-) -> c_int {
+pub unsafe extern "C" fn rw_bind(fd: c_int, addr: *const sockaddr, addr_len: socklen_t) -> c_int {
+    let addr = match addr_from_raw(addr, addr_len) {
+        Some(addr) => addr,
+        _ => return BAD_SOCKADDR,
+    };
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
@@ -151,8 +154,7 @@ pub unsafe extern "C" fn rw_bind(
             crate::TRIVIAL_PD.clone(),
             Connector::random_id(),
         );
-        let [putter, getter] =
-            connector.new_udp_mediator_component(local_addr.read(), cc.peer_addr).unwrap();
+        let [putter, getter] = connector.new_udp_mediator_component(addr, cc.peer_addr).unwrap();
         Some(ConnectorBound { connector, putter, getter, is_nonblocking: false })
     };
     ERR_OK
@@ -161,15 +163,19 @@ pub unsafe extern "C" fn rw_bind(
 #[no_mangle]
 pub unsafe extern "C" fn rw_connect(
     fd: c_int,
-    peer_addr: *const SocketAddr,
-    _address_len: usize,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) -> c_int {
+    let addr = match addr_from_raw(addr, addr_len) {
+        Some(addr) => addr,
+        _ => return BAD_SOCKADDR,
+    };
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED };
     let cc: &mut ConnectorComplex = &mut cc;
-    cc.connect(peer_addr.read())
+    cc.connect(addr)
 }
 
 #[no_mangle]
@@ -208,24 +214,28 @@ pub unsafe extern "C" fn rw_sendto(
     bytes_ptr: *mut c_void,
     bytes_len: usize,
     _flags: c_int,
-    peer_addr: *const SocketAddr,
-    _addr_len: usize,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) -> isize {
+    let addr = match addr_from_raw(addr, addr_len) {
+        Some(addr) => addr,
+        _ => return BAD_SOCKADDR,
+    };
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
     let cc: &mut ConnectorComplex = &mut cc;
-    // copy currently connected peer addr
-    let connected = cc.peer_addr;
+    // copy currently old_addr
+    let old_addr = cc.peer_addr;
     // connect to given peer_addr
-    match cc.connect(peer_addr.read()) {
+    match cc.connect(addr) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
     // send
     let ret = cc.send(bytes_ptr, bytes_len);
-    // restore connected peer addr
-    match cc.connect(connected) {
+    // restore old_addr
+    match cc.connect(old_addr) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
@@ -233,21 +243,24 @@ pub unsafe extern "C" fn rw_sendto(
 }
 
 #[no_mangle]
-#[no_mangle]
 pub unsafe extern "C" fn rw_recvfrom(
     fd: c_int,
     bytes_ptr: *mut c_void,
     bytes_len: usize,
     _flags: c_int,
-    peer_addr: *const SocketAddr,
-    _addr_len: usize,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) -> isize {
+    let addr = match addr_from_raw(addr, addr_len) {
+        Some(addr) => addr,
+        _ => return BAD_SOCKADDR,
+    };
     let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
     let cc: &mut ConnectorComplex = &mut cc;
-    // copy currently connected peer addr
-    let connected = cc.peer_addr;
+    // copy currently old_addr
+    let old_addr = cc.peer_addr;
     // connect to given peer_addr
     match cc.connect(peer_addr.read()) {
         e if e != ERR_OK => return e as isize,
@@ -255,8 +268,8 @@ pub unsafe extern "C" fn rw_recvfrom(
     }
     // send
     let ret = cc.send(bytes_ptr, bytes_len);
-    // restore connected peer addr
-    match cc.connect(connected) {
+    // restore old_addr
+    match cc.connect(old_addr) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }

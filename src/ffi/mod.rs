@@ -3,8 +3,8 @@ use core::{cell::RefCell, convert::TryFrom};
 use std::os::raw::c_int;
 use std::slice::from_raw_parts as slice_from_raw_parts;
 
-// #[cfg(feature = "ffi_pseudo_socket_api")]
-// pub mod pseudo_socket_api;
+#[cfg(all(target_os = "linux", feature = "ffi_pseudo_socket_api"))]
+pub mod pseudo_socket_api;
 
 // Temporary simplfication: ignore ipv6. To revert, just refactor this structure and its usages
 #[repr(C)]
@@ -99,6 +99,7 @@ pub const CLOSE_FAIL: c_int = -4;
 pub const BAD_FD: c_int = -5;
 pub const CONNECT_FAILED: c_int = -6;
 pub const WOULD_BLOCK: c_int = -7;
+pub const BAD_SOCKADDR: c_int = -8;
 
 ///////////////////// REOWOLF //////////////////////////
 

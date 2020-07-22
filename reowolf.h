@@ -173,4 +173,30 @@ Arc_ProtocolDescription *protocol_description_parse(const uint8_t *pdl, uintptr_
  */
 const uint8_t *reowolf_error_peek(uintptr_t *len);
 
+int rw_bind(int fd, const SocketAddr *local_addr, uintptr_t _addr_len);
+
+int rw_close(int fd, int _how);
+
+int rw_connect(int fd, const SocketAddr *peer_addr, uintptr_t _address_len);
+
+intptr_t rw_recv(int fd, void *bytes_ptr, uintptr_t bytes_len, int _flags);
+
+intptr_t rw_recvfrom(int fd,
+                     void *bytes_ptr,
+                     uintptr_t bytes_len,
+                     int _flags,
+                     const SocketAddr *peer_addr,
+                     uintptr_t _addr_len);
+
+intptr_t rw_send(int fd, const void *bytes_ptr, uintptr_t bytes_len, int _flags);
+
+intptr_t rw_sendto(int fd,
+                   void *bytes_ptr,
+                   uintptr_t bytes_len,
+                   int _flags,
+                   const SocketAddr *peer_addr,
+                   uintptr_t _addr_len);
+
+int rw_socket(int _domain, int _type);
+
 #endif /* REOWOLF_HEADER_DEFINED */
