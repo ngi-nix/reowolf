@@ -16,7 +16,6 @@ struct FdAllocator {
 }
 struct ConnectorBound {
     connector: Connector,
-    is_nonblocking: bool,
     putter: PortId,
     getter: PortId,
 }
@@ -155,7 +154,7 @@ pub unsafe extern "C" fn rw_bind(fd: c_int, addr: *const sockaddr, addr_len: soc
             Connector::random_id(),
         );
         let [putter, getter] = connector.new_udp_mediator_component(addr, cc.peer_addr).unwrap();
-        Some(ConnectorBound { connector, putter, getter, is_nonblocking: false })
+        Some(ConnectorBound { connector, putter, getter })
     };
     ERR_OK
 }

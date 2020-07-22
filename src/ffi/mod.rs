@@ -75,21 +75,6 @@ impl StoredError {
 thread_local! {
     static STORED_ERROR: RefCell<StoredError> = RefCell::new(StoredError::default());
 }
-unsafe fn tl_socketaddr_from_raw(
-    bytes_ptr: *const u8,
-    bytes_len: usize,
-) -> Result<SocketAddr, c_int> {
-    std::str::from_utf8(&*slice_from_raw_parts(bytes_ptr, bytes_len))
-        .map_err(|err| {
-            StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
-        })?
-        .parse()
-        .map_err(|err| {
-            StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
-        })
-}
 
 pub const ERR_OK: c_int = 0;
 pub const ERR_REOWOLF: c_int = -1;
