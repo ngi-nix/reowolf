@@ -12,13 +12,11 @@ int main(int argc, char** argv) {
 	
 	// ... with 2 outgoing network connections
 	PortId ports[2];
-	char * addr = "127.0.0.1:8000";
-	connector_add_net_port(c, &ports[0], addr, strlen(addr),
-			Polarity_Putter, EndpointPolarity_Passive);
+	FfiSocketAddr addr = {{127,0,0,1}, 8000};
+	connector_add_net_port(c, &ports[0], addr, Polarity_Putter, EndpointPolarity_Passive);
 	rw_err_peek(c);
-	addr = "127.0.0.1:8001";
-	connector_add_net_port(c, &ports[1], addr, strlen(addr),
-			Polarity_Putter, EndpointPolarity_Passive);
+	addr.port = 8001;
+	connector_add_net_port(c, &ports[1], addr, Polarity_Putter, EndpointPolarity_Passive);
 	rw_err_peek(c);
 	
 	// Connect with peers (5000ms timeout).

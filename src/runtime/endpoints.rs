@@ -135,7 +135,7 @@ impl EndpointManager {
                 return Ok(tup);
             }
             // poll if time remains
-            self.poll_and_polulate(logger, deadline)?;
+            self.poll_and_populate(logger, deadline)?;
         }
     }
 
@@ -237,26 +237,26 @@ impl EndpointManager {
                 if let Some(bytes_written) = ee.sock.recv(recv_buffer).ok() {
                     // I received a payload!
                     self.udp_endpoint_store.polled_undrained.insert(index);
-                    let payload = Payload::from(&recv_buffer[..bytes_written]);
-                    let [branch_spec_var, port_spec_var] = [
-                        ee.incoming_round_spec_var.unwrap(), // should not be NONE
-                        port_info.spec_var_for(ee.getter_for_incoming),
-                    ];
-                    let branch_spec_val = SpecVal::nth_domain_element(ee.incoming_payloads.len());
-                    ee.incoming_payloads.push(payload.clone());
-                    let predicate = Predicate::default()
-                        .inserted(branch_spec_var, branch_spec_val)
-                        .inserted(port_spec_var, SpecVal::FIRING);
-                    round_ctx
-                        .getter_add(ee.getter_for_incoming, SendPayloadMsg { payload, predicate });
-                    some_message_enqueued = true;
+                    if !ee.received_this_round {
+                        let payload = Payload::from(&recv_buffer[..bytes_written]);
+                        let port_spec_var = port_info.spec_var_for(ee.getter_for_incoming);
+                        let predicate = Predicate::singleton(port_spec_var, SpecVal::FIRING);
+                        round_ctx.getter_add(
+                            ee.getter_for_incoming,
+                            SendPayloadMsg { payload, predicate },
+                        );
+                        some_message_enqueued = true;
+                        ee.received_this_round = true;
+                    } else {
+                        // lose the message!
+                    }
                 }
             }
             if some_message_enqueued {
                 return Ok(CommRecvOk::NewPayloadMsgs);
             }
             // poll if time remains
-            match self.poll_and_polulate(logger, round_ctx.get_deadline()) {
+            match self.poll_and_populate(logger, round_ctx.get_deadline()) {
                 Ok(()) => {} // continue looping
                 Err(Pape::Timeout) => return Ok(CommRecvOk::TimeoutWithoutNew),
                 Err(Pape::PollFailed) => return Err(Use::PollFailed),
@@ -283,7 +283,7 @@ impl EndpointManager {
         }
         Ok(None)
     }
-    fn poll_and_polulate(
+    fn poll_and_populate(
         &mut self,
         logger: &mut dyn Logger,
         deadline: &Option<Instant>,
@@ -336,20 +336,14 @@ impl EndpointManager {
         // slow path
         self.undelayed_messages.extend(self.delayed_messages.drain(..));
     }
-    pub(super) fn udp_endpoints_round_start(
-        &mut self,
-        logger: &mut dyn Logger,
-        spec_var_stream: &mut SpecVarStream,
-    ) {
+    pub(super) fn udp_endpoints_round_start(&mut self, logger: &mut dyn Logger) {
         log!(
             logger,
             "Starting round for {} udp endpoints",
             self.udp_endpoint_store.endpoint_exts.len()
         );
-        for (index, ee) in self.udp_endpoint_store.endpoint_exts.iter_mut().enumerate() {
-            let spec_var = spec_var_stream.next();
-            log!(logger, "Udp endpoint given {} spec var {:?} for this round", index, spec_var);
-            ee.incoming_round_spec_var = Some(spec_var);
+        for ee in self.udp_endpoint_store.endpoint_exts.iter_mut() {
+            ee.received_this_round = false;
         }
     }
     pub(super) fn udp_endpoints_round_end(
@@ -367,7 +361,6 @@ impl EndpointManager {
             'endpoint_loop: for (index, ee) in
                 self.udp_endpoint_store.endpoint_exts.iter_mut().enumerate()
             {
-                ee.incoming_round_spec_var = None; // shouldn't be accessed before its overwritten next round; still adding for clarity.
                 for (payload_predicate, payload) in ee.outgoing_payloads.drain() {
                     if payload_predicate.assigns_subset(solution_predicate) {
                         ee.sock.send(payload.as_slice()).map_err(|e| {
@@ -390,26 +383,6 @@ impl EndpointManager {
         Ok(())
     }
 }
-// impl UdpEndpointExt {
-//     fn try_recv(
-//         &mut self,
-//         port_info: &PortInfo,
-//         udp_in_buffer: &mut UdpInBuffer,
-//     ) -> Option<SendPayloadMsg> {
-//         let recv_buffer = udp_in_buffer.as_mut_slice();
-//         let len = self.sock.recv(recv_buffer).ok()?;
-//         let payload = Payload::from(&recv_buffer[..len]);
-//         let branch_spec_var = self
-//             .incoming_round_spec_var
-//             .expect("Udp spec var should be Some(..) if recv() is called");
-//         let branch_spec_val = SpecVal::nth_domain_element(self.incoming_payloads.len());
-//         self.incoming_payloads.push(payload.clone());
-//         let predicate = Predicate::default()
-//             .inserted(branch_spec_var, branch_spec_val)
-//             .inserted(port_info.spec_var_for(self.getter_for_incoming), SpecVal::FIRING);
-//         Some(SendPayloadMsg { payload, predicate })
-//     }
-// }
 impl Debug for NetEndpoint {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         f.debug_struct("Endpoint").field("inbox", &self.inbox).finish()

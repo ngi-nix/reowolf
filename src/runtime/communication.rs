@@ -364,8 +364,7 @@ impl Connector {
         // restore the invariant: !native_batches.is_empty()
         comm.native_batches.push(Default::default());
 
-        comm.endpoint_manager
-            .udp_endpoints_round_start(&mut *cu.inner.logger, &mut rctx.spec_var_stream);
+        comm.endpoint_manager.udp_endpoints_round_start(&mut *cu.inner.logger);
         // Call to another big method; keep running this round until a distributed decision is reached
         let decision = Self::sync_reach_decision(
             cu,

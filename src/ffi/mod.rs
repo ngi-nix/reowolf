@@ -3,8 +3,21 @@ use core::{cell::RefCell, convert::TryFrom};
 use std::os::raw::c_int;
 use std::slice::from_raw_parts as slice_from_raw_parts;
 
-#[cfg(feature = "ffi_socket_api")]
-pub mod socket_api;
+// #[cfg(feature = "ffi_pseudo_socket_api")]
+// pub mod pseudo_socket_api;
+
+// Temporary simplfication: ignore ipv6. To revert, just refactor this structure and its usages
+#[repr(C)]
+pub struct FfiSocketAddr {
+    pub ipv4: [u8; 4],
+    pub port: u16,
+}
+impl Into<SocketAddr> for FfiSocketAddr {
+    fn into(self) -> SocketAddr {
+        (self.ipv4, self.port).into()
+    }
+}
+
 ///////////////////////////////////////////////
 #[derive(Default)]
 struct StoredError {
@@ -81,10 +94,11 @@ unsafe fn tl_socketaddr_from_raw(
 pub const ERR_OK: c_int = 0;
 pub const ERR_REOWOLF: c_int = -1;
 pub const WRONG_STATE: c_int = -2;
-pub const FD_LOCK_POISONED: c_int = -3;
+pub const CC_MAP_LOCK_POISONED: c_int = -3;
 pub const CLOSE_FAIL: c_int = -4;
 pub const BAD_FD: c_int = -5;
 pub const CONNECT_FAILED: c_int = -6;
+pub const WOULD_BLOCK: c_int = -7;
 
 ///////////////////// REOWOLF //////////////////////////
 
@@ -240,17 +254,12 @@ pub unsafe extern "C" fn connector_add_component(
 pub unsafe extern "C" fn connector_add_net_port(
     connector: &mut Connector,
     port: *mut PortId,
-    addr_str_ptr: *const u8,
-    addr_str_len: usize,
+    addr: FfiSocketAddr,
     port_polarity: Polarity,
     endpoint_polarity: EndpointPolarity,
 ) -> c_int {
     StoredError::tl_clear();
-    let addr = match tl_socketaddr_from_raw(addr_str_ptr, addr_str_len) {
-        Ok(local) => local,
-        Err(errcode) => return errcode,
-    };
-    match connector.new_net_port(port_polarity, addr, endpoint_polarity) {
+    match connector.new_net_port(port_polarity, addr.into(), endpoint_polarity) {
         Ok(p) => {
             if !port.is_null() {
                 port.write(p);
@@ -276,21 +285,11 @@ pub unsafe extern "C" fn connector_add_udp_port_pair(
     connector: &mut Connector,
     putter: *mut PortId,
     getter: *mut PortId,
-    local_addr_str_ptr: *const u8,
-    local_addr_str_len: usize,
-    peer_addr_str_ptr: *const u8,
-    peer_addr_str_len: usize,
+    local_addr: FfiSocketAddr,
+    peer_addr: FfiSocketAddr,
 ) -> c_int {
     StoredError::tl_clear();
-    let local = match tl_socketaddr_from_raw(local_addr_str_ptr, local_addr_str_len) {
-        Ok(local) => local,
-        Err(errcode) => return errcode,
-    };
-    let peer = match tl_socketaddr_from_raw(peer_addr_str_ptr, peer_addr_str_len) {
-        Ok(local) => local,
-        Err(errcode) => return errcode,
-    };
-    match connector.new_udp_mediator_component(local, peer) {
+    match connector.new_udp_mediator_component(local_addr.into(), peer_addr.into()) {
         Ok([p, g]) => {
             if !putter.is_null() {
                 putter.write(p);

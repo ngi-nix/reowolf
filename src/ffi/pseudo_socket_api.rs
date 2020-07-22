@@ -15,10 +15,11 @@ struct FdAllocator {
 }
 struct ConnectorBound {
     connector: Connector,
+    is_nonblocking: bool,
     putter: PortId,
     getter: PortId,
 }
-struct MaybeConnector {
+struct ConnectorComplex {
     // invariants:
     // 1. connector is a upd-socket singleton
     // 2. putter and getter are ports in the native interface with the appropriate polarities
@@ -27,8 +28,8 @@ struct MaybeConnector {
     connector_bound: Option<ConnectorBound>,
 }
 #[derive(Default)]
-struct FdcStorage {
-    fd_to_c: HashMap<c_int, RwLock<MaybeConnector>>,
+struct CcMap {
+    fd_to_cc: HashMap<c_int, RwLock<ConnectorComplex>>,
     fd_allocator: FdAllocator,
 }
 fn trivial_peer_addr() -> SocketAddr {
@@ -61,9 +62,9 @@ impl FdAllocator {
     }
 }
 lazy_static::lazy_static! {
-    static ref FDC_STORAGE: RwLock<FdcStorage> = Default::default();
+    static ref CC_MAP: RwLock<CcMap> = Default::default();
 }
-impl MaybeConnector {
+impl ConnectorComplex {
     fn connect(&mut self, peer_addr: SocketAddr) -> c_int {
         self.peer_addr = peer_addr;
         if let Some(ConnectorBound { connector, .. }) = &mut self.connector_bound {
@@ -105,23 +106,24 @@ impl MaybeConnector {
         }
     }
 }
+
 ///////////////////////////////////////////////////////////////////
 
 #[no_mangle]
 pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
     // ignoring domain and type
-    let mut w = if let Ok(w) = FDC_STORAGE.write() { w } else { return FD_LOCK_POISONED };
+    let mut w = if let Ok(w) = CC_MAP.write() { w } else { return CC_MAP_LOCK_POISONED };
     let fd = w.fd_allocator.alloc();
-    let mc = MaybeConnector { peer_addr: trivial_peer_addr(), connector_bound: None };
-    w.fd_to_c.insert(fd, RwLock::new(mc));
+    let cc = ConnectorComplex { peer_addr: trivial_peer_addr(), connector_bound: None };
+    w.fd_to_cc.insert(fd, RwLock::new(cc));
     fd
 }
 
 #[no_mangle]
 pub extern "C" fn rw_close(fd: c_int, _how: c_int) -> c_int {
     // ignoring HOW
-    let mut w = if let Ok(w) = FDC_STORAGE.write() { w } else { return FD_LOCK_POISONED };
-    if w.fd_to_c.remove(&fd).is_some() {
+    let mut w = if let Ok(w) = CC_MAP.write() { w } else { return CC_MAP_LOCK_POISONED };
+    if w.fd_to_cc.remove(&fd).is_some() {
         w.fd_allocator.free(fd);
         ERR_OK
     } else {
@@ -136,22 +138,22 @@ pub unsafe extern "C" fn rw_bind(
     _addr_len: usize,
 ) -> c_int {
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED };
-    let mc: &mut MaybeConnector = &mut mc;
-    if mc.connector_bound.is_some() {
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED };
+    let cc: &mut ConnectorComplex = &mut cc;
+    if cc.connector_bound.is_some() {
         return WRONG_STATE;
     }
-    mc.connector_bound = {
+    cc.connector_bound = {
         let mut connector = Connector::new(
             Box::new(crate::DummyLogger),
             crate::TRIVIAL_PD.clone(),
             Connector::random_id(),
         );
         let [putter, getter] =
-            connector.new_udp_mediator_component(local_addr.read(), mc.peer_addr).unwrap();
-        Some(ConnectorBound { connector, putter, getter })
+            connector.new_udp_mediator_component(local_addr.read(), cc.peer_addr).unwrap();
+        Some(ConnectorBound { connector, putter, getter, is_nonblocking: false })
     };
     ERR_OK
 }
@@ -163,11 +165,11 @@ pub unsafe extern "C" fn rw_connect(
     _address_len: usize,
 ) -> c_int {
     // assuming _domain is AF_INET and _type is SOCK_DGRAM
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED };
-    let mc: &mut MaybeConnector = &mut mc;
-    mc.connect(peer_addr.read())
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED };
+    let cc: &mut ConnectorComplex = &mut cc;
+    cc.connect(peer_addr.read())
 }
 
 #[no_mangle]
@@ -178,11 +180,11 @@ pub unsafe extern "C" fn rw_send(
     _flags: c_int,
 ) -> isize {
     // ignoring flags
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
-    let mc: &mut MaybeConnector = &mut mc;
-    mc.send(bytes_ptr, bytes_len)
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc: &mut ConnectorComplex = &mut cc;
+    cc.send(bytes_ptr, bytes_len)
 }
 
 #[no_mangle]
@@ -193,11 +195,11 @@ pub unsafe extern "C" fn rw_recv(
     _flags: c_int,
 ) -> isize {
     // ignoring flags
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
-    let mc: &mut MaybeConnector = &mut mc;
-    mc.recv(bytes_ptr, bytes_len)
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc: &mut ConnectorComplex = &mut cc;
+    cc.recv(bytes_ptr, bytes_len)
 }
 
 #[no_mangle]
@@ -209,21 +211,21 @@ pub unsafe extern "C" fn rw_sendto(
     peer_addr: *const SocketAddr,
     _addr_len: usize,
 ) -> isize {
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
-    let mc: &mut MaybeConnector = &mut mc;
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc: &mut ConnectorComplex = &mut cc;
     // copy currently connected peer addr
-    let connected = mc.peer_addr;
+    let connected = cc.peer_addr;
     // connect to given peer_addr
-    match mc.connect(peer_addr.read()) {
+    match cc.connect(peer_addr.read()) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
     // send
-    let ret = mc.send(bytes_ptr, bytes_len);
+    let ret = cc.send(bytes_ptr, bytes_len);
     // restore connected peer addr
-    match mc.connect(connected) {
+    match cc.connect(connected) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
@@ -240,21 +242,21 @@ pub unsafe extern "C" fn rw_recvfrom(
     peer_addr: *const SocketAddr,
     _addr_len: usize,
 ) -> isize {
-    let r = if let Ok(r) = FDC_STORAGE.read() { r } else { return FD_LOCK_POISONED as isize };
-    let mc = if let Some(mc) = r.fd_to_c.get(&fd) { mc } else { return BAD_FD as isize };
-    let mut mc = if let Ok(mc) = mc.write() { mc } else { return FD_LOCK_POISONED as isize };
-    let mc: &mut MaybeConnector = &mut mc;
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return CC_MAP_LOCK_POISONED as isize };
+    let cc: &mut ConnectorComplex = &mut cc;
     // copy currently connected peer addr
-    let connected = mc.peer_addr;
+    let connected = cc.peer_addr;
     // connect to given peer_addr
-    match mc.connect(peer_addr.read()) {
+    match cc.connect(peer_addr.read()) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }
     // send
-    let ret = mc.send(bytes_ptr, bytes_len);
+    let ret = cc.send(bytes_ptr, bytes_len);
     // restore connected peer addr
-    match mc.connect(connected) {
+    match cc.connect(connected) {
         e if e != ERR_OK => return e as isize,
         _ => {}
     }

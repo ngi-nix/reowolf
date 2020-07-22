@@ -10,13 +10,11 @@ int main(int argc, char** argv) {
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
 	PortId putter, getter;
-	char addr_str[] = "127.0.0.1:8000";
-	connector_add_net_port(
-		c, &putter, addr_str, sizeof(addr_str)-1, Polarity_Putter, EndpointPolarity_Active);
+	FfiSocketAddr addr = {{127,0,0,1}, 8000};
+	connector_add_net_port(c, &putter, addr, Polarity_Putter, EndpointPolarity_Active);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
-	connector_add_net_port(
-		c, &getter, addr_str, sizeof(addr_str)-1, Polarity_Getter, EndpointPolarity_Passive);
+	connector_add_net_port(c, &getter, addr, Polarity_Getter, EndpointPolarity_Passive);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
 	connector_connect(c, 4000);

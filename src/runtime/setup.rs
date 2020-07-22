@@ -511,9 +511,8 @@ fn new_endpoint_manager(
             UdpEndpointExt {
                 sock,
                 outgoing_payloads: Default::default(),
-                incoming_round_spec_var: None,
+                received_this_round: false,
                 getter_for_incoming,
-                incoming_payloads: Default::default(),
             }
         })
         .collect();

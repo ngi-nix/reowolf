@@ -13,9 +13,8 @@ int main(int argc, char** argv) {
 	
 	// ... with 1 outgoing network connection
 	PortId ports[3];
-	char addr_str[] = "127.0.0.1:8000";
-	connector_add_net_port(c, &ports[0], addr_str, sizeof(addr_str)-1,
-			Polarity_Getter, EndpointPolarity_Active);
+	FfiSocketAddr addr = {{127,0,0,1}, 8000};
+	connector_add_net_port(c, &ports[0], addr, Polarity_Getter, EndpointPolarity_Active);
 	connector_add_port_pair(c, &ports[1], &ports[2]);
 	connector_add_component(c, "pres_2", 6, ports, 2);
 	rw_err_peek(c);

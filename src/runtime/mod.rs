@@ -209,10 +209,9 @@ struct EndpointStore<T> {
 #[derive(Debug)]
 struct UdpEndpointExt {
     sock: UdpSocket, // already bound and connected
+    received_this_round: bool,
     outgoing_payloads: HashMap<Predicate, Payload>,
-    incoming_round_spec_var: Option<SpecVar>,
     getter_for_incoming: PortId,
-    incoming_payloads: Vec<Payload>,
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PortInfo {
@@ -456,6 +455,10 @@ impl Connector {
     }
 }
 impl Predicate {
+    #[inline]
+    pub fn singleton(k: SpecVar, v: SpecVal) -> Self {
+        Self::default().inserted(k, v)
+    }
     #[inline]
     pub fn inserted(mut self, k: SpecVar, v: SpecVal) -> Self {
         self.assigned.insert(k, v);

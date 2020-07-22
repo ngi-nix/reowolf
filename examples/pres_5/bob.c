@@ -13,13 +13,11 @@ int main(int argc, char** argv) {
 
 	// ... with 2 outgoing network connections
 	PortId ports[4];
-	char * addr = "127.0.0.1:8000";
-	connector_add_net_port(c, &ports[0], addr, strlen(addr),
-			Polarity_Getter, EndpointPolarity_Active);
+	FfiSocketAddr addr = {{127,0,0,1}, 8000};
+	connector_add_net_port(c, &ports[0], addr, Polarity_Getter, EndpointPolarity_Active);
 	rw_err_peek(c);
-	addr = "127.0.0.1:8001";
-	connector_add_net_port(c, &ports[1], addr, strlen(addr),
-			Polarity_Getter, EndpointPolarity_Active);
+	addr.port = 8001;
+	connector_add_net_port(c, &ports[1], addr, Polarity_Getter, EndpointPolarity_Active);
 	connector_add_port_pair(c, &ports[2], &ports[3]);
 	connector_add_component(c, "alt_round_merger", 16, ports, 3);
 	rw_err_peek(c);
