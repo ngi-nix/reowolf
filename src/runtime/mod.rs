@@ -40,6 +40,13 @@ pub(crate) struct SyncProtoContext<'a> {
     branch_inner: &'a mut ProtoComponentBranchInner, // sub-structure of component branch
     predicate: &'a Predicate,                 // KEY in pred->branch map
 }
+#[derive(Debug)]
+pub(crate) struct UdpEndpointExt {
+    sock: UdpSocket, // already bound and connected
+    received_from_this_round: Option<SocketAddr>,
+    outgoing_payloads: HashMap<Predicate, Payload>,
+    getter_for_incoming: PortId,
+}
 #[derive(Default, Debug, Clone)]
 struct ProtoComponentBranchInner {
     untaken_choice: Option<u16>,
@@ -205,13 +212,6 @@ struct EndpointManager {
 struct EndpointStore<T> {
     endpoint_exts: Vec<T>,
     polled_undrained: VecSet<usize>,
-}
-#[derive(Debug)]
-struct UdpEndpointExt {
-    sock: UdpSocket, // already bound and connected
-    received_this_round: bool,
-    outgoing_payloads: HashMap<Predicate, Payload>,
-    getter_for_incoming: PortId,
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PortInfo {

@@ -114,15 +114,8 @@ impl Connector {
         }
     }
     // #[cfg(ffi_socket_api)]
-    pub(crate) fn get_mut_udp_sock(&mut self, index: usize) -> Option<&mut UdpSocket> {
-        let sock = &mut self
-            .get_comm_mut()?
-            .endpoint_manager
-            .udp_endpoint_store
-            .endpoint_exts
-            .get_mut(index)?
-            .sock;
-        Some(sock)
+    pub(crate) fn get_mut_udp_ee(&mut self, index: usize) -> Option<&mut UdpEndpointExt> {
+        self.get_comm_mut()?.endpoint_manager.udp_endpoint_store.endpoint_exts.get_mut(index)
     }
     pub fn gotten(&mut self, port: PortId) -> Result<&Payload, GottenError> {
         use GottenError as Ge;
