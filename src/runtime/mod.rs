@@ -40,13 +40,6 @@ pub(crate) struct SyncProtoContext<'a> {
     branch_inner: &'a mut ProtoComponentBranchInner, // sub-structure of component branch
     predicate: &'a Predicate,                 // KEY in pred->branch map
 }
-#[derive(Debug)]
-pub(crate) struct UdpEndpointExt {
-    pub(crate) sock: UdpSocket, // already bound and connected
-    pub(crate) received_from_this_round: Option<SocketAddr>,
-    outgoing_payloads: HashMap<Predicate, Payload>,
-    getter_for_incoming: PortId,
-}
 #[derive(Default, Debug, Clone)]
 struct ProtoComponentBranchInner {
     untaken_choice: Option<u16>,
@@ -173,6 +166,13 @@ struct UdpEndpointSetup {
 #[derive(Debug)]
 struct NetEndpointExt {
     net_endpoint: NetEndpoint,
+    getter_for_incoming: PortId,
+}
+#[derive(Debug)]
+struct UdpEndpointExt {
+    sock: UdpSocket, // already bound and connected
+    received_from_this_round: Option<SocketAddr>,
+    outgoing_payloads: HashMap<Predicate, Payload>,
     getter_for_incoming: PortId,
 }
 #[derive(Debug)]
