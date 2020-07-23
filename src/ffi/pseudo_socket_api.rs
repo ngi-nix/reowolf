@@ -1,13 +1,7 @@
 use super::*;
 
 use libc::{sockaddr, socklen_t};
-use std::{
-    collections::HashMap,
-    ffi::c_void,
-    net::SocketAddr,
-    os::raw::c_int,
-    sync::RwLock,
-};
+use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 ///////////////////////////////////////////////////////////////////
 
 struct FdAllocator {
@@ -20,6 +14,7 @@ enum ConnectorComplex {
         peer: Option<SocketAddr>,
     },
     Communication {
+        // Invariant: connector in communication state; native has this putter and getter only.
         connector: Connector,
         putter: PortId,
         getter: PortId,
@@ -69,9 +64,14 @@ impl ConnectorComplex {
     fn try_become_connected(&mut self) {
         match self {
             ConnectorComplex::Setup { local: Some(local), peer: Some(peer) } => {
-                // setup complete
-                let mut connector = Connector::new(Box::new(crate::DummyLogger), crate::TRIVIAL_PD.clone(), Connector::random_id());
+                // complete setup
+                let mut connector = Connector::new(
+                    Box::new(crate::DummyLogger),
+                    crate::TRIVIAL_PD.clone(),
+                    Connector::random_id(),
+                );
                 let [putter, getter] = connector.new_udp_mediator_component(*local, *peer).unwrap();
+                connector.connect(None).unwrap();
                 *self = ConnectorComplex::Communication { connector, putter, getter }
             }
             _ => {} // setup incomplete
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn rw_bind(fd: c_int, addr: *const sockaddr, addr_len: soc
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED };
     let cc: &mut ConnectorComplex = &mut cc;
     match cc {
-        ConnectorComplex::Communication { ..} => WRONG_STATE,
+        ConnectorComplex::Communication { .. } => WRONG_STATE,
         ConnectorComplex::Setup { local, .. } => {
             *local = Some(addr);
             cc.try_become_connected();
