@@ -238,12 +238,15 @@ pub unsafe extern "C" fn rw_recv(
         connector.sync(None).unwrap();
         // copy from gotten to caller's buffer (truncating if necessary)
         let slice = connector.gotten(*getter).unwrap().as_slice();
-        let cpy_msg_bytes = slice.len().min(bytes_len);
-        std::ptr::copy_nonoverlapping(slice.as_ptr(), bytes_ptr as *mut u8, cpy_msg_bytes);
-        // return number of bytes sent
-        cpy_msg_bytes as isize
+        if !bytes_ptr.is_null() {
+            let cpy_msg_bytes = slice.len().min(bytes_len);
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), bytes_ptr as *mut u8, cpy_msg_bytes);
+        }
+        // return number of bytes sent   
+        slice.len() as isize
     } else {
-        WRONG_STATE as isize // not bound!
+        // not bound!
+        WRONG_STATE as isize
     }
 }
 
@@ -267,22 +270,26 @@ pub unsafe extern "C" fn rw_recvfrom(
         // this call BLOCKS until it succeeds, and its got no reason to fail
         connector.sync(None).unwrap();
         // overwrite addr and addr_len
-        let recvd_from = connector.get_mut_udp_ee(0).unwrap().received_from_this_round.unwrap();
-        let os_addr = os_socketaddr::OsSocketAddr::from(recvd_from);
-        let cpy_addr_bytes = (*addr_len).min(os_addr.capacity());
-        // ptr-return addr bytes (truncated to addr_len)
-        let src_u8: *const u8 = std::mem::transmute(os_addr.as_ptr());
-        let dest_u8: *mut u8 = std::mem::transmute(addr);
-        std::ptr::copy_nonoverlapping(src_u8, dest_u8, cpy_addr_bytes as usize);
-        // ptr-return true addr size
-        *addr_len = os_addr.capacity(); 
+        if !addr.is_null() && !addr_len.is_null() {
+            let recvd_from = connector.get_mut_udp_ee(0).unwrap().received_from_this_round.unwrap();
+            let os_addr = os_socketaddr::OsSocketAddr::from(recvd_from);
+            let cpy_addr_bytes = (*addr_len).min(os_addr.capacity());
+            // ptr-return addr bytes (truncated to addr_len)
+            let src_u8: *const u8 = std::mem::transmute(os_addr.as_ptr());
+            let dest_u8: *mut u8 = std::mem::transmute(addr);
+            std::ptr::copy_nonoverlapping(src_u8, dest_u8, cpy_addr_bytes as usize);
+            // ptr-return true addr size
+            *addr_len = os_addr.capacity(); 
+        }
         // copy from gotten to caller's buffer (truncating if necessary)
         let slice = connector.gotten(*getter).unwrap().as_slice();
-        let cpy_msg_bytes = slice.len().min(bytes_len);
-        let dest_u8: *mut u8 = std::mem::transmute(bytes_ptr);
-        std::ptr::copy_nonoverlapping(slice.as_ptr(), dest_u8, cpy_msg_bytes);
+        if !bytes_ptr.is_null() {
+            let cpy_msg_bytes = slice.len().min(bytes_len);
+            let dest_u8: *mut u8 = std::mem::transmute(bytes_ptr);
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), dest_u8, cpy_msg_bytes);   
+        }
         // return number of bytes received
-        cpy_msg_bytes as isize
+        slice.len() as isize
     } else {
         WRONG_STATE as isize // not bound!
     }
