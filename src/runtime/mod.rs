@@ -171,7 +171,7 @@ struct NetEndpointExt {
 #[derive(Debug)]
 struct UdpEndpointExt {
     sock: UdpSocket, // already bound and connected
-    received_from_this_round: Option<SocketAddr>,
+    received_this_round: bool,
     outgoing_payloads: HashMap<Predicate, Payload>,
     getter_for_incoming: PortId,
 }
