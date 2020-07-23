@@ -1,6 +1,7 @@
 use super::*;
 
 use libc::{sockaddr, socklen_t};
+use core::ops::DerefMut;
 use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 ///////////////////////////////////////////////////////////////////
 
@@ -61,7 +62,7 @@ impl ConnectorComplex {
         match self.phased {
             ConnectorComplexPhased::Setup { local: Some(local), peer: Some(peer) } => {
                 // complete setup
-                let [putter, getter] = connector.new_udp_mediator_component(*local, *peer).unwrap();
+                let [putter, getter] = self.connector.new_udp_mediator_component(local, peer).unwrap();
                 self.connector.connect(None).unwrap();
                 self.phased = ConnectorComplexPhased::Communication { putter, getter }
             }
@@ -110,7 +111,7 @@ pub unsafe extern "C" fn rw_bind(fd: c_int, addr: *const sockaddr, addr_len: soc
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED };
-    match &cc.phased {
+    match &mut cc.phased {
         ConnectorComplexPhased::Communication { .. } => WRONG_STATE,
         ConnectorComplexPhased::Setup { local, .. } => {
             *local = Some(addr);
@@ -134,9 +135,9 @@ pub unsafe extern "C" fn rw_connect(
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED };
-    match &cc.phased {
-        ConnectorComplex::Communication { .. } => WRONG_STATE,
-        ConnectorComplex::Setup { peer, .. } => {
+    match &mut cc.phased {
+        ConnectorComplexPhased::Communication { .. } => WRONG_STATE,
+        ConnectorComplexPhased::Setup { peer, .. } => {
             *peer = Some(addr);
             cc.try_become_connected();
             ERR_OK
@@ -155,12 +156,13 @@ pub unsafe extern "C" fn rw_send(
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED as isize };
-    match &cc.phased {
-        ConnectorComplex::Setup { .. } => WRONG_STATE as isize,
-        ConnectorComplex::Communication { connector, putter, .. } => {
+    let ConnectorComplex { connector, phased } = cc.deref_mut();
+    match phased {
+        ConnectorComplexPhased::Setup { .. } => WRONG_STATE as isize,
+        ConnectorComplexPhased::Communication { putter, .. } => {
             let payload = payload_from_raw(bytes_ptr, bytes_len);
-            cc.connector.put(*putter, payload).unwrap();
-            cc.connector.sync(None).unwrap();
+            connector.put(*putter, payload).unwrap();
+            connector.sync(None).unwrap();
             bytes_len as isize
         }
     }
@@ -177,12 +179,13 @@ pub unsafe extern "C" fn rw_recv(
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED as isize };
-    match &cc.phased {
-        ConnectorComplex::Setup { .. } => WRONG_STATE as isize,
-        ConnectorComplex::Communication { connector, getter, .. } => {
-            cc.connector.get(*getter).unwrap();
-            cc.connector.sync(None).unwrap();
-            let slice = cc.connector.gotten(*getter).unwrap().as_slice();
+    let ConnectorComplex { connector, phased } = cc.deref_mut();
+    match phased {
+        ConnectorComplexPhased::Setup { .. } => WRONG_STATE as isize,
+        ConnectorComplexPhased::Communication { getter, .. } => {
+            connector.get(*getter).unwrap();
+            connector.sync(None).unwrap();
+            let slice = connector.gotten(*getter).unwrap().as_slice();
             if !bytes_ptr.is_null() {
                 let cpy_msg_bytes = slice.len().min(bytes_len);
                 std::ptr::copy_nonoverlapping(slice.as_ptr(), bytes_ptr as *mut u8, cpy_msg_bytes);
