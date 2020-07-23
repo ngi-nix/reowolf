@@ -3,8 +3,8 @@ use core::{cell::RefCell, convert::TryFrom};
 use std::os::raw::c_int;
 use std::slice::from_raw_parts as slice_from_raw_parts;
 
-// #[cfg(all(target_os = "linux", feature = "ffi_pseudo_socket_api"))]
-// pub mod pseudo_socket_api;
+#[cfg(all(target_os = "linux", feature = "ffi_pseudo_socket_api"))]
+pub mod pseudo_socket_api;
 
 // Temporary simplfication: ignore ipv6. To revert, just refactor this structure and its usages
 #[repr(C)]

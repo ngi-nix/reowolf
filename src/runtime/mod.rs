@@ -42,8 +42,8 @@ pub(crate) struct SyncProtoContext<'a> {
 }
 #[derive(Debug)]
 pub(crate) struct UdpEndpointExt {
-    sock: UdpSocket, // already bound and connected
-    received_from_this_round: Option<SocketAddr>,
+    pub(crate) sock: UdpSocket, // already bound and connected
+    pub(crate) received_from_this_round: Option<SocketAddr>,
     outgoing_payloads: HashMap<Predicate, Payload>,
     getter_for_incoming: PortId,
 }
