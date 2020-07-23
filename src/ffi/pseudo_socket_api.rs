@@ -82,8 +82,6 @@ impl ConnectorComplex {
         }
     }
 }
-fn connected_complex(local: SocketAddr, peer: SocketAddr) -> ConnectorComplex {
-}
 /////////////////////////////////
 #[no_mangle]
 pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
@@ -186,7 +184,40 @@ pub unsafe extern "C" fn rw_recv(
 ) -> isize {
     // ignoring flags
     // get outer reader, inner writer locks
-    let r = if let Ok(r) = LOCK_POISONED.read() { r } else { return CCMLP as isize };
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
+    let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
+    let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED as isize };
+    let cc: &mut ConnectorComplex = &mut cc;
+    if let Some(ConnectorBound { connector, getter, .. }) = &mut cc.connector_bound {
+        connector.get(*getter).unwrap();
+        // this call BLOCKS until it succeeds, and its got no reason to fail
+        connector.sync(None).unwrap();
+        // copy from gotten to caller's buffer (truncating if necessary)
+        let slice = connector.gotten(*getter).unwrap().as_slice();
+        if !bytes_ptr.is_null() {
+            let cpy_msg_bytes = slice.len().min(bytes_len);
+            std::ptr::copy_nonoverlapping(slice.as_ptr(), bytes_ptr as *mut u8, cpy_msg_bytes);
+        }
+        // return number of bytes sent   
+        slice.len() as isize
+    } else {
+        // not bound!
+        WRONG_STATE as isize
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rw_recvfrom(
+    fd: c_int,
+    bytes_ptr: *mut c_void,
+    bytes_len: usize,
+    _flags: c_int,
+    addr: *mut sockaddr,
+    addr_len: *mut socklen_t,
+) -> isize {
+    // ignoring flags
+    // get outer reader, inner writer locks
+    let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
     let mut cc = if let Ok(cc) = cc.write() { cc } else { return CCMLP as isize };
     let cc: &mut ConnectorComplex = &mut cc;
