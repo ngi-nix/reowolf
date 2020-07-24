@@ -379,6 +379,17 @@ impl Drop for Connector {
     }
 }
 impl Connector {
+    pub fn is_connected(&self) -> bool {
+        // If designed for Rust usage, connectors would be exposed as an enum type from the start.
+        // consequently, this "phased" business would also include connector variants and this would
+        // get a lot closer to the connector impl. itself.
+        // Instead, the C-oriented implementation doesn't distinguish connector states as types,
+        // and distinguish them as enum variants instead
+        match self.phased {
+            ConnectorPhased::Setup(..) => false,
+            ConnectorPhased::Communication(..) => true,
+        }
+    }
     pub(crate) fn random_id() -> ConnectorId {
         type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
         unsafe {

@@ -1,7 +1,7 @@
 use super::*;
 
-use libc::{sockaddr, socklen_t};
 use core::ops::DerefMut;
+use libc::{sockaddr, socklen_t};
 use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 ///////////////////////////////////////////////////////////////////
 
@@ -14,6 +14,7 @@ enum ConnectorComplexPhased {
     Communication { putter: PortId, getter: PortId },
 }
 struct ConnectorComplex {
+    // invariant: .connector.phased and .phased are variants Setup/Communication in lockstep.
     connector: Connector,
     phased: ConnectorComplexPhased,
 }
@@ -33,10 +34,8 @@ unsafe fn libc_to_std_sockaddr(addr: *const sockaddr, addr_len: socklen_t) -> Op
 }
 impl Default for FdAllocator {
     fn default() -> Self {
-        Self {
-            next: Some(0), // positive values used only
-            freed: vec![],
-        }
+        // negative FDs aren't used s.t. they are available for error signalling
+        Self { next: Some(0), freed: vec![] }
     }
 }
 impl FdAllocator {
@@ -62,7 +61,8 @@ impl ConnectorComplex {
         match self.phased {
             ConnectorComplexPhased::Setup { local: Some(local), peer: Some(peer) } => {
                 // complete setup
-                let [putter, getter] = self.connector.new_udp_mediator_component(local, peer).unwrap();
+                let [putter, getter] =
+                    self.connector.new_udp_mediator_component(local, peer).unwrap();
                 self.connector.connect(None).unwrap();
                 self.phased = ConnectorComplexPhased::Communication { putter, getter }
             }
