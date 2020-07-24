@@ -268,7 +268,7 @@ pub unsafe extern "C" fn connector_add_net_port(
 /// - where P is a Putter port that sends messages into the socket
 /// - where G is a Getter port that recvs messages from the socket
 #[no_mangle]
-pub unsafe extern "C" fn connector_add_udp_port_pair(
+pub unsafe extern "C" fn connector_add_udp_mediator_component(
     connector: &mut Connector,
     putter: *mut PortId,
     getter: *mut PortId,
