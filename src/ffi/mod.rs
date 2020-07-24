@@ -4,6 +4,7 @@ use std::os::raw::c_int;
 use std::slice::from_raw_parts as slice_from_raw_parts;
 
 #[cfg(all(target_os = "linux", feature = "ffi_pseudo_socket_api"))]
+/// cbindgen:ignore
 pub mod pseudo_socket_api;
 
 // Temporary simplfication: ignore ipv6. To revert, just refactor this structure and its usages
@@ -76,16 +77,15 @@ thread_local! {
     static STORED_ERROR: RefCell<StoredError> = RefCell::new(StoredError::default());
 }
 
-pub const ERR_OK: c_int = 0;
-pub const ERR_REOWOLF: c_int = -1;
-pub const WRONG_STATE: c_int = -2;
-pub const LOCK_POISONED: c_int = -3;
-pub const CLOSE_FAIL: c_int = -4;
-pub const BAD_FD: c_int = -5;
-pub const CONNECT_FAILED: c_int = -6;
-pub const WOULD_BLOCK: c_int = -7;
-pub const BAD_SOCKADDR: c_int = -8;
-pub const SEND_BEFORE_CONNECT: c_int = -9;
+pub const RW_OK: c_int = 0;
+pub const RW_TL_ERR: c_int = -1;
+pub const RW_WRONG_STATE: c_int = -2;
+pub const RW_LOCK_POISONED: c_int = -3;
+pub const RW_CLOSE_FAIL: c_int = -4;
+pub const RW_BAD_FD: c_int = -5;
+pub const RW_CONNECT_FAILED: c_int = -6;
+pub const RW_WOULD_BLOCK: c_int = -7;
+pub const RW_BAD_SOCKADDR: c_int = -8;
 
 ///////////////////// REOWOLF //////////////////////////
 
@@ -223,10 +223,10 @@ pub unsafe extern "C" fn connector_add_component(
         &*slice_from_raw_parts(ident_ptr, ident_len),
         &*slice_from_raw_parts(ports_ptr, ports_len),
     ) {
-        Ok(()) => ERR_OK,
+        Ok(()) => RW_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -251,11 +251,11 @@ pub unsafe extern "C" fn connector_add_net_port(
             if !port.is_null() {
                 port.write(p);
             }
-            ERR_OK
+            RW_OK
         }
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -284,11 +284,11 @@ pub unsafe extern "C" fn connector_add_udp_mediator_component(
             if !getter.is_null() {
                 getter.write(g);
             }
-            ERR_OK
+            RW_OK
         }
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -304,10 +304,10 @@ pub unsafe extern "C" fn connector_connect(
     let option_timeout_millis: Option<u64> = TryFrom::try_from(timeout_millis).ok();
     let timeout = option_timeout_millis.map(Duration::from_millis);
     match connector.connect(timeout) {
-        Ok(()) => ERR_OK,
+        Ok(()) => RW_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -354,10 +354,10 @@ pub unsafe extern "C" fn connector_put_bytes(
     StoredError::tl_clear();
     let bytes = &*slice_from_raw_parts(bytes_ptr, bytes_len);
     match connector.put(port, Payload::from(bytes)) {
-        Ok(()) => ERR_OK,
+        Ok(()) => RW_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -366,10 +366,10 @@ pub unsafe extern "C" fn connector_put_bytes(
 pub unsafe extern "C" fn connector_get(connector: &mut Connector, port: PortId) -> c_int {
     StoredError::tl_clear();
     match connector.get(port) {
-        Ok(()) => ERR_OK,
+        Ok(()) => RW_OK,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF
+            RW_TL_ERR
         }
     }
 }
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn connector_next_batch(connector: &mut Connector) -> isiz
         Ok(n) => n as isize,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF as isize
+            RW_TL_ERR as isize
         }
     }
 }
@@ -395,7 +395,7 @@ pub unsafe extern "C" fn connector_sync(connector: &mut Connector, timeout_milli
         Ok(n) => n as isize,
         Err(err) => {
             StoredError::tl_debug_store(&err);
-            ERR_REOWOLF as isize
+            RW_TL_ERR as isize
         }
     }
 }

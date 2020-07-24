@@ -8,21 +8,23 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define BAD_FD -5
+#define RW_BAD_FD -5
 
-#define CC_MAP_LOCK_POISONED -3
+#define RW_BAD_SOCKADDR -8
 
-#define CLOSE_FAIL -4
+#define RW_CLOSE_FAIL -4
 
-#define CONNECT_FAILED -6
+#define RW_CONNECT_FAILED -6
 
-#define ERR_OK 0
+#define RW_LOCK_POISONED -3
 
-#define ERR_REOWOLF -1
+#define RW_OK 0
 
-#define WOULD_BLOCK -7
+#define RW_TL_ERR -1
 
-#define WRONG_STATE -2
+#define RW_WOULD_BLOCK -7
+
+#define RW_WRONG_STATE -2
 
 typedef enum {
   EndpointPolarity_Active,
@@ -100,11 +102,11 @@ void connector_add_port_pair(Connector *connector, PortId *out_putter, PortId *o
  * - where P is a Putter port that sends messages into the socket
  * - where G is a Getter port that recvs messages from the socket
  */
-int connector_add_udp_port_pair(Connector *connector,
-                                PortId *putter,
-                                PortId *getter,
-                                FfiSocketAddr local_addr,
-                                FfiSocketAddr peer_addr);
+int connector_add_udp_mediator_component(Connector *connector,
+                                         PortId *putter,
+                                         PortId *getter,
+                                         FfiSocketAddr local_addr,
+                                         FfiSocketAddr peer_addr);
 
 /**
  * Connects this connector to the distributed system of connectors reachable through endpoints,
@@ -172,31 +174,5 @@ Arc_ProtocolDescription *protocol_description_parse(const uint8_t *pdl, uintptr_
  * If len is NULL, it will not written to.
  */
 const uint8_t *reowolf_error_peek(uintptr_t *len);
-
-int rw_bind(int fd, const SocketAddr *local_addr, uintptr_t _addr_len);
-
-int rw_close(int fd, int _how);
-
-int rw_connect(int fd, const SocketAddr *peer_addr, uintptr_t _address_len);
-
-intptr_t rw_recv(int fd, void *bytes_ptr, uintptr_t bytes_len, int _flags);
-
-intptr_t rw_recvfrom(int fd,
-                     void *bytes_ptr,
-                     uintptr_t bytes_len,
-                     int _flags,
-                     const SocketAddr *peer_addr,
-                     uintptr_t _addr_len);
-
-intptr_t rw_send(int fd, const void *bytes_ptr, uintptr_t bytes_len, int _flags);
-
-intptr_t rw_sendto(int fd,
-                   void *bytes_ptr,
-                   uintptr_t bytes_len,
-                   int _flags,
-                   const SocketAddr *peer_addr,
-                   uintptr_t _addr_len);
-
-int rw_socket(int _domain, int _type);
 
 #endif /* REOWOLF_HEADER_DEFINED */
