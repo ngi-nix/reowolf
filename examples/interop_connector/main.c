@@ -7,13 +7,17 @@ int main(int argc, char** argv) {
   Arc_ProtocolDescription * pd = protocol_description_parse("", 0);
   Connector * c = connector_new(pd);
   PortId putter_a, putter_b;
-  FfiSocketAddr addresses[4];
-  /* (address structure initializations omitted) */
+  FfiSocketAddr addresses[4] = {
+    {{127, 0, 0, 1}, 8000},
+    {{127, 0, 0, 1}, 8001},
+    {{127, 0, 0, 1}, 8002},
+    {{127, 0, 0, 1}, 8003},
+  };
   
   // putter_a to UDP mediator (getter id discarded)
   // with local addresses[0] and peer addresses[1] 
-  connector_add_udp_mediator_component(c, &putter_a, NULL, addresses[0], addresses[1]);
-  connector_add_udp_mediator_component(c, &putter_b, NULL, addresses[2], addresses[3]);
+  connector_add_udp_mediator_component(c, &putter_a, NULL, addresses[1], addresses[0]);
+  connector_add_udp_mediator_component(c, &putter_b, NULL, addresses[3], addresses[2]);
   connector_connect(c, -1);
   
   // --- communication --- 
