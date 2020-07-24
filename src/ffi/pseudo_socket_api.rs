@@ -3,6 +3,13 @@ use super::*;
 use core::ops::DerefMut;
 use libc::{sockaddr, socklen_t};
 use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
+use std::{
+    collections::HashMap,
+    ffi::c_void,
+    net::SocketAddr,
+    os::raw::c_int,
+    sync::{Mutex, RwLock},
+};
 ///////////////////////////////////////////////////////////////////
 
 struct FdAllocator {
@@ -20,7 +27,7 @@ struct ConnectorComplex {
 }
 #[derive(Default)]
 struct CcMap {
-    fd_to_cc: HashMap<c_int, RwLock<ConnectorComplex>>,
+    fd_to_cc: HashMap<c_int, Mutex<ConnectorComplex>>,
     fd_allocator: FdAllocator,
 }
 ///////////////////////////////////////////////////////////////////
@@ -72,8 +79,7 @@ impl ConnectorComplex {
 }
 /////////////////////////////////
 #[no_mangle]
-pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
-    // ignoring domain and type
+pub extern "C" fn rw_socket(_domain: c_int, _type: c_int, _protocol: c_int) -> c_int {
     // get writer lock
     let mut w = if let Ok(w) = CC_MAP.write() { w } else { return LOCK_POISONED };
     let fd = w.fd_allocator.alloc();
@@ -85,7 +91,7 @@ pub extern "C" fn rw_socket(_domain: c_int, _type: c_int) -> c_int {
         ),
         phased: ConnectorComplexPhased::Setup { local: None, peer: None },
     };
-    w.fd_to_cc.insert(fd, RwLock::new(cc));
+    w.fd_to_cc.insert(fd, Mutex::new(cc));
     fd
 }
 #[no_mangle]
@@ -110,7 +116,7 @@ pub unsafe extern "C" fn rw_bind(fd: c_int, addr: *const sockaddr, addr_len: soc
     // get outer reader, inner writer locks
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
-    let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED };
+    let mut cc = if let Ok(cc) = cc.lock() { cc } else { return LOCK_POISONED };
     match &mut cc.phased {
         ConnectorComplexPhased::Communication { .. } => WRONG_STATE,
         ConnectorComplexPhased::Setup { local, .. } => {
@@ -134,7 +140,7 @@ pub unsafe extern "C" fn rw_connect(
     // get outer reader, inner writer locks
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD };
-    let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED };
+    let mut cc = if let Ok(cc) = cc.lock() { cc } else { return LOCK_POISONED };
     match &mut cc.phased {
         ConnectorComplexPhased::Communication { .. } => WRONG_STATE,
         ConnectorComplexPhased::Setup { peer, .. } => {
@@ -155,7 +161,7 @@ pub unsafe extern "C" fn rw_send(
     // get outer reader, inner writer locks
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
-    let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED as isize };
+    let mut cc = if let Ok(cc) = cc.lock() { cc } else { return LOCK_POISONED as isize };
     let ConnectorComplex { connector, phased } = cc.deref_mut();
     match phased {
         ConnectorComplexPhased::Setup { .. } => WRONG_STATE as isize,
@@ -178,7 +184,7 @@ pub unsafe extern "C" fn rw_recv(
     // get outer reader, inner writer locks
     let r = if let Ok(r) = CC_MAP.read() { r } else { return LOCK_POISONED as isize };
     let cc = if let Some(cc) = r.fd_to_cc.get(&fd) { cc } else { return BAD_FD as isize };
-    let mut cc = if let Ok(cc) = cc.write() { cc } else { return LOCK_POISONED as isize };
+    let mut cc = if let Ok(cc) = cc.lock() { cc } else { return LOCK_POISONED as isize };
     let ConnectorComplex { connector, phased } = cc.deref_mut();
     match phased {
         ConnectorComplexPhased::Setup { .. } => WRONG_STATE as isize,
