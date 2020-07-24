@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
 	connector_sync(c, -1);
 	size_t msg_len;
 	const char * msg_ptr = connector_gotten_bytes(c, getter, &msg_len);
-	printf("Got msg `%.*s`\n", msg_len, msg_ptr);
+	printf("Got msg `%.*s`\n", (int) msg_len, msg_ptr);
 	
 	
 	protocol_description_destroy(pd);

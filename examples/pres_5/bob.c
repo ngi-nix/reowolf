@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
 
 		size_t msg_len = 0;
 		const char * msg_ptr = connector_gotten_bytes(c, ports[3], &msg_len);
-		printf("Got msg `%.*s`\n", msg_len, msg_ptr);
+		printf("Got msg `%.*s`\n", (int) msg_len, msg_ptr);
 	}
 	
 	printf("Exiting\n");

@@ -1,17 +1,19 @@
-#include <sys/socket.h> // socket addresses, constants
-#include <stdio.h>
+#include <netinet/in.h> // definies socketaddr_in
+#include <stdio.h>  // defines printf
+#include <stdlib.h> // defines malloc, free
+#include <unistd.h> // defines close
 #define BUFSIZE 512
 int main() {
     // --- setup ---
-    struct sockaddr_in local, peer; 
+    struct sockaddr_in addrs[2]; 
     /* (address structure initializations omitted) */
     int fd = socket(AF_INET, SOCK_DGRAM, 0); 
-    bind(fd, (const struct sockaddr *)&local, sizeof(local));
-    connect(fd, (const struct sockaddr *)&peer, sizeof(peer));
+    bind(fd, (const struct sockaddr *)&addrs[0], sizeof(addrs[0]));
+    connect(fd, (const struct sockaddr *)&addrs[1], sizeof(addrs[1]));
     // --- communication ---
-    char buffer = malloc(BUFSIZE);
+    char * buffer = malloc(BUFSIZE);
     size_t msglen, i;
-    msglen = recv(fd, (const void *)buffer, BUFSIZE, 0);
+    msglen = recv(fd, (void *)buffer, BUFSIZE, 0);
     for(i=0; i<msglen; i++) {
         printf("%02X", buffer[i]);
     }

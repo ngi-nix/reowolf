@@ -5,13 +5,13 @@ for c_file in glob.glob(script_path + "/*/*.c", recursive=False):
   args = [
     "gcc",          # compiler
     "-std=c11",     # C11 mode
-    "-L",           # lib path flag
-    "./",           # where to look for libs
-    "-lreowolf_rs", # add lib called "reowolf_rs"
     "-Wl,-R./",     # pass -R flag to linker: produce relocatable object
     c_file,         # input source file
     "-o",           # output flag
-    c_file[:-2]     # output filename
+    c_file[:-2],    # output filename
+    "-L",           # lib path flag
+    "./",           # where to look for libs
+    "-lreowolf_rs"  # add lib called "reowolf_rs"
   ];
   subprocess.run(args)
 input("Blocking until newline...");

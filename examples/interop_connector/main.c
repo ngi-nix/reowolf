@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <string.h>
-#include "reowolf.h"
+#include "../../reowolf.h"
 
 int main(int argc, char** argv) {
   // --- setup ---

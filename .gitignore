@@ -7,5 +7,10 @@ examples/*/*.exe
 examples/*.dll
 examples/reowolf*
 examples/*.txt
+examples/lib*
+examples/lib*.*
+examples/*/amy
+examples/*/bob
+examples/*/main
 logs/*
 logs/*/*

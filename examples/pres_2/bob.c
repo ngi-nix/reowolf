@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 	// Read our received message
 	size_t msg_len;
 	const char * msg_ptr = connector_gotten_bytes(c, ports[2], &msg_len);
-	printf("Got msg `%.*s`\n", msg_len, msg_ptr);
+	printf("Got msg `%.*s`\n", (int) msg_len, msg_ptr);
 	
 	printf("Exiting\n");
 	protocol_description_destroy(pd);

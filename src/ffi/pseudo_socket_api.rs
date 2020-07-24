@@ -2,7 +2,6 @@ use super::*;
 
 use core::ops::DerefMut;
 use libc::{sockaddr, socklen_t};
-use std::{collections::HashMap, ffi::c_void, net::SocketAddr, os::raw::c_int, sync::RwLock};
 use std::{
     collections::HashMap,
     ffi::c_void,

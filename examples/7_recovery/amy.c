@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
 	printf("Error code %d with string `%s`\n", err, reowolf_error_peek(NULL));
 	size_t msg_len;
 	const char * msg_ptr = connector_gotten_bytes(c, getter, &msg_len);
-	printf("Got msg `%.*s`\n", msg_len, msg_ptr);
+	printf("Got msg `%.*s`\n", (int) msg_len, msg_ptr);
 	
 	protocol_description_destroy(pd);
 	connector_destroy(c);

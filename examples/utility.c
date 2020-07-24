@@ -7,7 +7,7 @@
 
 size_t get_user_msg(char * buf, size_t cap) {
 	memset(buf, 0, cap);
-	printf("Insert a msg of max len %d: ", cap);
+	printf("Insert a msg of max len %zu: ", cap);
 	fgets(buf, cap, stdin);
 	for(size_t len = 0; len<cap; len++)
 		if(buf[len]==0 || buf[len]=='\n')
