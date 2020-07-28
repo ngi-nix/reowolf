@@ -2099,27 +2099,27 @@ impl Statement {
     }
     pub fn link_next(&mut self, next: StatementId) {
         match self {
-            Statement::Block(stmt) => panic!(),
+            Statement::Block(_) => todo!(),
             Statement::Local(stmt) => match stmt {
                 LocalStatement::Channel(stmt) => stmt.next = Some(next),
                 LocalStatement::Memory(stmt) => stmt.next = Some(next),
             },
             Statement::Skip(stmt) => stmt.next = Some(next),
-            Statement::Labeled(stmt) => panic!(),
-            Statement::If(stmt) => panic!(),
             Statement::EndIf(stmt) => stmt.next = Some(next),
-            Statement::While(stmt) => panic!(), // although while has a next field, it is linked manually
             Statement::EndWhile(stmt) => stmt.next = Some(next),
-            Statement::Break(stmt) => panic!(),
-            Statement::Continue(stmt) => panic!(),
-            Statement::Synchronous(stmt) => panic!(),
             Statement::EndSynchronous(stmt) => stmt.next = Some(next),
-            Statement::Return(stmt) => panic!(),
             Statement::Assert(stmt) => stmt.next = Some(next),
-            Statement::Goto(stmt) => panic!(),
             Statement::New(stmt) => stmt.next = Some(next),
             Statement::Put(stmt) => stmt.next = Some(next),
             Statement::Expression(stmt) => stmt.next = Some(next),
+            Statement::Return(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::Synchronous(_)
+            | Statement::Goto(_)
+            | Statement::While(_)
+            | Statement::Labeled(_)
+            | Statement::If(_) => unreachable!(),
         }
     }
 }

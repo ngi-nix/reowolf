@@ -1558,7 +1558,7 @@ impl Store {
                 Ok(value)
             }
             Expression::Indexing(expr) => self.get(h, ctx, expr.this.upcast()),
-            Expression::Slicing(expr) => unimplemented!(),
+            Expression::Slicing(_expr) => unimplemented!(),
             Expression::Select(expr) => self.get(h, ctx, expr.this.upcast()),
             Expression::Array(expr) => {
                 let mut elements = Vec::new();
@@ -1590,7 +1590,7 @@ impl Store {
                         Some(result) => Ok(result),
                     }
                 }
-                Method::Symbolic(symbol) => unimplemented!(),
+                Method::Symbolic(_symbol) => unimplemented!(),
             },
             Expression::Variable(expr) => self.get(h, ctx, expr.this.upcast()),
         }
@@ -1771,37 +1771,36 @@ impl Prompt {
             }
             Statement::Expression(stmt) => {
                 // Evaluate expression
-                let value = self.store.eval(h, ctx, stmt.expression)?;
+                let _value = self.store.eval(h, ctx, stmt.expression)?;
                 // Continue to next statement
                 self.position = stmt.next;
                 Err(EvalContinuation::Stepping)
             }
         }
     }
-    fn compute_function(_h: &Heap, _fun: FunctionId, _args: &Vec<Value>) -> Option<Value> {
-        todo!()
-        // let mut prompt = Self::new(h, fun.upcast(), args);
-        // let mut context = EvalContext::None;
-        // loop {
-        //     let result = prompt.step(h, &mut context);
-        //     match result {
-        //         Ok(val) => return Some(val),
-        //         Err(cont) => match cont {
-        //             EvalContinuation::Stepping => continue,
-        //             EvalContinuation::Inconsistent => return None,
-        //             // Functions never terminate without returning
-        //             EvalContinuation::Terminal => unreachable!(),
-        //             // Functions never encounter any blocking behavior
-        //             EvalContinuation::SyncBlockStart => unreachable!(),
-        //             EvalContinuation::SyncBlockEnd => unreachable!(),
-        //             EvalContinuation::NewComponent(_, _) => unreachable!(),
-        //             EvalContinuation::BlockFires(val) => unreachable!(),
-        //             EvalContinuation::BlockGet(val) => unreachable!(),
-        //             EvalContinuation::Put(port, msg) => unreachable!(),
-        //         },
-        //     }
-        // }
-    }
+    // fn compute_function(_h: &Heap, _fun: FunctionId, _args: &Vec<Value>) -> Option<Value> {
+    // let mut prompt = Self::new(h, fun.upcast(), args);
+    // let mut context = EvalContext::None;
+    // loop {
+    //     let result = prompt.step(h, &mut context);
+    //     match result {
+    //         Ok(val) => return Some(val),
+    //         Err(cont) => match cont {
+    //             EvalContinuation::Stepping => continue,
+    //             EvalContinuation::Inconsistent => return None,
+    //             // Functions never terminate without returning
+    //             EvalContinuation::Terminal => unreachable!(),
+    //             // Functions never encounter any blocking behavior
+    //             EvalContinuation::SyncBlockStart => unreachable!(),
+    //             EvalContinuation::SyncBlockEnd => unreachable!(),
+    //             EvalContinuation::NewComponent(_, _) => unreachable!(),
+    //             EvalContinuation::BlockFires(val) => unreachable!(),
+    //             EvalContinuation::BlockGet(val) => unreachable!(),
+    //             EvalContinuation::Put(port, msg) => unreachable!(),
+    //         },
+    //     }
+    // }
+    // }
 }
 
 // #[cfg(test)]

@@ -47,9 +47,7 @@ typedef uint32_t U32Suffix;
 typedef struct {
   ConnectorId connector_id;
   U32Suffix u32_suffix;
-} Id;
-
-typedef Id PortId;
+} PortId;
 
 typedef struct {
   uint8_t ipv4[4];

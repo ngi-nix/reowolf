@@ -625,10 +625,6 @@ impl SpecVal {
         self == Self::FIRING
         // all else treated as SILENT
     }
-    fn nth_domain_element(n: usize) -> Self {
-        let n: u16 = n.try_into().unwrap();
-        SpecVal(n)
-    }
     fn iter_domain() -> impl Iterator<Item = Self> {
         (0..).map(SpecVal)
     }

@@ -294,19 +294,19 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
         Statement::Skip(stmt) => this.visit_skip_statement(h, stmt.this),
         Statement::Labeled(stmt) => this.visit_labeled_statement(h, stmt.this),
         Statement::If(stmt) => this.visit_if_statement(h, stmt.this),
-        Statement::EndIf(stmt) => unreachable!(), // pseudo-statement
         Statement::While(stmt) => this.visit_while_statement(h, stmt.this),
-        Statement::EndWhile(stmt) => unreachable!(), // pseudo-statement
         Statement::Break(stmt) => this.visit_break_statement(h, stmt.this),
         Statement::Continue(stmt) => this.visit_continue_statement(h, stmt.this),
         Statement::Synchronous(stmt) => this.visit_synchronous_statement(h, stmt.this),
-        Statement::EndSynchronous(stmt) => unreachable!(), // pseudo-statement
         Statement::Return(stmt) => this.visit_return_statement(h, stmt.this),
         Statement::Assert(stmt) => this.visit_assert_statement(h, stmt.this),
         Statement::Goto(stmt) => this.visit_goto_statement(h, stmt.this),
         Statement::New(stmt) => this.visit_new_statement(h, stmt.this),
         Statement::Put(stmt) => this.visit_put_statement(h, stmt.this),
         Statement::Expression(stmt) => this.visit_expression_statement(h, stmt.this),
+        Statement::EndSynchronous(_) | Statement::EndWhile(_) | Statement::EndIf(_) => {
+            unreachable!() // pseudo-statement
+        }
     }
 }
 
@@ -796,7 +796,7 @@ impl Visitor for BuildSymbolDeclarations {
         h[pd].declarations.append(&mut self.declarations);
         Ok(())
     }
-    fn visit_import(&mut self, h: &mut Heap, import: ImportId) -> VisitorResult {
+    fn visit_import(&mut self, _h: &mut Heap, _import: ImportId) -> VisitorResult {
         todo!()
         // let vec = library::get_declarations(h, import)?;
         // // Destructively iterate over the vector
@@ -926,7 +926,7 @@ impl Visitor for BuildScope {
         self.scope = old;
         Ok(())
     }
-    fn visit_expression(&mut self, h: &mut Heap, expr: ExpressionId) -> VisitorResult {
+    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
         Ok(())
     }
 }
@@ -1007,7 +1007,7 @@ impl Visitor for ResolveVariables {
         recursive_memory_statement(self, h, stmt)?;
         // Finally, we may add the variable to the scope, which is guaranteed to be a block
         {
-            let mut block = &mut h[self.scope.unwrap().to_block()];
+            let block = &mut h[self.scope.unwrap().to_block()];
             block.locals.push(var);
         }
         Ok(())
@@ -1022,7 +1022,7 @@ impl Visitor for ResolveVariables {
             if check_duplicate.is_some() {
                 return Err(ParseError::new(h[id].position, "Declared variable clash"));
             }
-            let mut block = &mut h[self.scope.unwrap().to_block()];
+            let block = &mut h[self.scope.unwrap().to_block()];
             block.locals.push(var);
         }
         // Then handle the to variable (which may not be the same as the from)
@@ -1033,7 +1033,7 @@ impl Visitor for ResolveVariables {
             if check_duplicate.is_some() {
                 return Err(ParseError::new(h[id].position, "Declared variable clash"));
             }
-            let mut block = &mut h[self.scope.unwrap().to_block()];
+            let block = &mut h[self.scope.unwrap().to_block()];
             block.locals.push(var);
         }
         Ok(())
@@ -1179,33 +1179,33 @@ impl Visitor for LinkStatements {
         self.prev = Some(UniqueStatementId(pseudo));
         Ok(())
     }
-    fn visit_return_statement(&mut self, h: &mut Heap, stmt: ReturnStatementId) -> VisitorResult {
+    fn visit_return_statement(&mut self, _h: &mut Heap, _stmt: ReturnStatementId) -> VisitorResult {
         Ok(())
     }
-    fn visit_assert_statement(&mut self, h: &mut Heap, stmt: AssertStatementId) -> VisitorResult {
+    fn visit_assert_statement(&mut self, _h: &mut Heap, stmt: AssertStatementId) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
     fn visit_goto_statement(&mut self, _h: &mut Heap, _stmt: GotoStatementId) -> VisitorResult {
         Ok(())
     }
-    fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
+    fn visit_new_statement(&mut self, _h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
-    fn visit_put_statement(&mut self, h: &mut Heap, stmt: PutStatementId) -> VisitorResult {
+    fn visit_put_statement(&mut self, _h: &mut Heap, stmt: PutStatementId) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
     fn visit_expression_statement(
         &mut self,
-        h: &mut Heap,
+        _h: &mut Heap,
         stmt: ExpressionStatementId,
     ) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
-    fn visit_expression(&mut self, h: &mut Heap, expr: ExpressionId) -> VisitorResult {
+    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
         Ok(())
     }
 }
@@ -1253,7 +1253,7 @@ impl Visitor for BuildLabels {
         self.sync_enclosure = None;
         Ok(())
     }
-    fn visit_expression(&mut self, h: &mut Heap, expr: ExpressionId) -> VisitorResult {
+    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
         Ok(())
     }
 }
@@ -1436,7 +1436,7 @@ impl Visitor for ResolveLabels {
         h[stmt].target = Some(target);
         Ok(())
     }
-    fn visit_expression(&mut self, h: &mut Heap, expr: ExpressionId) -> VisitorResult {
+    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
         Ok(())
     }
 }
@@ -1564,8 +1564,8 @@ impl Visitor for AssignableExpressions {
     }
     fn visit_variable_expression(
         &mut self,
-        h: &mut Heap,
-        expr: VariableExpressionId,
+        _h: &mut Heap,
+        _expr: VariableExpressionId,
     ) -> VisitorResult {
         Ok(())
     }
