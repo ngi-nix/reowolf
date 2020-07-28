@@ -1,8 +1,5 @@
-
 #include "../../reowolf.h"
 #include "../utility.c"
-
-
 int main(int argc, char** argv) {
 	char msgbuf[64];
 	// ask user what message to send
@@ -16,7 +13,7 @@ int main(int argc, char** argv) {
 	
 	// ... with 1 outgoing network connection
 	PortId p0;
-	FfiSocketAddr addr = {{127,0,0,1}, 8000};
+	FfiSocketAddr addr = {{127, 0, 0, 1}, 8000};
 	connector_add_net_port(c, &p0, addr, Polarity_Putter, EndpointPolarity_Passive);
 	rw_err_peek(c);
 	

@@ -1,8 +1,5 @@
-
 #include "../../reowolf.h"
 #include "../utility.c"
-
-
 int main(int argc, char** argv) {
 	// Create a connector, configured with our (trivial) protocol.
 	Arc_ProtocolDescription * pd = protocol_description_parse("", 0);

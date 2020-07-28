@@ -37,12 +37,14 @@ crossbeam-utils = "0.7.2"
 lazy_static = "1.4.0"
 
 [lib]
-# compile target: dynamically linked library using C ABI
-crate-type = ["cdylib"]
+crate-type = [
+	"rlib", # for use as a Rust dependency. 
+	"cdylib" # for FFI use, typically C.
+]
 
 [features]
 default = ["ffi", "session_optimization"]
 ffi = [] # see src/ffi/mod.rs
-ffi_pseudo_socket_api = ["ffi", "libc", "os_socketaddr"]# see src/ffi/pseudo_socket_api.rs
+ffi_pseudo_socket_api = ["ffi", "libc", "os_socketaddr"]# see src/ffi/pseudo_socket_api.rs.
 endpoint_logging = [] # see src/macros.rs
 session_optimization = [] # see src/runtime/setup.rs

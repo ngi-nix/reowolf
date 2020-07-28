@@ -1,3 +1,8 @@
+/* This example demonstrates:
+- conventional UDP socket API can be used in a connection-oriented fashion
+    - first setup with `bind` and `connect`
+    - henceforth communicating with connected peer using `send` and `recv` in blocking mode.
+*/
 #include <netinet/in.h> // definies socketaddr_in
 #include <stdio.h>  // defines printf
 #include <stdlib.h> // defines malloc, free

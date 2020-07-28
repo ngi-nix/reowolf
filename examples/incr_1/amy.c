@@ -1,3 +1,8 @@
+/* This example demonstrates:
+- how protocol description structures are created and destroyed
+- how connectors are created and destroyed
+- there are procedures allowing for debugging the states of connectors
+*/
 #include <stdio.h>
 #include <string.h>
 #include "../../reowolf.h"

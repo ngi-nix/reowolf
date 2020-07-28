@@ -1,3 +1,9 @@
+/* This example demonstrates:
+- Reowolf's pseudo-socket API mimics the API of UDP sockets
+- This example corresponds closely with that of the socket API, differing only in:
+    1. an added import of the pseudo-socket header file
+    2. (pseudo-)socket operations' identifiers are prefixed with `rw_` (short for "Reowolf"). 
+*/
 #include <netinet/in.h> // definies socketaddr_in
 #include <stdio.h>  // defines printf
 #include <stdlib.h> // defines malloc, free

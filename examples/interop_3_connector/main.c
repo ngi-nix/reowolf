@@ -1,3 +1,8 @@
+/* This example demonstrates:
+- connector API can create UDP mediator components, each given a BIND and CONNECT socket address,
+  which communicates via a returned putter and getter port pair.
+- messages passed to the UDP mediator are forwarded as UDP datagrams into the network.
+*/
 #include <stdio.h>
 #include <string.h>
 #include "../../reowolf.h"

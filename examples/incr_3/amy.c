@@ -1,3 +1,6 @@
+/* This example demonstrates:
+- Connectors begin in a "setup" state, which is existing with `connector_connect`
+*/
 #include <stdio.h>
 #include <string.h>
 #include "../../reowolf.h"

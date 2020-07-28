@@ -1,3 +1,7 @@
+/* This example demonstrates:
+- protocol descriptions are parsed from ascii text expressed in Reowolf's protocol language, PDL
+- protocol descriptions load their PDL at runtime; component's definitions can be changed without recompiling the main program
+*/
 #include <stdio.h>
 #include <string.h>
 #include "../../reowolf.h"

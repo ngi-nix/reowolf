@@ -1,8 +1,5 @@
-
 #include "../../reowolf.h"
 #include "../utility.c"
-
-
 int main(int argc, char** argv) {
 	// Create a connector, configured with a protocol defined in a file
 	char * pdl = buffer_pdl("./eg_protocols.pdl");
