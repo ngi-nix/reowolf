@@ -4,7 +4,7 @@ This directory contains a set of programs for demonstrating the use of connector
 ## Setting up and running
 First, ensure that the Reowolf has been compiled, such that a dylib is present in `reowolf/target/release/`; see the parent directory for instructions on compiling the library.
 
-The examples are designed to be run with the examples folder as your working directory (`reowolf/examples`), containing a local copy of the dylic. Two convenience scripts are made available for copying the library: `cpy_dll.sh` and `cpy_so.sh` for platforms Linux and Windows respectively.
+The examples are designed to be run with the examples folder as your working directory (`reowolf/examples`), containing a local copy of the dylib. Two convenience scripts are made available for copying the library: `cpy_dll.sh` and `cpy_so.sh` for platforms Linux and Windows respectively.
 
 Compiling the example programs is done using Python 3, with `python3 ./make.py`, which will crawl the example directory's children and compiling any C source files. 
 

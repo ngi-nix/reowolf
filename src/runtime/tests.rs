@@ -924,3 +924,65 @@ fn many_rounds_mem() {
         c.sync(SEC1).unwrap();
     }
 }
+
+#[test]
+fn pdl_reo_lossy() {
+    let pdl = b"
+    primitive lossy(in a, out b) {
+        while(true) synchronous {
+            msg m = null;
+            if(fires(a)) {
+                m = get(a);
+                if(fires(b)) {
+                    put(b, m);
+                }
+            }
+        }
+    }
+    ";
+    reowolf::ProtocolDescription::parse(pdl).unwrap();
+}
+
+#[test]
+fn pdl_reo_fifo1() {
+    let pdl = b"
+    primitive fifo1(in a, out b) {
+        msg m = null;
+        while(true) synchronous {
+            if(m == null) {
+                if(fires(a)) m=get(a);
+            } else {
+                if(fires(b)) put(b, m);
+                m = null;
+            }
+        }
+    }
+    ";
+    reowolf::ProtocolDescription::parse(pdl).unwrap();
+}
+
+#[test]
+fn pdl_reo_fifo1_full() {
+    let pdl = b"
+    primitive fifo1_full(in a, out b) {
+        msg m = create(0);
+        while(true) synchronous {
+            if(m == null) {
+                if(fires(a)) m=get(a);
+            } else {
+                if(fires(b)) put(b, m);
+                m = null;
+            }
+        }
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = Connector::new(Box::new(DummyLogger), Arc::new(pd), 0);
+    let [_p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    c.add_component(b"fifo1_full", &[g0, p1]).unwrap();
+    c.connect(None).unwrap();
+    c.get(g1).unwrap();
+    c.sync(None).unwrap();
+    assert_eq!(0, c.gotten(g1).unwrap().len());
+}
