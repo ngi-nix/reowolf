@@ -21,20 +21,20 @@ primitive forward(in i, out o) {
 primitive sync(in i, out o) {
     while(true) synchronous() if(fires(i)) put(o, get(i));
 }
-primitive alternator_2(in i, out l, out r) {
+primitive alternator2(in i, out l, out r) {
     while(true) {
         synchronous() if(fires(i)) put(l, get(i));
         synchronous() if(fires(i)) put(r, get(i));
     }
 }
-primitive replicator_2(in i, out l, out r) {
+primitive replicator2(in i, out l, out r) {
     while(true) synchronous() if(fires(i)) {
         msg m = get(i);
         put(l, m);
         put(r, m);
     }
 }
-primitive merger_2(in l, in r, out o) {
+primitive merger2(in l, in r, out o) {
     while(true) synchronous {
         if(fires(l))      put(o, get(l));
         else if(fires(r)) put(o, get(r));

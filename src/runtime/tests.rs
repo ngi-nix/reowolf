@@ -962,9 +962,9 @@ fn pdl_reo_fifo1() {
 }
 
 #[test]
-fn pdl_reo_fifo1_full() {
+fn pdl_reo_fifo1full() {
     let pdl = b"
-    primitive fifo1_full(in a, out b) {
+    primitive fifo1full(in a, out b) {
         msg m = create(0);
         while(true) synchronous {
             if(m == null) {
@@ -980,7 +980,7 @@ fn pdl_reo_fifo1_full() {
     let mut c = Connector::new(Box::new(DummyLogger), Arc::new(pd), 0);
     let [_p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"fifo1_full", &[g0, p1]).unwrap();
+    c.add_component(b"fifo1full", &[g0, p1]).unwrap();
     c.connect(None).unwrap();
     c.get(g1).unwrap();
     c.sync(None).unwrap();
