@@ -33,7 +33,8 @@ impl NetEndpoint {
                 Err(_e) => return Err(Nee::BrokenNetEndpoint),
             }
         }
-        endptlog!(
+        log!(
+            @ENDPT,
             logger,
             "Inbox bytes [{:x?}| {:x?}]",
             DenseDebugHex(&self.inbox[..before_len]),
@@ -45,7 +46,8 @@ impl NetEndpoint {
             Ok(msg) => {
                 let msg_size = monitored.bytes_read();
                 self.inbox.drain(0..(msg_size.try_into().unwrap()));
-                endptlog!(
+                log!(
+                    @ENDPT,
                     logger,
                     "Yielding msg. Inbox len {}-{}=={}: [{:?}]",
                     self.inbox.len() + msg_size,
@@ -123,7 +125,7 @@ impl EndpointManager {
         ///////////////////////////////////////////
         // try yield undelayed net message
         if let Some(tup) = self.undelayed_messages.pop() {
-            endptlog!(logger, "RECV undelayed_msg {:?}", &tup);
+            log!(@ENDPT, logger, "RECV undelayed_msg {:?}", &tup);
             return Ok(tup);
         }
         loop {
@@ -273,7 +275,7 @@ impl EndpointManager {
                 .try_recv(logger)
                 .map_err(|error| TryRecvAnyNetError { error, index })?
             {
-                endptlog!(logger, "RECV polled_undrained {:?}", &msg);
+                log!(@ENDPT, logger, "RECV polled_undrained {:?}", &msg);
                 if !net_endpoint.inbox.is_empty() {
                     // there may be another message waiting!
                     self.net_endpoint_store.polled_undrained.insert(index);
@@ -304,7 +306,8 @@ impl EndpointManager {
                 }
                 TokenTarget::NetEndpoint { index } => {
                     self.net_endpoint_store.polled_undrained.insert(index);
-                    endptlog!(
+                    log!(
+                        @ENDPT,
                         logger,
                         "RECV poll event {:?} for NET endpoint index {:?}. undrained: {:?}",
                         &event,
@@ -314,7 +317,8 @@ impl EndpointManager {
                 }
                 TokenTarget::UdpEndpoint { index } => {
                     self.udp_endpoint_store.polled_undrained.insert(index);
-                    endptlog!(
+                    log!(
+                        @ENDPT,
                         logger,
                         "RECV poll event {:?} for UDP endpoint index {:?}. undrained: {:?}",
                         &event,

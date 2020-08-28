@@ -1,16 +1,19 @@
-macro_rules! endptlog {
-    ($logger:expr, $($arg:tt)*) => {{
-    	if cfg!(feature = "endpoint_logging") {
-	        if let Some(w) = $logger.line_writer() {
-	        	let _ = writeln!(w, $($arg)*);
-	        }
-	    }
-    }};
-}
+/*
+Change the definition of these macros to control the logging level statically
+*/
+
 macro_rules! log {
+    (@ENDPT, $logger:expr, $($arg:tt)*) => {{
+        // ignore
+    }};
+    (@COMM_NB, $logger:expr, $($arg:tt)*) => {{
+        if let Some(w) = $logger.line_writer() {
+            let _ = writeln!(w, $($arg)*);
+        }
+    }};
     ($logger:expr, $($arg:tt)*) => {{
-    	if let Some(w) = $logger.line_writer() {
-        	let _ = writeln!(w, $($arg)*);
-    	}
+        if let Some(w) = $logger.line_writer() {
+            let _ = writeln!(w, $($arg)*);
+        }
     }};
 }
