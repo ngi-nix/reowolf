@@ -963,6 +963,7 @@ fn pdl_reo_fifo1() {
 
 #[test]
 fn pdl_reo_fifo1full() {
+    let test_log_path = Path::new("./logs/pdl_reo_fifo1full");
     let pdl = b"
     primitive fifo1full(in a, out b) {
         msg m = create(0);
@@ -977,7 +978,7 @@ fn pdl_reo_fifo1full() {
     }
     ";
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
-    let mut c = Connector::new(Box::new(DummyLogger), Arc::new(pd), 0);
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
     let [_p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     c.add_component(b"fifo1full", &[g0, p1]).unwrap();
@@ -985,4 +986,31 @@ fn pdl_reo_fifo1full() {
     c.get(g1).unwrap();
     c.sync(None).unwrap();
     assert_eq!(0, c.gotten(g1).unwrap().len());
+}
+
+#[test]
+fn pdl_msg_consensus() {
+    let test_log_path = Path::new("./logs/pdl_msg_consensus");
+    let pdl = b"
+    primitive msgconsensus(in a, in b) {
+        while(true) synchronous {
+            msg x = get(a);
+            msg y = get(b);
+            assert(x == y);
+        }
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    c.add_component(b"msgconsensus", &[g0, g1]).unwrap();
+    c.connect(None).unwrap();
+    c.put(p0, Payload::from(b"HELLO" as &[_])).unwrap();
+    c.put(p1, Payload::from(b"HELLO" as &[_])).unwrap();
+    c.sync(SEC1).unwrap();
+
+    c.put(p0, Payload::from(b"HEY" as &[_])).unwrap();
+    c.put(p1, Payload::from(b"HELLO" as &[_])).unwrap();
+    c.sync(SEC1).unwrap_err();
 }

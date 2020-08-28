@@ -29,3 +29,5 @@ Examples include interactions whose distributed sessions span multiple source fi
 The examples contained within directories with names matching `interop_` demonstrate the use of different APIs for communication over UDP channels. The three given programs are intended to be run together, each as its own process.
 
 Each example source file is prefixed by a multi-line comment, explaining what a reader is intended to take away from the example.
+
+NOTE: These examples are designed to compile on Linux!

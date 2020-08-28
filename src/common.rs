@@ -53,7 +53,7 @@ pub struct U32Stream {
 )]
 #[repr(transparent)]
 pub struct PortId(Id);
-#[derive(Default, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Default, Clone, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
@@ -89,6 +89,15 @@ pub(crate) enum SyncBlocker {
 pub(crate) struct DenseDebugHex<'a>(pub &'a [u8]);
 
 ///////////////////// IMPL /////////////////////
+impl Eq for Payload {}
+impl PartialEq for Payload {
+    fn eq(&self, other: &Self) -> bool {
+        // self.as_slice() == other.as_slice()
+        let res = self.as_slice() == other.as_slice();
+        println!("CMP RESULT IS.... {}", res);
+        res
+    }
+}
 impl IdParts for Id {
     fn id_parts(self) -> (ConnectorId, U32Suffix) {
         (self.connector_id, self.u32_suffix)
