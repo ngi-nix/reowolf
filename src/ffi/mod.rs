@@ -140,10 +140,11 @@ pub unsafe extern "C" fn protocol_description_clone(
 ///////////////////// CONNECTOR //////////////////////////
 
 #[no_mangle]
-pub unsafe extern "C" fn connector_new_logging(
+pub unsafe extern "C" fn connector_new_logging_with_id(
     pd: &Arc<ProtocolDescription>,
     path_ptr: *const u8,
     path_len: usize,
+    connector_id: ConnectorId,
 ) -> *mut Connector {
     StoredError::tl_clear();
     let path_bytes = &*slice_from_raw_parts(path_ptr, path_len);
@@ -156,7 +157,6 @@ pub unsafe extern "C" fn connector_new_logging(
     };
     match std::fs::File::create(path_str) {
         Ok(file) => {
-            let connector_id = Connector::random_id();
             let file_logger = Box::new(FileLogger::new(connector_id, file));
             let c = Connector::new(file_logger, pd.clone(), connector_id);
             Box::into_raw(Box::new(c))
@@ -166,6 +166,14 @@ pub unsafe extern "C" fn connector_new_logging(
             std::ptr::null_mut()
         }
     }
+}
+#[no_mangle]
+pub unsafe extern "C" fn connector_new_logging(
+    pd: &Arc<ProtocolDescription>,
+    path_ptr: *const u8,
+    path_len: usize,
+) -> *mut Connector {
+    connector_new_logging_with_id(pd, path_ptr, path_len, Connector::random_id())
 }
 
 #[no_mangle]

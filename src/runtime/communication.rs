@@ -204,12 +204,12 @@ impl Connector {
         use SyncError as Se;
         //////////////////////////////////
         log!(
-            @COMM_NB,
             cu.inner.logger,
             "~~~ SYNC called with timeout {:?}; starting round {}",
             &timeout,
             comm.round_index
         );
+        log!(@BENCH, cu.inner.logger, "");
 
         // 1. run all proto components to Nonsync blockers
         // NOTE: original components are immutable until Decision::Success
@@ -255,11 +255,11 @@ impl Connector {
             }
         }
         log!(
-            @COMM_NB,
             cu.inner.logger,
             "All {} proto components are now done with Nonsync phase",
             branching_proto_components.len(),
         );
+        log!(@BENCH, cu.inner.logger, "");
 
         // Create temp structures needed for the synchronous phase of the round
         let mut rctx = RoundCtx {
@@ -286,7 +286,8 @@ impl Connector {
             getter_buffer: Default::default(),
             deadline: timeout.map(|to| Instant::now() + to),
         };
-        log!(@COMM_NB, cu.inner.logger, "Round context structure initialized");
+        log!(cu.inner.logger, "Round context structure initialized");
+        log!(@BENCH, cu.inner.logger, "");
 
         // Explore all native branches eagerly. Find solutions, buffer messages, etc.
         log!(
@@ -361,7 +362,8 @@ impl Connector {
         // restore the invariant: !native_batches.is_empty()
         comm.native_batches.push(Default::default());
         // Call to another big method; keep running this round until a distributed decision is reached
-        log!(@COMM_NB, cu.inner.logger, "Searching for decision...");
+        log!(cu.inner.logger, "Searching for decision...");
+        log!(@BENCH, cu.inner.logger, "");
         let decision = Self::sync_reach_decision(
             cu,
             comm,
@@ -369,7 +371,8 @@ impl Connector {
             &mut branching_proto_components,
             &mut rctx,
         )?;
-        log!(@COMM_NB, cu.inner.logger, "Committing to decision {:?}!", &decision);
+        log!(cu.inner.logger, "Committing to decision {:?}!", &decision);
+        log!(@BENCH, cu.inner.logger, "");
         comm.endpoint_manager.udp_endpoints_round_end(&mut *cu.inner.logger, &decision)?;
 
         // propagate the decision to children
@@ -411,7 +414,8 @@ impl Connector {
                 Ok(Some(branching_native.collapse_with(&mut *cu.inner.logger, &predicate)))
             }
         };
-        log!(@COMM_NB, cu.inner.logger, "Sync round ending! Cleaning up");
+        log!(cu.inner.logger, "Sync round ending! Cleaning up");
+        log!(@BENCH, cu.inner.logger, "");
         ret
     }
 

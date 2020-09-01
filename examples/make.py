@@ -1,6 +1,9 @@
-import os, glob, subprocess, time
+import os, glob, subprocess, time, sys
 script_path = os.path.dirname(os.path.realpath(__file__));
 for c_file in glob.glob(script_path + "/*/*.c", recursive=False):
+  if sys.platform != "linux" and sys.platform != "linux2" and "interop" in c_file:
+    print("Not Linux! skipping", c_file)
+    continue
   print("compiling", c_file)
   args = [
     "gcc",          # compiler

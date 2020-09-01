@@ -2,7 +2,7 @@
 #include "../utility.c"
 int main(int argc, char** argv) {
 	Arc_ProtocolDescription * pd = protocol_description_parse("", 0);
-	char logpath[] = "./bench_1.txt";
+	char logpath[] = "./1_16k.txt";
 	Connector * c = connector_new_logging(pd, logpath, sizeof(logpath)-1);
 	rw_err_peek(c);
 	
@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
 	rw_err_peek(c);
 	
 	// Prepare a message to send
-	size_t msg_len = 16;
+	size_t msg_len = 16000;
 	char * msg_ptr = malloc(msg_len);
 	memset(msg_ptr, 42, msg_len);
 	
@@ -23,8 +23,6 @@ int main(int argc, char** argv) {
 	for(i=0; i<10; i++) {
 		connector_put_bytes(c, putter, msg_ptr, msg_len);
 		rw_err_peek(c);
-		
-		// ... reach new consistent state within 1000ms deadline.
 		connector_sync(c, -1);
 		rw_err_peek(c);
 	}

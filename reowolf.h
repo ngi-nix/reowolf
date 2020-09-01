@@ -47,7 +47,9 @@ typedef uint32_t U32Suffix;
 typedef struct {
   ConnectorId connector_id;
   U32Suffix u32_suffix;
-} PortId;
+} Id;
+
+typedef Id PortId;
 
 typedef struct {
   uint8_t ipv4[4];
@@ -131,6 +133,11 @@ Connector *connector_new(const Arc_ProtocolDescription *pd);
 Connector *connector_new_logging(const Arc_ProtocolDescription *pd,
                                  const uint8_t *path_ptr,
                                  uintptr_t path_len);
+
+Connector *connector_new_logging_with_id(const Arc_ProtocolDescription *pd,
+                                         const uint8_t *path_ptr,
+                                         uintptr_t path_len,
+                                         ConnectorId connector_id);
 
 intptr_t connector_next_batch(Connector *connector);
 
