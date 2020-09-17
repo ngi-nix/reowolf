@@ -73,7 +73,9 @@ impl NetEndpoint {
         use NetEndpointError as Nee;
         Self::bincode_opts()
             .serialize_into(&mut self.stream, msg)
-            .map_err(|_| Nee::BrokenNetEndpoint)
+            .map_err(|_| Nee::BrokenNetEndpoint)?;
+        let _ = self.stream.flush();
+        Ok(())
     }
 }
 
@@ -379,7 +381,19 @@ impl EndpointManager {
 }
 impl Debug for NetEndpoint {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        f.debug_struct("Endpoint").field("inbox", &self.inbox).finish()
+        struct DebugStream<'a>(&'a TcpStream);
+        impl Debug for DebugStream<'_> {
+            fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+                f.debug_struct("Endpoint")
+                    .field("local_addr", &self.0.local_addr())
+                    .field("peer_addr", &self.0.peer_addr())
+                    .finish()
+            }
+        }
+        f.debug_struct("Endpoint")
+            .field("inbox", &self.inbox)
+            .field("stream", &DebugStream(&self.stream))
+            .finish()
     }
 }
 impl<R: Read> From<R> for MonitoredReader<R> {

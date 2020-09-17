@@ -34,7 +34,7 @@ pub enum UnrecoverableSyncError {
 #[derive(Debug, Clone)]
 pub enum SyncError {
     NotConnected,
-    InconsistentProtoComponent(ProtoComponentId),
+    InconsistentProtoComponent(ComponentId),
     RoundFailure,
     Unrecoverable(UnrecoverableSyncError),
 }

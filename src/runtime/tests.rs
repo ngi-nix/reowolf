@@ -1014,3 +1014,110 @@ fn pdl_msg_consensus() {
     c.put(p1, Payload::from(b"HELLO" as &[_])).unwrap();
     c.sync(SEC1).unwrap_err();
 }
+
+#[test]
+fn sequencer3_prim() {
+    let test_log_path = Path::new("./logs/sequencer3_prim");
+    let pdl = b"
+    primitive seq3primitive(out a, out b, out c) {
+        int i = 0;
+        while(true) synchronous {
+            out to = a;
+            if     (i==1) to = b;
+            else if(i==2) to = c;
+            if(fires(to)) {
+                put(to, create(0));
+                i = (i + 1)%3;
+            }
+        }
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+
+    // setup a session between (a) native, and (b) primitive sequencer3, connected by 3 ports.
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    let [p2, g2] = c.new_port_pair();
+    c.add_component(b"seq3primitive", &[p0, p1, p2]).unwrap();
+    c.connect(None).unwrap();
+
+    let mut which_of_three = move || {
+        // setup three sync batches. sync. return which succeeded
+        c.get(g0).unwrap();
+        c.next_batch().unwrap();
+        c.get(g1).unwrap();
+        c.next_batch().unwrap();
+        c.get(g2).unwrap();
+        c.sync(None).unwrap()
+    };
+
+    const TEST_ROUNDS: usize = 50;
+    // check that the batch index for rounds 0..TEST_ROUNDS are [0, 1, 2, 0, 1, 2, ...]
+    for expected_batch_idx in (0..=2).cycle().take(TEST_ROUNDS) {
+        assert_eq!(expected_batch_idx, which_of_three());
+    }
+}
+
+// #[test]
+// fn sequencer3_comp() {
+//     let test_log_path = Path::new("./logs/sequencer3_comp");
+//     let pdl = b"
+//     primitive fifo1_init(msg m, in a, out b) {
+//         while(true) synchronous {
+//             if(m != null && fires(b)) {
+//                 put(b, m);
+//                 m = null;
+//             } else if (m == null && fires(a)) {
+//                 m = get(a);
+//             }
+//         }
+//     }
+//     composite fifo1_full(in a, out b) {
+//         new fifo1_init(create(0), a, b);
+//     }
+//     composite fifo1(in a, out b) {
+//         new fifo1_init(null, a, b);
+//     }
+//     composite seq3composite(out a, out b, out c) {
+//         channel d -> e;
+//         channel f -> g;
+//         channel h -> i;
+//         channel j -> k;
+//         channel l -> m;
+//         channel n -> o;
+
+//         new fifo1_full(o, d);
+//         new replicator2(e, f, a);
+//         new fifo1(g, h);
+//         new replicator2(i, j, b);
+//         new fifo1(k, l);
+//         new replicator2(m, n, c);
+//     }
+//     ";
+//     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+//     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+
+//     // setup a session between (a) native, and (b) composite sequencer3, connected by 3 ports.
+//     let [p0, g0] = c.new_port_pair();
+//     let [p1, g1] = c.new_port_pair();
+//     let [p2, g2] = c.new_port_pair();
+//     c.add_component(b"seq3composite", &[p0, p1, p2]).unwrap();
+//     c.connect(None).unwrap();
+
+//     let mut which_of_three = move || {
+//         // setup three sync batches. sync. return which succeeded
+//         c.get(g0).unwrap();
+//         c.next_batch().unwrap();
+//         c.get(g1).unwrap();
+//         c.next_batch().unwrap();
+//         c.get(g2).unwrap();
+//         c.sync(None).unwrap()
+//     };
+
+//     const TEST_ROUNDS: usize = 50;
+//     // check that the batch index for rounds 0..TEST_ROUNDS are [0, 1, 2, 0, 1, 2, ...]
+//     for expected_batch_idx in (0..=2).cycle().take(TEST_ROUNDS) {
+//         assert_eq!(expected_batch_idx, which_of_three());
+//     }
+// }

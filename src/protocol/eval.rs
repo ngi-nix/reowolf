@@ -1533,6 +1533,7 @@ impl Store {
                     BinaryOperator::GreaterThan => Ok(left.gt(&right)),
                     BinaryOperator::GreaterThanEqual => Ok(left.gte(&right)),
                     BinaryOperator::Remainder => Ok(left.modulus(&right)),
+                    BinaryOperator::Add => Ok(left.plus(&right)),
                     _ => unimplemented!("{:?}", expr.operation),
                 }
             }

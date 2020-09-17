@@ -32,8 +32,8 @@ pub struct FileLogger(ConnectorId, std::fs::File);
 pub(crate) struct NonsyncProtoContext<'a> {
     cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
     proto_component_ports: &'a mut HashSet<PortId>, // sub-structure of component
-    unrun_components: &'a mut Vec<(ProtoComponentId, ProtoComponent)>, // lives for Nonsync phase
-    proto_component_id: ProtoComponentId,     // KEY in id->component map
+    unrun_components: &'a mut Vec<(ComponentId, ProtoComponent)>, // lives for Nonsync phase
+    proto_component_id: ComponentId,          // KEY in id->component map
 }
 pub(crate) struct SyncProtoContext<'a> {
     cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
@@ -63,11 +63,6 @@ struct RoundOk {
 struct VecSet<T: std::cmp::Ord> {
     // invariant: ordered, deduplicated
     vec: Vec<T>,
-}
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
-enum ComponentId {
-    Native,
-    Proto(ProtoComponentId),
 }
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 enum Route {
@@ -109,7 +104,7 @@ struct SessionInfo {
     serde_proto_description: SerdeProtocolDescription,
     port_info: PortInfo,
     endpoint_incoming_to_getter: Vec<PortId>,
-    proto_components: HashMap<ProtoComponentId, ProtoComponent>,
+    proto_components: HashMap<ComponentId, ProtoComponent>,
 }
 #[derive(Debug, Clone)]
 struct SerdeProtocolDescription(Arc<ProtocolDescription>);
@@ -184,9 +179,8 @@ struct Neighborhood {
 struct IdManager {
     connector_id: ConnectorId,
     port_suffix_stream: U32Stream,
-    proto_component_suffix_stream: U32Stream,
+    component_suffix_stream: U32Stream,
 }
-#[derive(Debug)]
 struct UdpInBuffer {
     byte_vec: Vec<u8>,
 }
@@ -215,6 +209,7 @@ struct EndpointStore<T> {
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct PortInfo {
+    owners: HashMap<PortId, ComponentId>,
     polarities: HashMap<PortId, Polarity>,
     peers: HashMap<PortId, PortId>,
     routes: HashMap<PortId, Route>,
@@ -230,7 +225,7 @@ struct ConnectorCommunication {
 #[derive(Debug)]
 struct ConnectorUnphased {
     proto_description: Arc<ProtocolDescription>,
-    proto_components: HashMap<ProtoComponentId, ProtoComponent>,
+    proto_components: HashMap<ComponentId, ProtoComponent>,
     inner: ConnectorUnphasedInner,
 }
 #[derive(Debug)]
@@ -239,6 +234,7 @@ struct ConnectorUnphasedInner {
     id_manager: IdManager,
     native_ports: HashSet<PortId>,
     port_info: PortInfo,
+    native_component_id: ComponentId,
 }
 #[derive(Debug)]
 struct ConnectorSetup {
@@ -350,7 +346,7 @@ impl IdManager {
         Self {
             connector_id,
             port_suffix_stream: Default::default(),
-            proto_component_suffix_stream: Default::default(),
+            component_suffix_stream: Default::default(),
         }
     }
     fn new_spec_var_stream(&self) -> SpecVarStream {
@@ -365,12 +361,9 @@ impl IdManager {
     fn new_port_id(&mut self) -> PortId {
         Id { connector_id: self.connector_id, u32_suffix: self.port_suffix_stream.next() }.into()
     }
-    fn new_proto_component_id(&mut self) -> ProtoComponentId {
-        Id {
-            connector_id: self.connector_id,
-            u32_suffix: self.proto_component_suffix_stream.next(),
-        }
-        .into()
+    fn new_component_id(&mut self) -> ComponentId {
+        Id { connector_id: self.connector_id, u32_suffix: self.component_suffix_stream.next() }
+            .into()
     }
 }
 impl Drop for Connector {
@@ -418,7 +411,7 @@ impl Connector {
         cu.inner.port_info.polarities.insert(i, Getter);
         cu.inner.port_info.peers.insert(o, i);
         cu.inner.port_info.peers.insert(i, o);
-        let route = Route::LocalComponent(ComponentId::Native);
+        let route = Route::LocalComponent(cu.inner.native_component_id);
         cu.inner.port_info.routes.insert(o, route);
         cu.inner.port_info.routes.insert(i, route);
         log!(cu.inner.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
@@ -446,17 +439,14 @@ impl Connector {
             }
         }
         // 3. remove ports from old component & update port->route
-        let new_id = cu.inner.id_manager.new_proto_component_id();
+        let new_cid = cu.inner.id_manager.new_component_id();
         for port in ports.iter() {
-            cu.inner
-                .port_info
-                .routes
-                .insert(*port, Route::LocalComponent(ComponentId::Proto(new_id)));
+            cu.inner.port_info.routes.insert(*port, Route::LocalComponent(new_cid));
         }
         cu.inner.native_ports.retain(|port| !ports.contains(port));
         // 4. add new component
         cu.proto_components.insert(
-            new_id,
+            new_cid,
             ProtoComponent {
                 state: cu.proto_description.new_main_component(identifier, ports),
                 ports: ports.iter().copied().collect(),
@@ -648,5 +638,11 @@ impl UdpInBuffer {
     const CAPACITY: usize = u16::MAX as usize;
     fn as_mut_slice(&mut self) -> &mut [u8] {
         self.byte_vec.as_mut_slice()
+    }
+}
+
+impl Debug for UdpInBuffer {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "UdpInBuffer")
     }
 }

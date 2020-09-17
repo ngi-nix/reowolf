@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
 	rw_err_peek(c);
 	
 	PortId getter;
-	FfiSocketAddr addr = {{192, 168, 1, 124}, 8009};
+	FfiSocketAddr addr = {{127, 0, 0, 1}, 8001};
 	rw_err_peek(c);
 	connector_add_net_port(c, &getter, addr, Polarity_Getter, EndpointPolarity_Passive);
 	connector_connect(c, -1);

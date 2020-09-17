@@ -34,8 +34,8 @@ pub type U32Suffix = u32;
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-// acquired via error in the Rust API
-pub struct ProtoComponentId(Id);
+// pub, because it can be acquired via error in the Rust API
+pub struct ComponentId(Id);
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
@@ -99,7 +99,7 @@ impl IdParts for PortId {
         self.0.id_parts()
     }
 }
-impl IdParts for ProtoComponentId {
+impl IdParts for ComponentId {
     fn id_parts(self) -> (ConnectorId, U32Suffix) {
         self.0.id_parts()
     }
@@ -122,8 +122,8 @@ impl From<Id> for PortId {
         Self(id)
     }
 }
-impl From<Id> for ProtoComponentId {
-    fn from(id: Id) -> ProtoComponentId {
+impl From<Id> for ComponentId {
+    fn from(id: Id) -> Self {
         Self(id)
     }
 }
@@ -184,7 +184,7 @@ impl Debug for PortId {
         write!(f, "pid{}_{}", a, b)
     }
 }
-impl Debug for ProtoComponentId {
+impl Debug for ComponentId {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let (a, b) = self.id_parts();
         write!(f, "cid{}_{}", a, b)

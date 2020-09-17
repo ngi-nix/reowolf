@@ -8,13 +8,15 @@ impl Connector {
         connector_id: ConnectorId,
     ) -> Self {
         log!(&mut *logger, "Created with connector_id {:?}", connector_id);
+        let mut id_manager = IdManager::new(connector_id);
         Self {
             unphased: ConnectorUnphased {
                 proto_description,
                 proto_components: Default::default(),
                 inner: ConnectorUnphasedInner {
                     logger,
-                    id_manager: IdManager::new(connector_id),
+                    native_component_id: id_manager.new_component_id(),
+                    id_manager,
                     native_ports: Default::default(),
                     port_info: Default::default(),
                 },
@@ -52,8 +54,14 @@ impl Connector {
                 cu.inner.port_info.peers.insert(nout, uin);
                 cu.inner.port_info.peers.insert(uin, nout);
                 cu.inner.port_info.peers.insert(uout, nin);
-                cu.inner.port_info.routes.insert(nin, Route::LocalComponent(ComponentId::Native));
-                cu.inner.port_info.routes.insert(nout, Route::LocalComponent(ComponentId::Native));
+                cu.inner
+                    .port_info
+                    .routes
+                    .insert(nin, Route::LocalComponent(cu.inner.native_component_id));
+                cu.inner
+                    .port_info
+                    .routes
+                    .insert(nout, Route::LocalComponent(cu.inner.native_component_id));
                 cu.inner.port_info.routes.insert(uin, Route::UdpEndpoint { index: udp_index });
                 cu.inner.port_info.routes.insert(uout, Route::UdpEndpoint { index: udp_index });
                 setup.udp_endpoint_setups.push(UdpEndpointSetup {
@@ -82,7 +90,7 @@ impl Connector {
                 cu.inner
                     .port_info
                     .routes
-                    .insert(local_port, Route::LocalComponent(ComponentId::Native));
+                    .insert(local_port, Route::LocalComponent(cu.inner.native_component_id));
                 log!(
                     cu.inner.logger,
                     "Added net port {:?} with polarity {:?} addr {:?} endpoint_polarity {:?}",
