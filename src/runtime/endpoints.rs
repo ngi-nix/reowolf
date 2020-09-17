@@ -152,7 +152,7 @@ impl EndpointManager {
     pub(super) fn try_recv_any_comms(
         &mut self,
         logger: &mut dyn Logger,
-        port_info: &PortInfo,
+        current_state: &CurrentState,
         round_ctx: &mut impl RoundCtxTrait,
         round_index: usize,
     ) -> Result<CommRecvOk, UnrecoverableSyncError> {
@@ -243,7 +243,7 @@ impl EndpointManager {
                     self.udp_endpoint_store.polled_undrained.insert(index);
                     if !ee.received_this_round {
                         let payload = Payload::from(&recv_buffer[..bytes_written]);
-                        let port_spec_var = port_info.spec_var_for(ee.getter_for_incoming);
+                        let port_spec_var = current_state.spec_var_for(ee.getter_for_incoming);
                         let predicate = Predicate::singleton(port_spec_var, SpecVal::FIRING);
                         round_ctx.getter_add(
                             ee.getter_for_incoming,

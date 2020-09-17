@@ -17,8 +17,8 @@ macro_rules! log {
         // ignore
     }};
     ($logger:expr, $($arg:tt)*) => {{
-        // if let Some(w) = $logger.line_writer() {
-        //     let _ = writeln!(w, $($arg)*);
-        // }
+        if let Some(w) = $logger.line_writer() {
+            let _ = writeln!(w, $($arg)*);
+        }
     }};
 }
