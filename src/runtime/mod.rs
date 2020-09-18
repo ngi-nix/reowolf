@@ -29,7 +29,7 @@ pub struct VecLogger(ConnectorId, Vec<u8>);
 pub struct DummyLogger;
 #[derive(Debug)]
 pub struct FileLogger(ConnectorId, std::fs::File);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CurrentState {
     port_info: HashMap<PortId, PortInfo>,
     id_manager: IdManager,
@@ -40,9 +40,10 @@ pub(crate) struct NonsyncProtoContext<'a> {
     proto_component_id: ComponentId,          // KEY in id->component map
 }
 pub(crate) struct SyncProtoContext<'a> {
-    cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
+    rctx: &'a RoundCtx,
+    // cu: &'a mut dyn CuUndecided,
     branch_inner: &'a mut ProtoComponentBranchInner, // sub-structure of component branch
-    predicate: &'a Predicate,                 // KEY in pred->branch map
+    predicate: &'a Predicate,                        // KEY in pred->branch map
 }
 #[derive(Default, Debug, Clone)]
 struct ProtoComponentBranchInner {
@@ -175,7 +176,7 @@ struct Neighborhood {
     parent: Option<usize>,
     children: VecSet<usize>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct IdManager {
     connector_id: ConnectorId,
     port_suffix_stream: U32Stream,
@@ -249,6 +250,26 @@ enum ConnectorPhased {
 struct Predicate {
     assigned: BTreeMap<SpecVar, SpecVal>,
 }
+#[derive(Debug)]
+struct SolutionStorage {
+    old_local: HashSet<Predicate>,
+    new_local: HashSet<Predicate>,
+    // this pair acts as SubtreeId -> HashSet<Predicate> which is friendlier to iteration
+    subtree_solutions: Vec<HashSet<Predicate>>,
+    subtree_id_to_index: HashMap<SubtreeId, usize>,
+}
+struct RoundCtx {
+    solution_storage: SolutionStorage,
+    spec_var_stream: SpecVarStream,
+    payload_inbox: Vec<(PortId, SendPayloadMsg)>,
+    deadline: Option<Instant>,
+    current_state: CurrentState,
+}
+trait CuUndecided {
+    fn logger(&mut self) -> &mut dyn Logger;
+    fn proto_description(&self) -> &ProtocolDescription;
+    fn native_component_id(&self) -> ComponentId;
+}
 #[derive(Debug, Default)]
 struct NativeBatch {
     // invariant: putters' and getters' polarities respected
@@ -260,10 +281,6 @@ enum TokenTarget {
     NetEndpoint { index: usize },
     UdpEndpoint { index: usize },
     Waker,
-}
-trait RoundCtxTrait {
-    fn get_deadline(&self) -> &Option<Instant>;
-    fn getter_add(&mut self, getter: PortId, msg: SendPayloadMsg);
 }
 enum CommRecvOk {
     TimeoutWithoutNew,
@@ -651,5 +668,23 @@ impl UdpInBuffer {
 impl Debug for UdpInBuffer {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "UdpInBuffer")
+    }
+}
+
+impl RoundCtx {
+    fn getter_pop(&mut self) -> Option<(PortId, SendPayloadMsg)> {
+        self.payload_inbox.pop()
+    }
+    fn getter_push(&mut self, getter: PortId, msg: SendPayloadMsg) {
+        self.payload_inbox.push((getter, msg));
+    }
+    fn putter_push(&mut self, cu: &mut impl CuUndecided, putter: PortId, msg: SendPayloadMsg) {
+        if let Some(getter) = self.current_state.port_info.get(&putter).unwrap().peer {
+            log!(cu.logger(), "Putter add (putter:{:?} => getter:{:?})", putter, getter);
+            self.getter_push(getter, msg);
+        } else {
+            log!(cu.logger(), "Putter {:?} has no known peer!", putter);
+            panic!("Putter {:?} has no known peer!");
+        }
     }
 }
