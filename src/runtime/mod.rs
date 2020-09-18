@@ -35,13 +35,14 @@ struct CurrentState {
     id_manager: IdManager,
 }
 pub(crate) struct NonsyncProtoContext<'a> {
-    cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
+    current_state: &'a mut CurrentState,
+    logger: &'a mut dyn Logger,
+    // cu_inner: &'a mut ConnectorUnphasedInner, // persists between rounds
     unrun_components: &'a mut Vec<(ComponentId, ComponentState)>, // lives for Nonsync phase
-    proto_component_id: ComponentId,          // KEY in id->component map
+    proto_component_id: ComponentId,                              // KEY in id->component map
 }
 pub(crate) struct SyncProtoContext<'a> {
     rctx: &'a RoundCtx,
-    // cu: &'a mut dyn CuUndecided,
     branch_inner: &'a mut ProtoComponentBranchInner, // sub-structure of component branch
     predicate: &'a Predicate,                        // KEY in pred->branch map
 }
