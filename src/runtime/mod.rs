@@ -270,6 +270,7 @@ trait CuUndecided {
     fn logger(&mut self) -> &mut dyn Logger;
     fn proto_description(&self) -> &ProtocolDescription;
     fn native_component_id(&self) -> ComponentId;
+    fn logger_and_protocol_description(&mut self) -> (&mut dyn Logger, &ProtocolDescription);
 }
 #[derive(Debug, Default)]
 struct NativeBatch {

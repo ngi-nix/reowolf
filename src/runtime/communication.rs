@@ -48,6 +48,9 @@ impl ReplaceBoolTrue for bool {
 // CuUndecided provides a mostly immutable view into the ConnectorUnphased structure,
 // making it harder to accidentally mutate its contents in a way that cannot be rolled back.
 impl CuUndecided for ConnectorUnphased {
+    fn logger_and_protocol_description(&mut self) -> (&mut dyn Logger, &ProtocolDescription) {
+        (&mut *self.inner.logger, &self.proto_description)
+    }
     fn logger(&mut self) -> &mut dyn Logger {
         &mut *self.inner.logger
     }
@@ -217,13 +220,14 @@ impl Connector {
                 proto_component_id,
                 unrun_components.len()
             );
+            let (logger, proto_description) = cu.logger_and_protocol_description();
             let mut ctx = NonsyncProtoContext {
                 current_state: &mut current_state,
-                logger: &mut *cu.inner.logger,
+                logger,
                 proto_component_id,
                 unrun_components: &mut unrun_components,
             };
-            let blocker = component.nonsync_run(&mut ctx, &cu.proto_description);
+            let blocker = component.nonsync_run(&mut ctx, proto_description);
             log!(
                 cu.logger(),
                 "proto component {:?} ran to nonsync blocker {:?}",
@@ -252,7 +256,8 @@ impl Connector {
             current_state,
             solution_storage: {
                 let n = std::iter::once(SubtreeId::LocalComponent(cu.inner.native_component_id));
-                let c = cu.proto_components.keys().map(|&cid| SubtreeId::LocalComponent(cid));
+                let c =
+                    branching_proto_components.keys().map(|&cid| SubtreeId::LocalComponent(cid));
                 let e = comm
                     .neighborhood
                     .children
@@ -1170,7 +1175,6 @@ impl NonsyncProtoContext<'_> {
             &state,
             &moved_ports
         );
-        println!("MOVED PORTS {:#?}", &moved_ports);
         // sanity check
         for port in moved_ports.iter() {
             assert_eq!(
@@ -1248,46 +1252,3 @@ impl<'a, K: Eq + Hash + 'static, V: 'static> CyclicDrainer<'a, K, V> {
         Ok(())
     }
 }
-
-// struct ConnectorComm {
-//     logger: Box<dyn Logger>,
-//     pd: Arc<ProtocolDescription>,
-//     current_state: CurrentState,
-//     components: HashMap<ComponentId, ComponentState>,
-//     ports: HashMap<PortId, PortInfo>,
-//     endpoint_manager: EndpointManager,
-//     neighborhood: Neighborhood,
-//     native_batches: Vec<NativeBatch>,
-//     round_result: Result<Option<RoundOk>, SyncError>,
-// }
-
-// struct RoundTemp<'a> {
-//     deadline: Option<Instant>,
-//     msg_buf: Vec<(PortId, SendPayloadMsg)>,
-//     solution_storage: SolutionStorage,
-//     override_ports: HashMap<PortId, PortInfo>,
-//     spec_var_stream: SpecVarStream,
-//     branching_proto: HashMap<ComponentId, BranchingProtoComponent>,
-//     branching_native: BranchingNative,
-//     comm: &'a mut ConnectorComm,
-// }
-// impl ConnectorComm {
-//     fn sync(&mut self, deadline: Option<Duration>) -> Result<usize, ()> {
-//         RoundTemp {
-//             msg_buf: Default::default(),
-//             deadline: todo!(),
-//             solution_storage: todo!(),
-//             override_ports: Default::default(),
-//             spec_var_stream: todo!(),
-//             branching_proto: Default::default(),
-//             branching_native: todo!(),
-//             comm: self,
-//         }
-//         .sync()
-//     }
-// }
-// impl RoundTemp<'_> {
-//     fn sync(&mut self) -> Result<usize, ()> {
-//         todo!()
-//     }
-// }
