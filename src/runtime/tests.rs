@@ -1019,7 +1019,7 @@ fn pdl_msg_consensus() {
 fn sequencer3_prim() {
     let test_log_path = Path::new("./logs/sequencer3_prim");
     let pdl = b"
-    primitive seq3primitive(out a, out b, out c) {
+    primitive sequencer3(out a, out b, out c) {
         int i = 0;
         while(true) synchronous {
             out to = a;
@@ -1035,14 +1035,14 @@ fn sequencer3_prim() {
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
 
-    // setup a session between (a) native, and (b) primitive sequencer3, connected by 3 ports.
+    // setup a session between (a) native, and (b) sequencer3, connected by 3 ports.
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"seq3primitive", &[p0, p1, p2]).unwrap();
+    c.add_component(b"sequencer3", &[p0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
-    let mut which_of_three = move || {
+    let which_of_three = move |c: &mut Connector| {
         // setup three sync batches. sync. return which succeeded
         c.get(g0).unwrap();
         c.next_batch().unwrap();
@@ -1055,7 +1055,10 @@ fn sequencer3_prim() {
     const TEST_ROUNDS: usize = 50;
     // check that the batch index for rounds 0..TEST_ROUNDS are [0, 1, 2, 0, 1, 2, ...]
     for expected_batch_idx in (0..=2).cycle().take(TEST_ROUNDS) {
-        assert_eq!(expected_batch_idx, which_of_three());
+        // silent round
+        assert_eq!(0, c.sync(None).unwrap());
+        // non silent round
+        assert_eq!(expected_batch_idx, which_of_three(&mut c));
     }
 }
 
@@ -1079,7 +1082,7 @@ fn sequencer3_comp() {
     composite fifo1(in a, out b) {
         new fifo1_init(null, a, b);
     }
-    composite seq3composite(out a, out b, out c) {
+    composite sequencer3(out a, out b, out c) {
         channel d -> e;
         channel f -> g;
         channel h -> i;
@@ -1098,26 +1101,153 @@ fn sequencer3_comp() {
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
 
-    // setup a session between (a) native, and (b) composite sequencer3, connected by 3 ports.
+    // setup a session between (a) native, and (b) sequencer3, connected by 3 ports.
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"seq3composite", &[p0, p1, p2]).unwrap();
+    c.add_component(b"sequencer3", &[p0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
-    let mut which_of_three = move || {
+    let which_of_three = move |c: &mut Connector| {
         // setup three sync batches. sync. return which succeeded
         c.get(g0).unwrap();
         c.next_batch().unwrap();
         c.get(g1).unwrap();
         c.next_batch().unwrap();
         c.get(g2).unwrap();
-        c.sync(None).unwrap()
+        c.sync(SEC1).unwrap()
     };
 
     const TEST_ROUNDS: usize = 50;
     // check that the batch index for rounds 0..TEST_ROUNDS are [0, 1, 2, 0, 1, 2, ...]
     for expected_batch_idx in (0..=2).cycle().take(TEST_ROUNDS) {
-        assert_eq!(expected_batch_idx, which_of_three());
+        // silent round
+        assert_eq!(0, c.sync(SEC1).unwrap());
+        // non silent round
+        assert_eq!(expected_batch_idx, which_of_three(&mut c));
     }
+}
+
+enum XRouter2Item {
+    Silent,
+    GetA,
+    GetB,
+}
+// Hardcoded pseudo-random sequence of round behaviors for the native component
+const XROUTER2_ITEMS: &[XRouter2Item] = {
+    use XRouter2Item::{GetA as A, GetB as B, Silent as S};
+    &[
+        B, A, S, B, A, A, B, S, B, S, A, A, S, B, B, S, B, S, B, B, S, B, B, A, B, B, A, B, A, B,
+        S, B, S, B, S, A, S, B, A, S, B, A, B, S, B, S, B, S, S, B, B, A, A, A, S, S, S, B, A, A,
+        A, S, S, B, B, B, A, B, S, S, A, A, B, A, B, B, A, A, A, B, A, B, S, A, B, S, A, A, B, S,
+    ]
+};
+
+#[test]
+fn xrouter2_prim() {
+    let test_log_path = Path::new("./logs/xrouter2_prim");
+    let pdl = b"
+    primitive xrouter2(in a, out b, out c) {
+        while(true) synchronous {
+            if(fires(a)) {
+                if(fires(b)) put(b, get(a));
+                else         put(c, get(a));
+            }
+        }
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+
+    // setup a session between (a) native, and (b) xrouter2, connected by 3 ports.
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    let [p2, g2] = c.new_port_pair();
+    c.add_component(b"xrouter2", &[g0, p1, p2]).unwrap();
+    c.connect(None).unwrap();
+
+    let now = std::time::Instant::now();
+    for item in XROUTER2_ITEMS.iter() {
+        match item {
+            XRouter2Item::Silent => {}
+            XRouter2Item::GetA => {
+                c.put(p0, TEST_MSG.clone()).unwrap();
+                c.get(g1).unwrap();
+            }
+            XRouter2Item::GetB => {
+                c.put(p0, TEST_MSG.clone()).unwrap();
+                c.get(g2).unwrap();
+            }
+        }
+        assert_eq!(0, c.sync(SEC1).unwrap());
+    }
+    println!("PRIM {:?}", now.elapsed());
+}
+#[test]
+fn xrouter2_comp() {
+    let test_log_path = Path::new("./logs/xrouter2_comp");
+    let pdl = b"
+    primitive lossy(in a, out b) {
+        while(true) synchronous {
+            if(fires(a)) {
+                msg m = get(a);
+                if(fires(b)) put(b, get(a));
+            }
+        }
+    }
+    primitive sync_drain2(in a, in b) {
+        while(true) synchronous {
+            if(fires(a)) {
+                get(a);
+                get(b);
+            }
+        }
+    }
+    composite xrouter2(in a, out b, out c) {
+        channel d -> e;
+        channel f -> g;
+        channel h -> i;
+        channel j -> k;
+        channel l -> m;
+        channel n -> o;
+        channel p -> q;
+        channel r -> s;
+        channel t -> u;
+
+        new replicator2(a, d, f); // ok
+        new replicator2(g, t, h); // ok
+        new lossy(e, l); // ok
+        new lossy(i, j); // ok
+        new replicator2(m, b, p); // ok
+        new replicator2(k, n, c); // ok
+        new merger2(q, o, r);
+        new sync_drain2(u, s);
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+
+    // setup a session between (a) native, and (b) xrouter2, connected by 3 ports.
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    let [p2, g2] = c.new_port_pair();
+    c.add_component(b"xrouter2", &[g0, p1, p2]).unwrap();
+    c.connect(None).unwrap();
+
+    let now = std::time::Instant::now();
+    for item in XROUTER2_ITEMS.iter() {
+        match item {
+            XRouter2Item::Silent => {}
+            XRouter2Item::GetA => {
+                c.put(p0, TEST_MSG.clone()).unwrap();
+                c.get(g1).unwrap();
+            }
+            XRouter2Item::GetB => {
+                c.put(p0, TEST_MSG.clone()).unwrap();
+                c.get(g2).unwrap();
+            }
+        }
+        assert_eq!(0, c.sync(SEC1).unwrap());
+    }
+    println!("COMP {:?}", now.elapsed());
 }

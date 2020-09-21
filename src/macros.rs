@@ -9,16 +9,16 @@ macro_rules! log {
         // }
     }};
     (@MARK, $logger:expr, $($arg:tt)*) => {{
-        if let Some(w) = $logger.line_writer() {
-            let _ = writeln!(w, $($arg)*);
-        }
+        // if let Some(w) = $logger.line_writer() {
+        //     let _ = writeln!(w, $($arg)*);
+        // }
     }};
     (@ENDPT, $logger:expr, $($arg:tt)*) => {{
         // ignore
     }};
     ($logger:expr, $($arg:tt)*) => {{
-        if let Some(w) = $logger.line_writer() {
-            let _ = writeln!(w, $($arg)*);
-        }
+        // if let Some(w) = $logger.line_writer() {
+        //     let _ = writeln!(w, $($arg)*);
+        // }
     }};
 }
