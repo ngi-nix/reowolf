@@ -1091,11 +1091,11 @@ fn sequencer3_comp() {
         channel n -> o;
 
         new fifo1_full(o, d);
-        new replicator2(e, f, a);
+        new replicator(e, f, a);
         new fifo1(g, h);
-        new replicator2(i, j, b);
+        new replicator(i, j, b);
         new fifo1(k, l);
-        new replicator2(m, n, c);
+        new replicator(m, n, c);
     }
     ";
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
@@ -1128,14 +1128,14 @@ fn sequencer3_comp() {
     }
 }
 
-enum XRouter2Item {
+enum XRouterItem {
     Silent,
     GetA,
     GetB,
 }
 // Hardcoded pseudo-random sequence of round behaviors for the native component
-const XROUTER2_ITEMS: &[XRouter2Item] = {
-    use XRouter2Item::{GetA as A, GetB as B, Silent as S};
+const XROUTER_ITEMS: &[XRouterItem] = {
+    use XRouterItem::{GetA as A, GetB as B, Silent as S};
     &[
         B, A, S, B, A, A, B, S, B, S, A, A, S, B, B, S, B, S, B, B, S, B, B, A, B, B, A, B, A, B,
         S, B, S, B, S, A, S, B, A, S, B, A, B, S, B, S, B, S, S, B, B, A, A, A, S, S, S, B, A, A,
@@ -1144,10 +1144,10 @@ const XROUTER2_ITEMS: &[XRouter2Item] = {
 };
 
 #[test]
-fn xrouter2_prim() {
-    let test_log_path = Path::new("./logs/xrouter2_prim");
+fn xrouter_prim() {
+    let test_log_path = Path::new("./logs/xrouter_prim");
     let pdl = b"
-    primitive xrouter2(in a, out b, out c) {
+    primitive xrouter(in a, out b, out c) {
         while(true) synchronous {
             if(fires(a)) {
                 if(fires(b)) put(b, get(a));
@@ -1163,18 +1163,18 @@ fn xrouter2_prim() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"xrouter2", &[g0, p1, p2]).unwrap();
+    c.add_component(b"xrouter", &[g0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let now = std::time::Instant::now();
-    for item in XROUTER2_ITEMS.iter() {
+    for item in XROUTER_ITEMS.iter() {
         match item {
-            XRouter2Item::Silent => {}
-            XRouter2Item::GetA => {
+            XRouterItem::Silent => {}
+            XRouterItem::GetA => {
                 c.put(p0, TEST_MSG.clone()).unwrap();
                 c.get(g1).unwrap();
             }
-            XRouter2Item::GetB => {
+            XRouterItem::GetB => {
                 c.put(p0, TEST_MSG.clone()).unwrap();
                 c.get(g2).unwrap();
             }
@@ -1184,8 +1184,8 @@ fn xrouter2_prim() {
     println!("PRIM {:?}", now.elapsed());
 }
 #[test]
-fn xrouter2_comp() {
-    let test_log_path = Path::new("./logs/xrouter2_comp");
+fn xrouter_comp() {
+    let test_log_path = Path::new("./logs/xrouter_comp");
     let pdl = b"
     primitive lossy(in a, out b) {
         while(true) synchronous {
@@ -1195,7 +1195,7 @@ fn xrouter2_comp() {
             }
         }
     }
-    primitive sync_drain2(in a, in b) {
+    primitive sync_drain(in a, in b) {
         while(true) synchronous {
             if(fires(a)) {
                 get(a);
@@ -1203,7 +1203,7 @@ fn xrouter2_comp() {
             }
         }
     }
-    composite xrouter2(in a, out b, out c) {
+    composite xrouter(in a, out b, out c) {
         channel d -> e;
         channel f -> g;
         channel h -> i;
@@ -1214,14 +1214,14 @@ fn xrouter2_comp() {
         channel r -> s;
         channel t -> u;
 
-        new replicator2(a, d, f); // ok
-        new replicator2(g, t, h); // ok
+        new replicator(a, d, f); // ok
+        new replicator(g, t, h); // ok
         new lossy(e, l); // ok
         new lossy(i, j); // ok
-        new replicator2(m, b, p); // ok
-        new replicator2(k, n, c); // ok
-        new merger2(q, o, r);
-        new sync_drain2(u, s);
+        new replicator(m, b, p); // ok
+        new replicator(k, n, c); // ok
+        new merger(q, o, r);
+        new sync_drain(u, s);
     }
     ";
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
@@ -1231,18 +1231,18 @@ fn xrouter2_comp() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"xrouter2", &[g0, p1, p2]).unwrap();
+    c.add_component(b"xrouter", &[g0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let now = std::time::Instant::now();
-    for item in XROUTER2_ITEMS.iter() {
+    for item in XROUTER_ITEMS.iter() {
         match item {
-            XRouter2Item::Silent => {}
-            XRouter2Item::GetA => {
+            XRouterItem::Silent => {}
+            XRouterItem::GetA => {
                 c.put(p0, TEST_MSG.clone()).unwrap();
                 c.get(g1).unwrap();
             }
-            XRouter2Item::GetB => {
+            XRouterItem::GetB => {
                 c.put(p0, TEST_MSG.clone()).unwrap();
                 c.get(g2).unwrap();
             }
