@@ -15,18 +15,36 @@ use crate::common::*;
 use error::*;
 use mio::net::UdpSocket;
 
+/// Each Connector structure is the interface between the user's application and a communication session,
+/// in which the application plays the part of a (native) component. This structure provides the application
+/// with functionality available to all components: the ability to add new channels (port pairs), and to
+/// instantiate new components whose definitions are defined in the connector's configured protocol
+/// description. Native components have the additional ability to add `dangling' ports backed by local/remote
+/// IP addresses, to be coupled with a counterpart once the connector's setup is completed by `connect`.
+/// This allows sets of applications to cooperate in constructing shared sessions that span the network.
 #[derive(Debug)]
 pub struct Connector {
     unphased: ConnectorUnphased,
     phased: ConnectorPhased,
 }
+
+/// Characterizes a type which can write lines of logging text.
+/// The implementations provided in the `logging` module are likely to be sufficient,
+/// but for added flexibility, users are able to implement their own loggers for use
+/// by connectors.
 pub trait Logger: Debug + Send + Sync {
     fn line_writer(&mut self) -> Option<&mut dyn std::io::Write>;
 }
+
+/// A logger that appends the logged strings to a growing byte buffer
 #[derive(Debug)]
 pub struct VecLogger(ConnectorId, Vec<u8>);
+
+/// A trivial logger that always returns None, such that no logging information is ever written.
 #[derive(Debug)]
 pub struct DummyLogger;
+
+/// A logger that writes the logged lines to a given file.
 #[derive(Debug)]
 pub struct FileLogger(ConnectorId, std::fs::File);
 #[derive(Debug, Clone)]
@@ -390,7 +408,32 @@ impl Drop for Connector {
         log!(&mut *self.unphased.inner.logger, "Connector dropping. Goodbye!");
     }
 }
+
+fn duplicate_port(slice: &[PortId]) -> Option<PortId> {
+    let mut vec = Vec::with_capacity(slice.len());
+    for port in slice.iter() {
+        match vec.binary_search(port) {
+            Err(index) => vec.insert(index, *port),
+            Ok(_) => return Some(*port),
+        }
+    }
+    None
+}
 impl Connector {
+    /// Generate a random connector identifier from the system's source of randomness.
+    pub fn random_id() -> ConnectorId {
+        type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
+        unsafe {
+            let mut bytes = std::mem::MaybeUninit::<Bytes8>::uninit();
+            // getrandom is the canonical crate for a small, secure rng
+            getrandom::getrandom(&mut *bytes.as_mut_ptr()).unwrap();
+            // safe! representations of all valid Byte8 values are valid ConnectorId values
+            std::mem::transmute::<_, _>(bytes.assume_init())
+        }
+    }
+
+    /// Returns true iff the connector is in connected state, i.e., it's setup phase is complete,
+    /// and it is ready to participate in synchronous rounds of communication.
     pub fn is_connected(&self) -> bool {
         // If designed for Rust usage, connectors would be exposed as an enum type from the start.
         // consequently, this "phased" business would also include connector variants and this would
@@ -402,23 +445,22 @@ impl Connector {
             ConnectorPhased::Communication(..) => true,
         }
     }
-    pub(crate) fn random_id() -> ConnectorId {
-        type Bytes8 = [u8; std::mem::size_of::<ConnectorId>()];
-        unsafe {
-            let mut bytes = std::mem::MaybeUninit::<Bytes8>::uninit();
-            // getrandom is the canonical crate for a small, secure rng
-            getrandom::getrandom(&mut *bytes.as_mut_ptr()).unwrap();
-            // safe! representations of all valid Byte8 values are valid ConnectorId values
-            std::mem::transmute::<_, _>(bytes.assume_init())
-        }
-    }
+
+    /// Enables the connector's current logger to be swapped out for another
     pub fn swap_logger(&mut self, mut new_logger: Box<dyn Logger>) -> Box<dyn Logger> {
         std::mem::swap(&mut self.unphased.inner.logger, &mut new_logger);
         new_logger
     }
+
+    /// Access the connector's current logger
     pub fn get_logger(&mut self) -> &mut dyn Logger {
         &mut *self.unphased.inner.logger
     }
+
+    /// Create a new synchronous channel, returning its ends as a pair of ports,
+    /// with polarity output, input respectively. Available during either setup/communication phase.
+    /// # Panics
+    /// This function panics if the connector's (large) port id space is exhausted.
     pub fn new_port_pair(&mut self) -> [PortId; 2] {
         let cu = &mut self.unphased;
         // adds two new associated ports, related to each other, and exposed to the native
@@ -445,6 +487,17 @@ impl Connector {
         log!(cu.inner.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
         [o, i]
     }
+
+    /// Instantiates a new component for the connector runtime to manage, and passing
+    /// the given set of ports from the interface of the native component, to that of the
+    /// newly created component (passing their ownership).
+    /// # Errors
+    /// Error is returned if the moved ports are not owned by the native component,
+    /// if the given component name is not defined in the connector's protocol,
+    /// the given sequence of ports contains a duplicate port,
+    /// or if the component is unfit for instantiation with the given port sequence.
+    /// # Panics
+    /// This function panics if the connector's (large) component id space is exhausted.
     pub fn add_component(
         &mut self,
         identifier: &[u8],
@@ -453,6 +506,9 @@ impl Connector {
         // called by the USER. moves ports owned by the NATIVE
         use AddComponentError as Ace;
         // 1. check if this is OK
+        if let Some(port) = duplicate_port(ports) {
+            return Err(Ace::DuplicatePort(port));
+        }
         let cu = &mut self.unphased;
         let expected_polarities = cu.proto_description.component_polarities(identifier)?;
         if expected_polarities.len() != ports.len() {
@@ -575,7 +631,7 @@ impl Predicate {
             }
         }
     }
-    pub fn union_with(&self, other: &Self) -> Option<Self> {
+    pub(crate) fn union_with(&self, other: &Self) -> Option<Self> {
         let mut res = self.clone();
         for (&channel_id, &assignment_1) in other.assigned.iter() {
             match res.assigned.insert(channel_id, assignment_1) {
@@ -585,7 +641,7 @@ impl Predicate {
         }
         Some(res)
     }
-    pub fn query(&self, var: SpecVar) -> Option<SpecVal> {
+    pub(crate) fn query(&self, var: SpecVar) -> Option<SpecVal> {
         self.assigned.get(&var).copied()
     }
 }

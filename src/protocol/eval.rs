@@ -113,7 +113,7 @@ impl Value {
                     // It is inconsistent to update with a negative value
                     return None;
                 }
-                if let Some(slot) = payload.as_mut_slice().get_mut(the_index) {
+                if let Some(slot) = payload.as_mut_vec().get_mut(the_index) {
                     *slot = (*b).try_into().unwrap();
                     Some(value.clone())
                 } else {
@@ -126,7 +126,7 @@ impl Value {
                     // It is inconsistent to update with a negative value or a too large value
                     return None;
                 }
-                if let Some(slot) = payload.as_mut_slice().get_mut(the_index) {
+                if let Some(slot) = payload.as_mut_vec().get_mut(the_index) {
                     *slot = (*b).try_into().unwrap();
                     Some(value.clone())
                 } else {

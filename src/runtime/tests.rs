@@ -1191,7 +1191,7 @@ fn xrouter_comp() {
         while(true) synchronous {
             if(fires(a)) {
                 msg m = get(a);
-                if(fires(b)) put(b, get(a));
+                if(fires(b)) put(b, m);
             }
         }
     }
@@ -1214,12 +1214,12 @@ fn xrouter_comp() {
         channel r -> s;
         channel t -> u;
 
-        new replicator(a, d, f); // ok
-        new replicator(g, t, h); // ok
-        new lossy(e, l); // ok
-        new lossy(i, j); // ok
-        new replicator(m, b, p); // ok
-        new replicator(k, n, c); // ok
+        new replicator(a, d, f);
+        new replicator(g, t, h);
+        new lossy(e, l);
+        new lossy(i, j);
+        new replicator(m, b, p);
+        new replicator(k, n, c);
         new merger(q, o, r);
         new sync_drain(u, s);
     }

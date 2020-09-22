@@ -2,6 +2,17 @@ use crate::common::*;
 use crate::runtime::*;
 
 impl Connector {
+    /// Create a new connector structure with the given protocol description (via Arc to facilitate sharing).
+    /// The resulting connector will start in the setup phase, and cannot be used for communication until the
+    /// `connect` procedure completes.
+    /// # Safety
+    /// The correctness of the system's underlying distributed algorithms requires that no two
+    /// connectors have the same ID. If the user does not know the identifiers of other connectors in the
+    /// system, it is advised to guess it using Connector::random_id (relying on the exceptionally low probability of an error).
+    /// Sessions with duplicate connector identifiers will not result in any memory unsafety, but cannot be guaranteed
+    /// to preserve their configured protocols.
+    /// Fortunately, in most realistic cases, the presence of duplicate connector identifiers will result in an
+    /// error during `connect`, observed as a peer misbehaving.
     pub fn new(
         mut logger: Box<dyn Logger>,
         proto_description: Arc<ProtocolDescription>,
@@ -90,6 +101,10 @@ impl Connector {
             }
         }
     }
+
+    /// Adds a "dangling" port to the connector in the setup phase,
+    /// to be formed into channel during the connect procedure with the given
+    /// transport layer information.
     pub fn new_net_port(
         &mut self,
         polarity: Polarity,
@@ -127,6 +142,15 @@ impl Connector {
             }
         }
     }
+
+    /// Finalizes the connector's setup procedure and forms a distributed system with
+    /// all other connectors reachable through network channels. This procedure represents
+    /// a synchronization barrier, and upon successful return, the connector can no longer add new network ports,
+    /// but is ready to begin the first communication round.
+    /// Initially, the connector has a singleton set of _batches_, the only element of which is empty.
+    /// This single element starts off selected. The selected batch is modified with `put` and `get`,
+    /// and new batches are added and selected with `next_batch`. See `sync` for an explanation of the
+    /// purpose of these batches.
     pub fn connect(&mut self, timeout: Option<Duration>) -> Result<(), ConnectError> {
         use ConnectError as Ce;
         let Self { unphased: cu, phased } = self;

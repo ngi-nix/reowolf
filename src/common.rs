@@ -1,8 +1,6 @@
 ///////////////////// PRELUDE /////////////////////
-
 pub(crate) use crate::protocol::{ComponentState, ProtocolDescription};
 pub(crate) use crate::runtime::{error::AddComponentError, NonsyncProtoContext, SyncProtoContext};
-
 pub(crate) use core::{
     cmp::Ordering,
     fmt::{Debug, Formatter},
@@ -10,7 +8,6 @@ pub(crate) use core::{
     ops::Range,
     time::Duration,
 };
-// pub(crate) use indexmap::IndexSet;
 pub(crate) use maplit::hashmap;
 pub(crate) use mio::{
     net::{TcpListener, TcpStream},
@@ -29,16 +26,17 @@ pub(crate) use Polarity::*;
 pub(crate) trait IdParts {
     fn id_parts(self) -> (ConnectorId, U32Suffix);
 }
+
+/// Used by various distributed algorithms to identify connectors.
 pub type ConnectorId = u32;
+
+/// Used in conjunction with the `ConnectorId` type to create identifiers for ports and components
 pub type U32Suffix = u32;
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-// pub, because it can be acquired via error in the Rust API
-pub struct ComponentId(Id);
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+
+/// Generalization of a port/component identifier
 #[repr(C)]
 pub struct Id {
     pub(crate) connector_id: ConnectorId,
@@ -48,16 +46,28 @@ pub struct Id {
 pub struct U32Stream {
     next: u32,
 }
+
+/// Identifier of a component in a session
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct ComponentId(Id); // PUB because it can be returned by errors
+
+/// Identifier of a port in a session
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 #[repr(transparent)]
 pub struct PortId(Id);
+
+/// A safely aliasable heap-allocated payload of message bytes
 #[derive(Default, Eq, PartialEq, Clone, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+
+/// "Orientation" of a port, determining whether they can send or receive messages with `put` and `get` respectively.
 #[repr(C)]
 pub enum Polarity {
     Putter, // output port (from the perspective of the component)
@@ -66,11 +76,15 @@ pub enum Polarity {
 #[derive(
     Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
+
+/// "Orientation" of a transport-layer network endpoint, dictating how it's connection procedure should
+/// be conducted. Corresponds with connect() / accept() familiar to TCP socket programming.
 #[repr(C)]
 pub enum EndpointPolarity {
     Active,  // calls connect()
     Passive, // calls bind() listen() accept()
 }
+
 #[derive(Debug, Clone)]
 pub(crate) enum NonsyncBlocker {
     Inconsistent,
@@ -133,6 +147,7 @@ impl From<&[u8]> for Payload {
     }
 }
 impl Payload {
+    /// Create a new payload of uninitialized bytes with the given length.
     pub fn new(len: usize) -> Payload {
         let mut v = Vec::with_capacity(len);
         unsafe {
@@ -140,18 +155,26 @@ impl Payload {
         }
         Payload(Arc::new(v))
     }
+    /// Returns the length of the payload's byte sequence
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    /// Allows shared reading of the payload's contents
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        Arc::make_mut(&mut self.0) as _
+
+    /// Allows mutation of the payload's contents.
+    /// Results in a deep copy in the event this payload is aliased.
+    pub fn as_mut_vec(&mut self) -> &mut Vec<u8> {
+        Arc::make_mut(&mut self.0)
     }
+
+    /// Modifies this payload, concatenating the given immutable payload's contents.
+    /// Results in a deep copy in the event this payload is aliased.
     pub fn concatenate_with(&mut self, other: &Self) {
         let bytes = other.as_slice().iter().copied();
-        let me = Arc::make_mut(&mut self.0);
+        let me = self.as_mut_vec();
         me.extend(bytes);
     }
 }

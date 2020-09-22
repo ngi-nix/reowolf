@@ -18,4 +18,16 @@ This library provides connectors as a generalization of sockets for use in commu
 The `examples` directory contains example usages of connectors for message passing over the internet. The programs within require that the library is compiled as a dylib (see above).
 
 ## Notes
-3. Running `cbindgen > reowolf.h` from the root will overwrite the header file. (WIP) This is only necessary to update it.  
+3. Running `cbindgen > reowolf.h` from the root will overwrite the header file. This is only necessary to update it.  
+
+## Short User Overview
+The bulk of the library's functionality is exposed to the user in two types: 
+1. `protocol::ProtocolDescription` 
+1. `runtime::Connector` 
+
+The former is created using `parse`. For the most part, the user is not expected to interact much with the structure, only passing it to the connector as a communication session is being set up.
+
+The latter is created with `new`, configured with methods such as `new_net_port` and `add_component`, and connected via `connect`, whereafter it can be used for multi-party communication through methods `put`, `get`, `next_batch`, and `sync`.
+
+## Contributor Overview
+The details of the implementation are best understood by reading the doc comments, starting from the procedures listed in the section above. It is suggested to first/also refer to the Reowolf project's companion documentation (link TODO) for a higher level overview of the goals and design of the implementation.
