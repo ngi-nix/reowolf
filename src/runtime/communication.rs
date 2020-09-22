@@ -49,16 +49,16 @@ impl ReplaceBoolTrue for bool {
 // making it harder to accidentally mutate its contents in a way that cannot be rolled back.
 impl CuUndecided for ConnectorUnphased {
     fn logger_and_protocol_description(&mut self) -> (&mut dyn Logger, &ProtocolDescription) {
-        (&mut *self.inner.logger, &self.proto_description)
+        (&mut *self.logger, &self.proto_description)
     }
     fn logger(&mut self) -> &mut dyn Logger {
-        &mut *self.inner.logger
+        &mut *self.logger
     }
     fn proto_description(&self) -> &ProtocolDescription {
         &self.proto_description
     }
     fn native_component_id(&self) -> ComponentId {
-        self.inner.native_component_id
+        self.native_component_id
     }
 }
 
@@ -127,8 +127,8 @@ impl Connector {
     ) -> Result<&mut NativeBatch, PortOpError> {
         use PortOpError as Poe;
         let Self { unphased: cu, phased } = self;
-        let info = cu.inner.current_state.port_info.get(&port).ok_or(Poe::UnknownPolarity)?;
-        if info.owner != cu.inner.native_component_id {
+        let info = cu.current_state.port_info.get(&port).ok_or(Poe::UnknownPolarity)?;
+        if info.owner != cu.native_component_id {
             return Err(Poe::PortUnavailable);
         }
         if info.polarity != expect_polarity {
@@ -228,7 +228,7 @@ impl Connector {
 
         // 1. run all proto components to Nonsync blockers
         // iterate
-        let mut current_state = cu.inner.current_state.clone();
+        let mut current_state = cu.current_state.clone();
         let mut branching_proto_components =
             HashMap::<ComponentId, BranchingProtoComponent>::default();
         let mut unrun_components: Vec<(ComponentId, ComponentState)> = cu
@@ -280,7 +280,7 @@ impl Connector {
         let mut rctx = RoundCtx {
             current_state,
             solution_storage: {
-                let n = std::iter::once(SubtreeId::LocalComponent(cu.inner.native_component_id));
+                let n = std::iter::once(SubtreeId::LocalComponent(cu.native_component_id));
                 let c =
                     branching_proto_components.keys().map(|&cid| SubtreeId::LocalComponent(cid));
                 let e = comm
@@ -290,13 +290,13 @@ impl Connector {
                     .map(|&index| SubtreeId::NetEndpoint { index });
                 let subtree_id_iter = n.chain(c).chain(e);
                 log!(
-                    cu.inner.logger,
+                    cu.logger,
                     "Children in subtree are: {:?}",
                     subtree_id_iter.clone().collect::<Vec<_>>()
                 );
                 SolutionStorage::new(subtree_id_iter)
             },
-            spec_var_stream: cu.inner.current_state.id_manager.new_spec_var_stream(),
+            spec_var_stream: cu.current_state.id_manager.new_spec_var_stream(),
             payload_inbox: Default::default(),
             deadline: timeout.map(|to| Instant::now() + to),
         };
@@ -328,12 +328,12 @@ impl Connector {
                 );
                 let firing_ports: HashSet<PortId> = firing_iter.clone().collect();
                 for port in firing_iter {
-                    let var = cu.inner.current_state.spec_var_for(port);
+                    let var = cu.current_state.spec_var_for(port);
                     predicate.assigned.insert(var, SpecVal::FIRING);
                 }
                 // all silent ports have SpecVal::SILENT
-                for (port, port_info) in cu.inner.current_state.port_info.iter() {
-                    if port_info.owner != cu.inner.native_component_id {
+                for (port, port_info) in cu.current_state.port_info.iter() {
+                    if port_info.owner != cu.native_component_id {
                         // not my port
                         continue;
                     }
@@ -341,7 +341,7 @@ impl Connector {
                         // this one is FIRING
                         continue;
                     }
-                    let var = cu.inner.current_state.spec_var_for(*port);
+                    let var = cu.current_state.spec_var_for(*port);
                     if let Some(SpecVal::FIRING) = predicate.assigned.insert(var, SpecVal::SILENT) {
                         log!(cu.logger(), "Native branch index={} contains internal inconsistency wrt. {:?}. Skipping", index, var);
                         continue 'native_branches;
@@ -362,7 +362,7 @@ impl Connector {
                     putter
                 );
                 // sanity check
-                assert_eq!(Putter, cu.inner.current_state.port_info.get(&putter).unwrap().polarity);
+                assert_eq!(Putter, cu.current_state.port_info.get(&putter).unwrap().polarity);
                 rctx.putter_push(cu, putter, msg);
             }
             let branch = NativeBranch { index, gotten: Default::default(), to_get };
@@ -375,7 +375,7 @@ impl Connector {
                 );
                 rctx.solution_storage.submit_and_digest_subtree_solution(
                     cu,
-                    SubtreeId::LocalComponent(cu.inner.native_component_id),
+                    SubtreeId::LocalComponent(cu.native_component_id),
                     predicate.clone(),
                 );
             }
@@ -421,7 +421,7 @@ impl Connector {
         let ret = match decision {
             Decision::Failure => {
                 // dropping {branching_proto_components, branching_native}
-                log!(cu.inner.logger, "Failure with {:#?}", &rctx.solution_storage);
+                log!(cu.logger, "Failure with {:#?}", &rctx.solution_storage);
                 Err(Se::RoundFailure)
             }
             Decision::Success(predicate) => {
@@ -434,9 +434,9 @@ impl Connector {
                         .map(|(id, bpc)| (id, bpc.collapse_with(&predicate))),
                 );
                 // commit changes to ports and id_manager
-                cu.inner.current_state = rctx.current_state;
+                cu.current_state = rctx.current_state;
                 log!(
-                    cu.inner.logger,
+                    cu.logger,
                     "End round with (updated) component states {:?}",
                     cu.proto_components.keys()
                 );

@@ -27,7 +27,7 @@ impl NetEndpoint {
         'read_loop: loop {
             let res = self.stream.read_to_end(&mut self.inbox);
             match res {
-                Err(e) if would_block(&e) => break 'read_loop,
+                Err(e) if err_would_block(&e) => break 'read_loop,
                 Ok(0) => break 'read_loop,
                 Ok(_) => (),
                 Err(_e) => return Err(Nee::BrokenNetEndpoint),

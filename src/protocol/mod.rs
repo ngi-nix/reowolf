@@ -7,6 +7,8 @@ mod lexer;
 mod parser;
 
 lazy_static::lazy_static! {
+    /// Conveniently-provided protocol description initialized with a zero-length PDL string.
+    /// Exposed to minimize repeated initializations of this common protocol description.
     pub static ref TRIVIAL_PD: std::sync::Arc<ProtocolDescription> = {
         std::sync::Arc::new(ProtocolDescription::parse(b"").unwrap())
     };
@@ -18,6 +20,8 @@ use crate::protocol::eval::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
+/// Description of a protocol object, used to configure new connectors.
+/// (De)serializable.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[repr(C)]
 pub struct ProtocolDescription {
