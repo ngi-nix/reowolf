@@ -100,8 +100,8 @@ pub(crate) enum SyncBlocker {
     PutMsg(PortId, Payload),
     NondetChoice { n: u16 },
 }
-pub(crate) struct DenseDebugHex<'a>(pub &'a [u8]);
-
+struct DenseDebugHex<'a>(pub &'a [u8]);
+struct DebuggableIter<I: Iterator<Item = T> + Clone, T: Debug>(pub(crate) I);
 ///////////////////// IMPL /////////////////////
 impl IdParts for Id {
     fn id_parts(self) -> (ConnectorId, U32Suffix) {
@@ -234,5 +234,11 @@ impl Debug for DenseDebugHex<'_> {
             write!(f, "{:02X?}", b)?;
         }
         Ok(())
+    }
+}
+
+impl<I: Iterator<Item = T> + Clone, T: Debug> Debug for DebuggableIter<I, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_list().entries(self.0.clone()).finish()
     }
 }
