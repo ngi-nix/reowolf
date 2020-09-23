@@ -1,5 +1,6 @@
 use super::*;
 
+// Used in the loggers' format string
 fn secs_since_unix_epoch() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

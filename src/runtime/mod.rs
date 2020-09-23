@@ -147,7 +147,7 @@ enum SetupMsg {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct SessionInfo {
     serde_proto_description: SerdeProtocolDescription,
-    port_info: HashMap<PortId, PortInfo>,
+    port_info: PortInfoMap,
     endpoint_incoming_to_getter: Vec<PortId>,
     proto_components: HashMap<ComponentId, ComponentState>,
 }
@@ -313,12 +313,19 @@ struct MyPortInfo {
     owner: ComponentId,
 }
 
+// Newtype around port info map, allowing the implementation of some
+// useful methods
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PortInfoMap {
+    map: HashMap<PortId, PortInfo>,
+}
+
 // A convenient substructure for containing port info and the ID manager.
 // Houses the bulk of the connector's persistent state between rounds.
 // It turns out several situations require access to both things.
 #[derive(Debug, Clone)]
 struct IdAndPortState {
-    port_info: HashMap<PortId, PortInfo>,
+    port_info: PortInfoMap,
     id_manager: IdManager,
 }
 
@@ -434,7 +441,6 @@ struct NativeBatch {
 enum TokenTarget {
     NetEndpoint { index: usize },
     UdpEndpoint { index: usize },
-    Waker,
 }
 
 // Returned by the endpoint manager as a result of comm_recv, telling the connector what happened,
@@ -475,18 +481,15 @@ impl<T: std::cmp::Ord> VecSet<T> {
         self.vec.pop()
     }
 }
-impl IdAndPortState {
+impl PortInfoMap {
     fn ports_owned_by(&self, owner: ComponentId) -> impl Iterator<Item = &PortId> {
-        self.port_info
-            .iter()
-            .filter(move |(_, port_info)| port_info.owner == owner)
-            .map(|(port, _)| port)
+        self.map.iter().filter(move |(_, port_info)| port_info.owner == owner).map(|(port, _)| port)
     }
     fn spec_var_for(&self, port: PortId) -> SpecVar {
         // Every port maps to a speculative variable
         // Two distinct ports map to the same variable
         // IFF they are two ends of the same logical channel.
-        let info = self.port_info.get(&port).unwrap();
+        let info = self.map.get(&port).unwrap();
         SpecVar(match info.polarity {
             Getter => port,
             Putter => info.peer.unwrap(),
@@ -528,7 +531,7 @@ impl IdManager {
 }
 impl Drop for Connector {
     fn drop(&mut self) {
-        log!(&mut *self.unphased.inner.logger, "Connector dropping. Goodbye!");
+        log!(self.unphased.logger(), "Connector dropping. Goodbye!");
     }
 }
 // Given a slice of ports, return the first, if any, port is present repeatedly
@@ -594,7 +597,7 @@ impl Connector {
         // - they are each others' peers
         // - they are owned by a local component with id `cid`
         // - polarity putter, getter respectively
-        cu.ips.port_info.insert(
+        cu.ips.port_info.map.insert(
             o,
             PortInfo {
                 route: Route::LocalComponent,
@@ -603,7 +606,7 @@ impl Connector {
                 polarity: Putter,
             },
         );
-        cu.ips.port_info.insert(
+        cu.ips.port_info.map.insert(
             i,
             PortInfo {
                 route: Route::LocalComponent,
@@ -642,7 +645,7 @@ impl Connector {
             return Err(Ace::WrongNumberOfParamaters { expected: expected_polarities.len() });
         }
         for (&expected_polarity, &port) in expected_polarities.iter().zip(ports.iter()) {
-            let info = cu.ips.port_info.get(&port).ok_or(Ace::UnknownPort(port))?;
+            let info = cu.ips.port_info.map.get(&port).ok_or(Ace::UnknownPort(port))?;
             if info.owner != cu.native_component_id {
                 return Err(Ace::UnknownPort(port));
             }
@@ -658,7 +661,7 @@ impl Connector {
             .insert(new_cid, cu.proto_description.new_main_component(identifier, ports));
         // update the ownership of moved ports
         for port in ports.iter() {
-            match cu.ips.port_info.get_mut(port) {
+            match cu.ips.port_info.map.get_mut(port) {
                 Some(port_info) => port_info.owner = new_cid,
                 None => unreachable!(),
             }
@@ -787,7 +790,7 @@ impl RoundCtx {
 
     // buffer a message along with the ID of the putter who sent it
     fn putter_push(&mut self, cu: &mut impl CuUndecided, putter: PortId, msg: SendPayloadMsg) {
-        if let Some(getter) = self.ips.port_info.get(&putter).unwrap().peer {
+        if let Some(getter) = self.ips.port_info.map.get(&putter).unwrap().peer {
             log!(cu.logger(), "Putter add (putter:{:?} => getter:{:?})", putter, getter);
             self.getter_push(getter, msg);
         } else {

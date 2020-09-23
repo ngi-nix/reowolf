@@ -152,7 +152,7 @@ impl Connector {
     ) -> Result<&mut NativeBatch, PortOpError> {
         use PortOpError as Poe;
         let Self { unphased: cu, phased } = self;
-        let info = cu.ips.port_info.get(&port).ok_or(Poe::UnknownPolarity)?;
+        let info = cu.ips.port_info.map.get(&port).ok_or(Poe::UnknownPolarity)?;
         if info.owner != cu.native_component_id {
             return Err(Poe::PortUnavailable);
         }
@@ -376,18 +376,18 @@ impl Connector {
                 );
                 let firing_ports: HashSet<PortId> = firing_iter.clone().collect();
                 for port in firing_iter {
-                    let var = cu.ips.spec_var_for(port);
+                    let var = cu.ips.port_info.spec_var_for(port);
                     predicate.assigned.insert(var, SpecVal::FIRING);
                 }
                 // all silent ports have SpecVal::SILENT
-                for port in cu.ips.ports_owned_by(cu.native_component_id) {
+                for port in cu.ips.port_info.ports_owned_by(cu.native_component_id) {
                     if firing_ports.contains(port) {
                         // this one is FIRING
                         continue;
                     }
-                    let var = cu.ips.spec_var_for(*port);
+                    let var = cu.ips.port_info.spec_var_for(*port);
                     if let Some(SpecVal::FIRING) = predicate.assigned.insert(var, SpecVal::SILENT) {
-                        log!(cu.logger(), "Native branch index={} contains internal inconsistency wrt. {:?}. Skipping", index, var);
+                        log!(&mut *cu.logger, "Native branch index={} contains internal inconsistency wrt. {:?}. Skipping", index, var);
                         continue 'native_branches;
                     }
                 }
@@ -406,7 +406,7 @@ impl Connector {
                     putter
                 );
                 // sanity check
-                assert_eq!(Putter, cu.ips.port_info.get(&putter).unwrap().polarity);
+                assert_eq!(Putter, cu.ips.port_info.map.get(&putter).unwrap().polarity);
                 rctx.putter_push(cu, putter, msg);
             }
             let branch = NativeBranch { index, gotten: Default::default(), to_get };
@@ -580,7 +580,7 @@ impl Connector {
             log!(cu.logger(), "Decision loop! have {} messages to recv", rctx.payload_inbox.len());
             while let Some((getter, send_payload_msg)) = rctx.getter_pop() {
                 log!(@MARK, cu.logger(), "handling payload msg for getter {:?} of {:?}", getter, &send_payload_msg);
-                let getter_info = rctx.ips.port_info.get(&getter).unwrap();
+                let getter_info = rctx.ips.port_info.map.get(&getter).unwrap();
                 let cid = getter_info.owner; // the id of the component owning `getter` port
                 assert_eq!(Getter, getter_info.polarity); // sanity check
                 log!(
@@ -832,7 +832,7 @@ impl BranchingNative {
         bn_temp: MapTempGuard<'_, Predicate, NativeBranch>,
     ) {
         log!(cu.logger(), "feeding native getter {:?} {:?}", getter, &send_payload_msg);
-        assert_eq!(Getter, rctx.ips.port_info.get(&getter).unwrap().polarity);
+        assert_eq!(Getter, rctx.ips.port_info.map.get(&getter).unwrap().polarity);
         let mut draining = bn_temp;
         let finished = &mut self.branches;
         std::mem::swap(draining.0, finished);
@@ -840,7 +840,7 @@ impl BranchingNative {
         // consistent with that of the received message.
         for (predicate, mut branch) in draining.drain() {
             log!(cu.logger(), "visiting native branch {:?} with {:?}", &branch, &predicate);
-            let var = rctx.ips.spec_var_for(getter);
+            let var = rctx.ips.port_info.spec_var_for(getter);
             if predicate.query(var) != Some(SpecVal::FIRING) {
                 // optimization. Don't bother trying this branch,
                 // because the resulting branch would have an inconsistent predicate.
@@ -1046,7 +1046,7 @@ impl BranchingProtoComponent {
                 }
                 B::CouldntCheckFiring(port) => {
                     // sanity check: `CouldntCheckFiring` returned IFF the variable is speculatively assigned
-                    let var = rctx.ips.spec_var_for(port);
+                    let var = rctx.ips.port_info.spec_var_for(port);
                     assert!(predicate.query(var).is_none());
                     // speculate on the two possible values of `var`. Schedule both branches to be rerun.
                     drainer.add_input(predicate.clone().inserted(var, SpecVal::SILENT), branch.clone());
@@ -1054,9 +1054,9 @@ impl BranchingProtoComponent {
                 }
                 B::PutMsg(putter, payload) => {
                     // sanity check: The given port indeed has `Putter` polarity
-                    assert_eq!(Putter, rctx.ips.port_info.get(&putter).unwrap().polarity);
+                    assert_eq!(Putter, rctx.ips.port_info.map.get(&putter).unwrap().polarity);
                     // assign FIRING to this port's associated firing variable
-                    let var = rctx.ips.spec_var_for(putter);
+                    let var = rctx.ips.port_info.spec_var_for(putter);
                     let was = predicate.assigned.insert(var, SpecVal::FIRING);
                     if was == Some(SpecVal::SILENT) {
                         // Discard the branch, as it clearly has contradictory requirements for this value.
@@ -1079,8 +1079,8 @@ impl BranchingProtoComponent {
                 B::SyncBlockEnd => {
                     // This branch reached the end of it's synchronous block
                     // assign all variables of owned ports that DIDN'T fire to SILENT
-                    for port in rctx.ips.ports_owned_by(proto_component_id) {
-                        let var = rctx.ips.spec_var_for(*port);
+                    for port in rctx.ips.port_info.ports_owned_by(proto_component_id) {
+                        let var = rctx.ips.port_info.spec_var_for(*port);
                         let actually_exchanged = branch.inner.did_put_or_get.contains(port);
                         let val = *predicate.assigned.entry(var).or_insert(SpecVal::SILENT);
                         let speculated_to_fire = val == SpecVal::FIRING;
@@ -1195,7 +1195,7 @@ impl BranchingProtoComponent {
         BranchingProtoComponent::drain_branches_to_blocked(cd, cu, rctx, proto_component_id)?;
         // swap the blocked branches back
         std::mem::swap(blocked.0, &mut self.branches);
-        log!(cu.logger(), "component settles down with branches: {:?}", branches.keys());
+        log!(cu.logger(), "component settles down with branches: {:?}", self.branches.keys());
         Ok(())
     }
 
@@ -1362,7 +1362,7 @@ impl NonsyncProtoContext<'_> {
         for port in moved_ports.iter() {
             assert_eq!(
                 self.proto_component_id,
-                self.ips.port_info.get(port).unwrap().owner
+                self.ips.port_info.map.get(port).unwrap().owner
             );
         }
         // Create the new component, and schedule it to be run
@@ -1378,7 +1378,7 @@ impl NonsyncProtoContext<'_> {
         self.unrun_components.push((new_cid, state));
         // Update the ownership of the moved ports
         for port in moved_ports.iter() {
-            self.ips.port_info.get_mut(port).unwrap().owner = new_cid;
+            self.ips.port_info.map.get_mut(port).unwrap().owner = new_cid;
         }
     }
 
@@ -1388,7 +1388,7 @@ impl NonsyncProtoContext<'_> {
         // adds two new associated ports, related to each other, and exposed to the proto component
         let mut new_cid_fn = || self.ips.id_manager.new_port_id();
         let [o, i] = [new_cid_fn(), new_cid_fn()];
-        self.ips.port_info.insert(
+        self.ips.port_info.map.insert(
             o,
             PortInfo {
                 route: Route::LocalComponent,
@@ -1397,7 +1397,7 @@ impl NonsyncProtoContext<'_> {
                 owner: self.proto_component_id,
             },
         );
-        self.ips.port_info.insert(
+        self.ips.port_info.map.insert(
             i,
             PortInfo {
                 route: Route::LocalComponent,
@@ -1420,7 +1420,7 @@ impl SyncProtoContext<'_> {
     // The component calls the runtime back, inspecting whether it's associated
     // preidcate has already determined a (speculative) value for the given port's firing variable.
     pub(crate) fn is_firing(&mut self, port: PortId) -> Option<bool> {
-        let var = self.rctx.ips.spec_var_for(port);
+        let var = self.rctx.ips.port_info.spec_var_for(port);
         self.predicate.query(var).map(SpecVal::is_firing)
     }
 
