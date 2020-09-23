@@ -237,7 +237,7 @@ impl EndpointManager {
                     self.udp_endpoint_store.polled_undrained.insert(index);
                     if !ee.received_this_round {
                         let payload = Payload::from(&recv_buffer[..bytes_written]);
-                        let port_spec_var = rctx.current_state.spec_var_for(ee.getter_for_incoming);
+                        let port_spec_var = rctx.ips.spec_var_for(ee.getter_for_incoming);
                         let predicate = Predicate::singleton(port_spec_var, SpecVal::FIRING);
                         rctx.getter_push(
                             ee.getter_for_incoming,

@@ -52,7 +52,7 @@ impl Connector {
                 proto_components: Default::default(),
                 logger,
                 native_component_id,
-                current_state: CurrentState { id_manager, port_info: Default::default() },
+                ips: IdAndPortState { id_manager, port_info: Default::default() },
             },
             phased: ConnectorPhased::Setup(Box::new(ConnectorSetup {
                 net_endpoint_setups: Default::default(),
@@ -75,11 +75,11 @@ impl Connector {
             ConnectorPhased::Communication(..) => Err(WrongStateError),
             ConnectorPhased::Setup(setup) => {
                 let udp_index = setup.udp_endpoint_setups.len();
-                let udp_cid = cu.current_state.id_manager.new_component_id();
-                let mut npid = || cu.current_state.id_manager.new_port_id();
+                let udp_cid = cu.ips.id_manager.new_component_id();
+                let mut npid = || cu.ips.id_manager.new_port_id();
                 let [nin, nout, uin, uout] = [npid(), npid(), npid(), npid()];
 
-                cu.current_state.port_info.insert(
+                cu.ips.port_info.insert(
                     nin,
                     PortInfo {
                         route: Route::LocalComponent,
@@ -88,7 +88,7 @@ impl Connector {
                         owner: cu.native_component_id,
                     },
                 );
-                cu.current_state.port_info.insert(
+                cu.ips.port_info.insert(
                     nout,
                     PortInfo {
                         route: Route::LocalComponent,
@@ -97,7 +97,7 @@ impl Connector {
                         owner: cu.native_component_id,
                     },
                 );
-                cu.current_state.port_info.insert(
+                cu.ips.port_info.insert(
                     uin,
                     PortInfo {
                         route: Route::UdpEndpoint { index: udp_index },
@@ -106,7 +106,7 @@ impl Connector {
                         owner: udp_cid,
                     },
                 );
-                cu.current_state.port_info.insert(
+                cu.ips.port_info.insert(
                     uout,
                     PortInfo {
                         route: Route::UdpEndpoint { index: udp_index },
@@ -138,8 +138,8 @@ impl Connector {
         match phased {
             ConnectorPhased::Communication(..) => Err(WrongStateError),
             ConnectorPhased::Setup(setup) => {
-                let new_pid = cu.current_state.id_manager.new_port_id();
-                cu.current_state.port_info.insert(
+                let new_pid = cu.ips.id_manager.new_port_id();
+                cu.ips.port_info.insert(
                     new_pid,
                     PortInfo {
                         route: Route::LocalComponent,
@@ -190,19 +190,19 @@ impl Connector {
                     &mut *cu.logger,
                     &setup.net_endpoint_setups,
                     &setup.udp_endpoint_setups,
-                    &mut cu.current_state.port_info,
+                    &mut cu.ips.port_info,
                     &deadline,
                 )?;
                 log!(
                     cu.logger,
                     "Successfully connected {} endpoints. info now {:#?} {:#?}",
                     endpoint_manager.net_endpoint_store.endpoint_exts.len(),
-                    &cu.current_state.port_info,
+                    &cu.ips.port_info,
                     &endpoint_manager,
                 );
                 // leader election and tree construction
                 let neighborhood = init_neighborhood(
-                    cu.current_state.id_manager.connector_id,
+                    cu.ips.id_manager.connector_id,
                     &mut *cu.logger,
                     &mut endpoint_manager,
                     &deadline,
@@ -858,7 +858,7 @@ fn session_optimize(
         unoptimized_map.keys()
     );
     let my_session_info = SessionInfo {
-        port_info: cu.current_state.port_info.clone(),
+        port_info: cu.ips.port_info.clone(),
         proto_components: cu.proto_components.clone(),
         serde_proto_description: SerdeProtocolDescription(cu.proto_description.clone()),
         endpoint_incoming_to_getter: comm
@@ -869,7 +869,7 @@ fn session_optimize(
             .map(|ee| ee.getter_for_incoming)
             .collect(),
     };
-    unoptimized_map.insert(cu.current_state.id_manager.connector_id, my_session_info);
+    unoptimized_map.insert(cu.ips.id_manager.connector_id, my_session_info);
     log!(cu.logger, "Inserting my own info. Unoptimized subtree map is {:?}", &unoptimized_map);
 
     // acquire the optimized info...
@@ -920,10 +920,8 @@ fn session_optimize(
         comm.neighborhood.children.iter()
     );
     log!(cu.logger, "All session info dumped!: {:#?}", &optimized_map);
-    let optimized_info = optimized_map
-        .get(&cu.current_state.id_manager.connector_id)
-        .expect("HEY NO INFO FOR ME?")
-        .clone();
+    let optimized_info =
+        optimized_map.get(&cu.ips.id_manager.connector_id).expect("HEY NO INFO FOR ME?").clone();
     let msg = S(Sm::SessionScatter { optimized_map });
     for &child in comm.neighborhood.children.iter() {
         comm.endpoint_manager.send_to_setup(child, &msg)?;
@@ -952,7 +950,7 @@ fn apply_optimizations(
         endpoint_incoming_to_getter,
     } = session_info;
     // TODO some info which should be read-only can be mutated with the current scheme
-    cu.current_state.port_info = port_info;
+    cu.ips.port_info = port_info;
     cu.proto_components = proto_components;
     cu.proto_description = serde_proto_description.0;
     for (ee, getter) in comm
