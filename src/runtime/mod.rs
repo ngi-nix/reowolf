@@ -93,7 +93,7 @@ struct SpecVal(u16);
 // native component can freely reflect on how it went, reading the messages received at their
 // inputs, and reflecting on which of their connector's synchronous batches succeeded.
 #[derive(Debug)]
-struct RoundOk {
+struct RoundEndedNative {
     batch_index: usize,
     gotten: HashMap<PortId, Payload>,
 }
@@ -265,7 +265,7 @@ struct ConnectorCommunication {
     endpoint_manager: EndpointManager,
     neighborhood: Neighborhood,
     native_batches: Vec<NativeBatch>,
-    round_result: Result<Option<RoundOk>, SyncError>,
+    round_result: Result<Option<RoundEndedNative>, SyncError>,
 }
 #[derive(Debug)]
 struct ConnectorUnphased {
@@ -317,8 +317,8 @@ struct SolutionStorage {
     // invariant: old_local U new_local solutions are those that can be created from
     // the UNION of one element from each set in `subtree_solution`.
     // invariant is maintained by potentially populating new_local whenever subtree_solutions is populated.
-    old_local: HashSet<Predicate>,
-    new_local: HashSet<Predicate>,
+    old_local: HashSet<Predicate>, // already sent to this connector's parent OR decided
+    new_local: HashSet<Predicate>, // not yet sent to this connector's parent OR decided
     // this pair acts as SubtreeId -> HashSet<Predicate> which is friendlier to iteration
     subtree_solutions: Vec<HashSet<Predicate>>,
     subtree_id_to_index: HashMap<SubtreeId, usize>,
@@ -406,6 +406,12 @@ impl<T: std::cmp::Ord> VecSet<T> {
     }
 }
 impl CurrentState {
+    fn ports_owned_by(&self, owner: ComponentId) -> impl Iterator<Item = &PortId> {
+        self.port_info
+            .iter()
+            .filter(move |(_, port_info)| port_info.owner == owner)
+            .map(|(port, _)| port)
+    }
     fn spec_var_for(&self, port: PortId) -> SpecVar {
         let info = self.port_info.get(&port).unwrap();
         SpecVar(match info.polarity {
