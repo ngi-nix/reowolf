@@ -1380,6 +1380,10 @@ impl NonsyncProtoContext<'_> {
         for port in moved_ports.iter() {
             self.ips.port_info.map.get_mut(port).unwrap().owner = new_cid;
         }
+        if let Some(set) = self.ips.port_info.owned.get_mut(&self.proto_component_id) {
+            set.retain(|x| !moved_ports.contains(x));
+        }
+        self.ips.port_info.owned.insert(new_cid, moved_ports.clone());
     }
 
     // Facilitates callback from the component to the connector runtime,
@@ -1406,6 +1410,12 @@ impl NonsyncProtoContext<'_> {
                 owner: self.proto_component_id,
             },
         );
+        self.ips
+            .port_info
+            .owned
+            .entry(self.proto_component_id)
+            .or_default()
+            .extend([o, i].iter().copied());
         log!(
             self.logger,
             "Component {:?} port pair (out->in) {:?} -> {:?}",

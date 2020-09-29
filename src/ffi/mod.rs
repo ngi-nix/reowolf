@@ -208,8 +208,12 @@ pub unsafe extern "C" fn connector_add_port_pair(
     out_getter: *mut PortId,
 ) {
     let [o, i] = connector.new_port_pair();
-    out_putter.write(o);
-    out_getter.write(i);
+    if !out_putter.is_null() {
+        out_putter.write(o);
+    }
+    if !out_getter.is_null() {
+        out_getter.write(i);
+    }
 }
 
 /// Given

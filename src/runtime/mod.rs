@@ -317,7 +317,11 @@ struct MyPortInfo {
 // useful methods
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PortInfoMap {
+    // invariant: self.invariant_preserved()
+    // `owned` is redundant information, allowing for fast lookup
+    // of a component's owned ports (which occurs during the sync round a lot)
     map: HashMap<PortId, PortInfo>,
+    owned: HashMap<ComponentId, HashSet<PortId>>,
 }
 
 // A convenient substructure for containing port info and the ID manager.
@@ -483,7 +487,7 @@ impl<T: std::cmp::Ord> VecSet<T> {
 }
 impl PortInfoMap {
     fn ports_owned_by(&self, owner: ComponentId) -> impl Iterator<Item = &PortId> {
-        self.map.iter().filter(move |(_, port_info)| port_info.owner == owner).map(|(port, _)| port)
+        self.owned.get(&owner).into_iter().flat_map(HashSet::iter)
     }
     fn spec_var_for(&self, port: PortId) -> SpecVar {
         // Every port maps to a speculative variable
@@ -494,6 +498,33 @@ impl PortInfoMap {
             Getter => port,
             Putter => info.peer.unwrap(),
         })
+    }
+    fn invariant_preserved(&self) -> bool {
+        // for every port P with some owner O,
+        // P is in O's owned set
+        for (port, info) in self.map.iter() {
+            match self.owned.get(&info.owner) {
+                Some(set) if set.contains(port) => {}
+                _ => {
+                    println!("{:#?}\n WITH port {:?}", self, port);
+                    return false;
+                }
+            }
+        }
+        // for every port P owned by every owner O,
+        // P's owner is O
+        for (&owner, set) in self.owned.iter() {
+            for port in set {
+                match self.map.get(port) {
+                    Some(info) if info.owner == owner => {}
+                    _ => {
+                        println!("{:#?}\n WITH owner {:?} port {:?}", self, owner, port);
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 }
 impl SpecVarStream {
@@ -615,6 +646,13 @@ impl Connector {
                 polarity: Getter,
             },
         );
+        cu.ips
+            .port_info
+            .owned
+            .entry(cu.native_component_id)
+            .or_default()
+            .extend([o, i].iter().copied());
+
         log!(cu.logger, "Added port pair (out->in) {:?} -> {:?}", o, i);
         [o, i]
     }
@@ -665,6 +703,10 @@ impl Connector {
                 None => unreachable!(),
             }
         }
+        if let Some(set) = cu.ips.port_info.owned.get_mut(&cu.native_component_id) {
+            set.retain(|x| !ports.contains(x));
+        }
+        cu.ips.port_info.owned.insert(new_cid, ports.iter().copied().collect());
         Ok(())
     }
 }

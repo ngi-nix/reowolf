@@ -2,9 +2,10 @@
 #include "../../reowolf.h"
 #include "../utility.c"
 int main(int argc, char** argv) {
-	int i, proto_components;
-	proto_components = atoi(argv[1]);
-	printf("proto_components: %d\n", proto_components);
+	int i, port_pairs, proto_components;
+	port_pairs = atoi(argv[1]);
+	proto_components = atoi(argv[2]);
+	printf("port_pairs %d, proto_components: %d\n", port_pairs, proto_components);
 
 	const unsigned char pdl[] = 
 	"primitive trivial_loop() {   "
@@ -12,8 +13,11 @@ int main(int argc, char** argv) {
 	"}                            "
 	;
 	Arc_ProtocolDescription * pd = protocol_description_parse(pdl, sizeof(pdl)-1);
-	char logpath[] = "./bench_4.txt";
+	char logpath[] = "./bench_5.txt";
 	Connector * c = connector_new_logging(pd, logpath, sizeof(logpath)-1);
+	for (i=0; i<port_pairs; i++) {
+		connector_add_port_pair(c, NULL, NULL);
+	}
 	for (i=0; i<proto_components; i++) {
 		char ident[] = "trivial_loop";
 		connector_add_component(c, ident, sizeof(ident)-1, NULL, 0);

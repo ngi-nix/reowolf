@@ -131,6 +131,15 @@ impl Connector {
                     peer_addr,
                     getter_for_incoming: nin,
                 });
+
+                // update owned sets
+                cu.ips
+                    .port_info
+                    .owned
+                    .entry(cu.native_component_id)
+                    .or_default()
+                    .extend([nin, nout].iter().copied());
+                cu.ips.port_info.owned.insert(udp_cid, maplit::hashset! {uin, uout});
                 // Return the native's output, input port pair
                 Ok([nout, nin])
             }
@@ -175,6 +184,8 @@ impl Connector {
                     endpoint_polarity,
                     getter_for_incoming: new_pid,
                 });
+                // update owned set
+                cu.ips.port_info.owned.entry(cu.native_component_id).or_default().insert(new_pid);
                 Ok(new_pid)
             }
         }
@@ -240,6 +251,7 @@ impl Connector {
                 // Connect procedure successful! Commit changes by...
                 // ... commiting new port info for ConnectorUnphased
                 for (port, info) in extra_port_info.info.drain() {
+                    cu.ips.port_info.owned.entry(info.owner).or_default().insert(port);
                     cu.ips.port_info.map.insert(port, info);
                 }
                 for (port, peer) in extra_port_info.peers.drain() {
@@ -1002,6 +1014,7 @@ fn apply_my_optimizations(
     } = session_info;
     // simply overwrite the contents
     cu.ips.port_info = port_info;
+    assert!(cu.ips.port_info.invariant_preserved());
     cu.proto_components = proto_components;
     cu.proto_description = serde_proto_description.0;
     for (ee, getter) in comm

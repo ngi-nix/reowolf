@@ -30,9 +30,9 @@ fn file_logged_configured_connector(
     dir_path: &Path,
     pd: Arc<ProtocolDescription>,
 ) -> Connector {
-    let _ = std::fs::create_dir(dir_path); // we will check failure soon
+    let _ = std::fs::create_dir_all(dir_path).expect("Failed to create log output dir");
     let path = dir_path.join(format!("cid_{:?}.txt", connector_id));
-    let file = File::create(path).unwrap();
+    let file = File::create(path).expect("Failed to create log output file!");
     let file_logger = Box::new(FileLogger::new(connector_id, file));
     Connector::new(file_logger, pd, connector_id)
 }

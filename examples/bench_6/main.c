@@ -2,21 +2,18 @@
 #include "../../reowolf.h"
 #include "../utility.c"
 int main(int argc, char** argv) {
-	int i, proto_components;
-	proto_components = atoi(argv[1]);
-	printf("proto_components: %d\n", proto_components);
-
-	const unsigned char pdl[] = 
-	"primitive trivial_loop() {   "
-	"    while(true) synchronous{}"
-	"}                            "
-	;
+	int i, self_syncs;
+	self_syncs = atoi(argv[1]);
+	printf("self_syncs %d\n", self_syncs);
+	unsigned char pdl[] = ""; 
 	Arc_ProtocolDescription * pd = protocol_description_parse(pdl, sizeof(pdl)-1);
-	char logpath[] = "./bench_4.txt";
+	char logpath[] = "./bench_6.txt";
 	Connector * c = connector_new_logging(pd, logpath, sizeof(logpath)-1);
-	for (i=0; i<proto_components; i++) {
-		char ident[] = "trivial_loop";
-		connector_add_component(c, ident, sizeof(ident)-1, NULL, 0);
+	for (i=0; i<self_syncs; i++) {
+		PortId putter, getter;
+		connector_add_port_pair(c, &putter, &getter);
+		char ident[] = "sync"; // defined in reowolf's stdlib 
+		connector_add_component(c, ident, sizeof(ident)-1, (PortId[]){getter, putter}, 2);
 		printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	}
 	connector_connect(c, -1);
