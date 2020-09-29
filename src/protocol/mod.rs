@@ -105,7 +105,7 @@ impl ProtocolDescription {
         Ok(result)
     }
     // expects port polarities to be correct
-    pub(crate) fn new_main_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
+    pub(crate) fn new_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
         let mut args = Vec::new();
         for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {
             match y {

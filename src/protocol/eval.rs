@@ -59,7 +59,7 @@ impl Value {
                     // Only messages within the expected length are allowed
                     Value::Message(MessageValue(None))
                 } else {
-                    Value::Message(MessageValue(Some(Payload::new(0))))
+                    Value::Message(MessageValue(Some(Payload::new(length as usize))))
                 }
             }
             _ => unimplemented!(),
@@ -268,6 +268,17 @@ impl Value {
             }
             (Value::Long(LongValue(s)), Value::Long(LongValue(o))) => {
                 Value::Long(LongValue(*s + *o))
+            }
+
+            (Value::Message(MessageValue(s)), Value::Message(MessageValue(o))) => {
+                let payload = if let [Some(s), Some(o)] = [s, o] {
+                    let mut payload = s.clone();
+                    payload.concatenate_with(o);
+                    Some(payload)
+                } else {
+                    None
+                };
+                Value::Message(MessageValue(payload))
             }
             _ => unimplemented!(),
         }

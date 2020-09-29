@@ -270,26 +270,6 @@ fn setup_endpoints_and_pair_ports(
     const BOTH: Interest = Interest::READABLE.add(Interest::WRITABLE);
     const RETRY_PERIOD: Duration = Duration::from_millis(200);
 
-    // The structure shared between this ("setup") thread and that of the waker.
-    // The waker thread periodically sends signals.
-    // struct WakerState {
-    //     continue_signal: AtomicBool,
-    //     waker: mio::Waker,
-    // }
-    // impl WakerState {
-    //     // The waker thread runs this UNTIL the continue signal is set to false
-    //     fn waker_loop(&self) {
-    //         while self.continue_signal.load(SeqCst) {
-    //             std::thread::sleep(WAKER_PERIOD);
-    //             let _ = self.waker.wake();
-    //         }
-    //     }
-    //     // The setup thread thread runs this to set the continue signal to false.
-    //     fn waker_stop(&self) {
-    //         self.continue_signal.store(false, SeqCst);
-    //     }
-    // }
-
     // The data for a net endpoint's setup in progress
     struct NetTodo {
         // becomes completed once sent_local_port && recv_peer_port.is_some()
@@ -378,17 +358,21 @@ fn setup_endpoints_and_pair_ports(
     };
     // progress by reacting to poll events. continue until every endpoint is set up
     while !setup_incomplete.is_empty() {
-        // recompute the time left to poll for progress
-        let remaining = if let Some(deadline) = deadline {
-            deadline.checked_duration_since(Instant::now()).ok_or(Ce::Timeout)?.min(RETRY_PERIOD)
-        } else {
-            RETRY_PERIOD
+        // recompute the timeout for the poll call
+        let remaining = match (deadline, net_connect_to_retry.is_empty()) {
+            (None, true) => None,
+            (None, false) => Some(RETRY_PERIOD),
+            (Some(deadline), is_empty) => {
+                let dur_to_timeout =
+                    deadline.checked_duration_since(Instant::now()).ok_or(Ce::Timeout)?;
+                Some(if is_empty { dur_to_timeout } else { dur_to_timeout.min(RETRY_PERIOD) })
+            }
         };
         // block until either
         // (a) `events` has been populated with 1+ elements
         // (b) timeout elapses, or
         // (c) RETRY_PERIOD elapses
-        poll.poll(&mut events, Some(remaining)).map_err(|_| Ce::PollFailed)?;
+        poll.poll(&mut events, remaining).map_err(|_| Ce::PollFailed)?;
         if last_retry_at.elapsed() > RETRY_PERIOD {
             // Retry all net connections and reset `last_retry_at`
             last_retry_at = Instant::now();

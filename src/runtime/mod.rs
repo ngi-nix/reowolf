@@ -657,8 +657,7 @@ impl Connector {
         // create a new component and identifier
         let cu = &mut self.unphased;
         let new_cid = cu.ips.id_manager.new_component_id();
-        cu.proto_components
-            .insert(new_cid, cu.proto_description.new_main_component(identifier, ports));
+        cu.proto_components.insert(new_cid, cu.proto_description.new_component(identifier, ports));
         // update the ownership of moved ports
         for port in ports.iter() {
             match cu.ips.port_info.map.get_mut(port) {
