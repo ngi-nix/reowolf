@@ -1,5 +1,8 @@
 #!/bin/bash
-for syncs in {0..16}
+for options in {1..5}
 do
-	./bench_8/main.exe $syncs
+	for forwards in {0..15}
+	do
+		./bench_11/main.exe $forwards $options 0
+	done
 done
