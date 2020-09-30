@@ -173,15 +173,7 @@ impl Value {
                     None
                 }
             }
-            Value::InputArray(_) => todo!(),
-            Value::OutputArray(_) => todo!(),
-            Value::MessageArray(_) => todo!(),
-            Value::BooleanArray(_) => todo!(),
-            Value::ByteArray(_) => todo!(),
-            Value::ShortArray(_) => todo!(),
-            Value::IntArray(_) => todo!(),
-            Value::LongArray(_) => todo!(),
-            _ => unreachable!(),
+            _ => panic!("Can only get from port value"),
         }
     }
     fn length(&self) -> Option<Value> {
