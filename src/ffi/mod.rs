@@ -168,6 +168,14 @@ pub unsafe extern "C" fn connector_new_logging_with_id(
     }
 }
 #[no_mangle]
+pub unsafe extern "C" fn connector_new_with_id(
+    pd: &Arc<ProtocolDescription>,
+    connector_id: ConnectorId,
+) -> *mut Connector {
+    let c = Connector::new(Box::new(DummyLogger), pd.clone(), connector_id);
+    Box::into_raw(Box::new(c))
+}
+#[no_mangle]
 pub unsafe extern "C" fn connector_new_logging(
     pd: &Arc<ProtocolDescription>,
     path_ptr: *const u8,
@@ -176,17 +184,11 @@ pub unsafe extern "C" fn connector_new_logging(
     connector_new_logging_with_id(pd, path_ptr, path_len, Connector::random_id())
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn connector_print_debug(connector: &mut Connector) {
-    println!("Debug print dump {:#?}", connector);
-}
-
 /// Initializes `out` with a new connector using the given protocol description as its configuration.
 /// The connector uses the given (internal) connector ID.
 #[no_mangle]
 pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Connector {
-    let c = Connector::new(Box::new(DummyLogger), pd.clone(), Connector::random_id());
-    Box::into_raw(Box::new(c))
+    connector_new_with_id(pd, Connector::random_id())
 }
 
 /// Destroys the given a pointer to the connector on the heap, freeing its resources.
@@ -194,6 +196,11 @@ pub unsafe extern "C" fn connector_new(pd: &Arc<ProtocolDescription>) -> *mut Co
 #[no_mangle]
 pub unsafe extern "C" fn connector_destroy(connector: *mut Connector) {
     drop(Box::from_raw(connector))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn connector_print_debug(connector: &mut Connector) {
+    println!("Debug print dump {:#?}", connector);
 }
 
 /// Given an initialized connector in setup or connecting state,

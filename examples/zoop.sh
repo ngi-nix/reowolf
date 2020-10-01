@@ -1,8 +1,5 @@
 #!/bin/bash
-for options in {1..5}
+for included in {0..13}
 do
-	for forwards in {0..15}
-	do
-		./bench_11/main.exe $forwards $options 0
-	done
+	./bench_13/main.exe 65535 $included 13
 done

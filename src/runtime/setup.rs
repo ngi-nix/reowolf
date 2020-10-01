@@ -327,7 +327,7 @@ fn setup_endpoints_and_pair_ports(
             log!(logger, "Net endpoint {} beginning setup with {:?}", index, &endpoint_setup);
             let todo_endpoint = if let EndpointPolarity::Active = endpoint_setup.endpoint_polarity {
                 let mut stream = TcpStream::connect(endpoint_setup.sock_addr)
-                    .expect("mio::TcpStream connect should not fail!");
+                    .map_err(|_| Ce::TcpInvalidConnect(endpoint_setup.sock_addr))?;
                 poll.registry().register(&mut stream, token, BOTH).unwrap();
                 NetTodoEndpoint::PeerInfoRecving(NetEndpoint { stream, inbox: vec![] })
             } else {

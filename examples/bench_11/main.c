@@ -5,9 +5,8 @@ int main(int argc, char** argv) {
 	int i, j, forwards, num_options, correct_index;
 	forwards = atoi(argv[1]);
 	num_options = atoi(argv[2]);
-	correct_index = atoi(argv[3]);
-	printf("forwards %d, num_options %d, correct_index %d\n",
-		forwards, num_options, correct_index);
+	printf("forwards %d, num_options %d\n",
+		forwards, num_options);
 	unsigned char pdl[] = 
 	"primitive recv_zero(in a) {  "
 	"    while(true) synchronous {"
@@ -43,7 +42,8 @@ int main(int argc, char** argv) {
 	
 	clock_t begin = clock();
 	char msg = 0;
-	for (i=0; i<10000; i++) {
+	for (i=0; i<1000; i++) {
+		correct_index = i%num_options;
 		for(j=0; j<num_options; j++) {
 			msg = j==correct_index ? 0 : 1;
 			connector_put_bytes(c, native_putter, &msg, 1);

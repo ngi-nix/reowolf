@@ -4,6 +4,7 @@ use crate::common::*;
 pub enum ConnectError {
     BindFailed(SocketAddr),
     UdpConnectFailed(SocketAddr),
+    TcpInvalidConnect(SocketAddr),
     PollInitFailed,
     Timeout,
     PollFailed,

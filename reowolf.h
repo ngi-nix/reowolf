@@ -129,6 +129,8 @@ const uint8_t *connector_gotten_bytes(Connector *connector, PortId port, uintptr
  * The connector uses the given (internal) connector ID.
  */
 Connector *connector_new(const Arc_ProtocolDescription *pd);
+Connector *connector_new_with_id(const Arc_ProtocolDescription *pd,
+                                 ConnectorId connector_id);
 
 Connector *connector_new_logging(const Arc_ProtocolDescription *pd,
                                  const uint8_t *path_ptr,
