@@ -494,6 +494,7 @@ fn setup_endpoints_and_pair_ports(
                             .expect("Net Setup's getter port info isn't known"); // unreachable
                         if event.is_writable() && !net_todo.sent_local_port {
                             // can write and didn't send setup msg yet? Do so!
+                            let _ = net_endpoint.stream.set_nodelay(true);
                             let msg = Msg::SetupMsg(SetupMsg::MyPortInfo(MyPortInfo {
                                 owner: local_info.owner,
                                 polarity: local_info.polarity,

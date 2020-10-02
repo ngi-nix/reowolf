@@ -2,6 +2,8 @@
 #include "../../reowolf.h"
 #include "../utility.c"
 int main(int argc, char** argv) {
+	// all outward connections are ACTIVE to localhost
+	// use tcp_rendezvous
 	int i, j, cid, min_putter, min_getter, ports_tot, ports_used;
 	char do_puts, do_gets;
 	cid = atoi(argv[1]);
@@ -25,7 +27,7 @@ int main(int argc, char** argv) {
 			Polarity_Putter, EndpointPolarity_Active);
 		connector_add_net_port(c, &getters[i],
 			(FfiSocketAddr){{127, 0, 0, 1}, min_getter+i},
-			Polarity_Getter, EndpointPolarity_Passive);
+			Polarity_Getter, EndpointPolarity_Active);
 	}
 	connector_connect(c, -1);
 	printf("connect ok!\n");

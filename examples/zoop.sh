@@ -1,5 +1,5 @@
 #!/bin/bash
-for included in {0..13}
+for ports in 2 4 6 8 10 12 14 16
 do
-	./bench_13/main.exe 65535 $included 13
+	./bench_19/main.exe 98 7500 7000 16 $ports y y 192 168 1 4 1000
 done
