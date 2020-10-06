@@ -2,6 +2,8 @@
 #include "../../reowolf.h"
 #include "../utility.c"
 int main(int argc, char** argv) {
+	// same as bench 15 but connecting to 87.210.104.102 and getting at 0.0.0.0
+	// also, doing 10k reps (down from 100k) to save time
 	int i, cid;
 	cid = atoi(argv[1]);
 	printf("cid %d\n", cid);
@@ -15,19 +17,21 @@ int main(int argc, char** argv) {
 	for(i=2; i<argc; i++) {
 		EndpointPolarity ep;
 		Polarity p;
+		FfiSocketAddr addr;
 		if(argv[i][0] == '.') {
 			seen_delim = true;
 			continue;
 		} else if(seen_delim) {
+			addr = (FfiSocketAddr) {{0, 0, 0, 0}, atoi(argv[i])};
 			printf("getter");
 			p = Polarity_Getter;
 			ep = EndpointPolarity_Passive;
 		} else {
+			addr = (FfiSocketAddr) {{87, 210, 104, 102}, atoi(argv[i])};
 			printf("putter");
 			p = Polarity_Putter;
 			ep = EndpointPolarity_Active;
 		}
-		FfiSocketAddr addr = {{127, 0, 0, 1}, atoi(argv[i])};
 		printf("@%d\n", addr.port);
 		connector_add_net_port(c, NULL, addr, p, ep);
 	}
@@ -36,7 +40,7 @@ int main(int argc, char** argv) {
 	printf("Connect OK!\n");
 	
 	clock_t begin = clock();
-	for (i=0; i<100000; i++) {
+	for (i=0; i<150; i++) {
 		connector_sync(c, -1);
 	}
 	clock_t end = clock();

@@ -2,9 +2,10 @@
 #include "../../reowolf.h"
 #include "../utility.c"
 int main(int argc, char** argv) {
-	int i, forwards;
+	int i, forwards, msglen;
 	forwards = atoi(argv[1]);
-	printf("forwards %d\n", forwards);
+	msglen = atoi(argv[2]);
+	printf("forwards %d, msglen %d\n", forwards, msglen);
 	unsigned char pdl[] = ""; 
 	Arc_ProtocolDescription * pd = protocol_description_parse(pdl, sizeof(pdl)-1);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
@@ -27,14 +28,12 @@ int main(int argc, char** argv) {
 	connector_connect(c, -1);
 	printf("Error str `%s`\n", reowolf_error_peek(NULL));
 	
-	
-	size_t msg_len = 0xffff;
-	char * msg = malloc(msg_len);
-	memset(msg, 42, msg_len);
+	char * msg = malloc(msglen);
+	memset(msg, 42, msglen);
 	
 	clock_t begin = clock();
-	for (i=0; i<1000000; i++) {
-		connector_put_bytes(c, native_putter, msg, msg_len);
+	for (i=0; i<100000; i++) {
+		connector_put_bytes(c, native_putter, msg, msglen);
 		connector_get(c, native_getter);
 		connector_sync(c, -1);
 	}

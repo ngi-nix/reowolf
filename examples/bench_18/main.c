@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 	
 	clock_t begin = clock();
 	char msg[] = "Hello, world!";
-	for (i=0; i<1000; i++) {
+	for (i=0; i<1000000; i++) {
 		for(j=0; j<ports_used; j++) {
 			if(do_gets=='y') connector_get(c, getters[j]);
 			if(do_puts=='y') connector_put_bytes(c, putters[j], msg, sizeof(msg)-1);

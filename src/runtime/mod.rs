@@ -261,7 +261,7 @@ struct IdManager {
 }
 
 // Newtype wrapper around a byte buffer, used for UDP mediators to receive incoming datagrams.
-struct UdpInBuffer {
+struct IoByteBuffer {
     byte_vec: Vec<u8>,
 }
 
@@ -285,7 +285,7 @@ struct EndpointManager {
     undelayed_messages: Vec<(usize, Msg)>, // ready to yield
     net_endpoint_store: EndpointStore<NetEndpointExt>,
     udp_endpoint_store: EndpointStore<UdpEndpointExt>,
-    udp_in_buffer: UdpInBuffer,
+    io_byte_buffer: IoByteBuffer,
 }
 
 // A storage of endpoints, which keeps track of which components have raised
@@ -902,7 +902,7 @@ impl Debug for SpecVal {
         self.0.fmt(f)
     }
 }
-impl Default for UdpInBuffer {
+impl Default for IoByteBuffer {
     fn default() -> Self {
         let mut byte_vec = Vec::with_capacity(Self::CAPACITY);
         unsafe {
@@ -912,15 +912,15 @@ impl Default for UdpInBuffer {
         Self { byte_vec }
     }
 }
-impl UdpInBuffer {
-    const CAPACITY: usize = u16::MAX as usize;
+impl IoByteBuffer {
+    const CAPACITY: usize = u16::MAX as usize + 1000;
     fn as_mut_slice(&mut self) -> &mut [u8] {
         self.byte_vec.as_mut_slice()
     }
 }
 
-impl Debug for UdpInBuffer {
+impl Debug for IoByteBuffer {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "UdpInBuffer")
+        write!(f, "IoByteBuffer")
     }
 }

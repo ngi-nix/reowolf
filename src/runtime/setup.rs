@@ -317,6 +317,7 @@ fn setup_endpoints_and_pair_ports(
     let [mut net_polled_undrained, udp_polled_undrained] = [VecSet::default(), VecSet::default()];
     let mut delayed_messages = vec![];
     let mut last_retry_at = Instant::now();
+    let mut io_byte_buffer = IoByteBuffer::default();
 
     // Create net/udp todo structures, each already registered with poll
     let mut net_todos = net_endpoint_setups
@@ -501,7 +502,7 @@ fn setup_endpoints_and_pair_ports(
                                 port: net_todo.endpoint_setup.getter_for_incoming,
                             }));
                             net_endpoint
-                                .send(&msg)
+                                .send(&msg, &mut io_byte_buffer)
                                 .map_err(|e| {
                                     Ce::NetEndpointSetupError(
                                         net_endpoint.stream.local_addr().unwrap(),
@@ -622,7 +623,7 @@ fn setup_endpoints_and_pair_ports(
             endpoint_exts: udp_endpoint_exts,
             polled_undrained: udp_polled_undrained,
         },
-        udp_in_buffer: Default::default(),
+        io_byte_buffer,
     };
     Ok((endpoint_manager, extra_port_info))
 }
