@@ -248,15 +248,6 @@ impl Connector {
         use SyncError as Se;
         //////////////////////////////////
 
-        log!(@MARK, cu.logger(), "sync start {}", comm.round_index);
-        log!(
-            cu.logger(),
-            "~~~ SYNC called with timeout {:?}; starting round {}",
-            &timeout,
-            comm.round_index
-        );
-        log!(@BENCH, cu.logger(), "");
-
         // Create separate storages for ports and components stored in `cu`,
         // while kicking off the branching of components until the set of
         // components entering their synchronous block is finalized in `branching_proto_components`.
@@ -308,7 +299,6 @@ impl Connector {
             "All {} proto components are now done with Nonsync phase",
             branching_proto_components.len(),
         );
-        log!(@BENCH, cu.logger(), "");
 
         // Create temporary structures needed for the synchronous phase of the round
         let mut rctx = RoundCtx {
@@ -342,7 +332,6 @@ impl Connector {
             deadline: timeout.map(|to| Instant::now() + to),
         };
         log!(cu.logger(), "Round context structure initialized");
-        log!(@BENCH, cu.logger(), "");
 
         // Prepare the branching native component, involving the conversion
         // of its synchronous batches (user provided) into speculative branches eagerly.
@@ -434,7 +423,6 @@ impl Connector {
         // Call to another big method; keep running this round
         // until a distributed decision is reached!
         log!(cu.logger(), "Searching for decision...");
-        log!(@BENCH, cu.logger(), "");
         let decision = Self::sync_reach_decision(
             cu,
             comm,
@@ -442,9 +430,7 @@ impl Connector {
             &mut branching_proto_components,
             &mut rctx,
         )?;
-        log!(@MARK, cu.logger(), "got decision!");
         log!(cu.logger(), "Committing to decision {:?}!", &decision);
-        log!(@BENCH, cu.logger(), "");
         comm.endpoint_manager.udp_endpoints_round_end(&mut *cu.logger(), &decision)?;
 
         // propagate the decision to children
@@ -460,7 +446,6 @@ impl Connector {
             &msg,
             &comm.neighborhood.children
         );
-        log!(@MARK, cu.logger(), "forwarding decision!");
         for &child in comm.neighborhood.children.iter() {
             comm.endpoint_manager.send_to_comms(child, &msg)?;
         }
@@ -493,7 +478,6 @@ impl Connector {
             }
         };
         log!(cu.logger(), "Sync round ending! Cleaning up");
-        log!(@BENCH, cu.logger(), "");
         ret
     }
 
@@ -511,7 +495,6 @@ impl Connector {
         rctx: &mut RoundCtx,
     ) -> Result<Decision, UnrecoverableSyncError> {
         // The round is in progress, and now its just a matter of arriving at a decision.
-        log!(@MARK, cu.logger(), "decide start");
         let mut already_requested_failure = false;
         if branching_native.branches.is_empty() {
             // An unsatisfiable native is the easiest way to detect failure
@@ -579,7 +562,6 @@ impl Connector {
             // handle all buffered messages, sending them through endpoints / feeding them to components
             log!(cu.logger(), "Decision loop! have {} messages to recv", rctx.payload_inbox.len());
             while let Some((getter, send_payload_msg)) = rctx.getter_pop() {
-                log!(@MARK, cu.logger(), "handling payload msg for getter {:?} of {:?}", getter, &send_payload_msg);
                 let getter_info = rctx.ips.port_info.map.get(&getter).unwrap();
                 let cid = getter_info.owner; // the id of the component owning `getter` port
                 assert_eq!(Getter, getter_info.polarity); // sanity check
@@ -603,7 +585,6 @@ impl Connector {
                     }
                     Route::NetEndpoint { index } => {
                         // this is a message sent over the network as a control message
-                        log!(@MARK, cu.logger(), "sending payload");
                         let msg = Msg::CommMsg(CommMsg {
                             round_index: comm.round_index,
                             contents: CommMsgContents::SendPayload(send_payload_msg),
@@ -669,7 +650,6 @@ impl Connector {
             log!(cu.logger(), "Check if we have any local decisions...");
             for solution in rctx.solution_storage.iter_new_local_make_old() {
                 log!(cu.logger(), "New local decision with solution {:?}...", &solution);
-                log!(@MARK, cu.logger(), "local solution");
                 match comm.neighborhood.parent {
                     Some(parent) => {
                         // Always forward connector-local solutions to my parent
