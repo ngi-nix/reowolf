@@ -202,11 +202,16 @@ impl Connector {
                 Err(Ce::AlreadyConnected)
             }
             ConnectorPhased::Setup(setup) => {
-                // Ideally, we'd simply clone `cu` in its entirety, and pass it to
-                // `connect_inner`, such that a successful connection discards the original.
-                // We need to work around the `logger` not being clonable;
-                // solution? create a dummy clone, and use mem-swap to ensure the
-                // single real logger is wherever it needs to be.
+                // Idea: Clone `self.unphased`, and then pass the replica to
+                // `connect_inner` to do the work, attempting to create a new connector structure
+                // in connected state without encountering any errors.
+                // If anything goes wrong during `connect_inner`, we simply keep the original `cu`.
+
+                // Ideally, we'd simply clone `cu` in its entirety.
+                // However, it isn't clonable, because of the pesky logger.
+                // Solution: the original and clone ConnectorUnphased structures
+                // 'share' the original logger by using `mem::swap` strategically to pass a dummy back and forth,
+                // such that the real logger is wherever we need it to be without violating any invariants.
                 let mut cu_clone = ConnectorUnphased {
                     logger: Box::new(DummyLogger),
                     proto_components: cu.proto_components.clone(),
@@ -233,6 +238,11 @@ impl Connector {
             }
         }
     }
+
+    // Given an immutable setup structure, and my own (cloned) ConnetorUnphased,
+    // attempt to complete the setup procedure and return a new connector in Connected state.
+    // If anything goes wrong, throw everything in the bin, except for the Logger, which is
+    // the only structure that sees lasting effects of the failed attempt.
     fn connect_inner(
         mut cu: ConnectorUnphased,
         setup: &ConnectorSetup,
