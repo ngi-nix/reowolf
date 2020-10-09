@@ -250,6 +250,9 @@ impl Connector {
     ) -> Result<Self, (ConnectError, Box<dyn Logger>)> {
         log!(cu.logger, "~~~ CONNECT called timeout {:?}", timeout);
         let deadline = timeout.map(|to| Instant::now() + to);
+        // `try_complete` is a helper function, which DOES NOT own `cu`, and returns ConnectError on err.
+        // This outer function takes its output and wraps it alongside `cu` (which it owns)
+        // as appropriate for Err(...) and OK(...) cases.
         let mut try_complete = || {
             // connect all endpoints in parallel; send and receive peer ids through ports
             let mut endpoint_manager = setup_endpoints_and_pair_ports(
@@ -1030,12 +1033,12 @@ fn session_optimize(
 // and returning an optimized map.
 fn leader_session_map_optimize(
     logger: &mut dyn Logger,
-    unoptimized_map: HashMap<ConnectorId, SessionInfo>,
+    mut m: HashMap<ConnectorId, SessionInfo>,
 ) -> Result<HashMap<ConnectorId, SessionInfo>, ConnectError> {
     log!(logger, "Session map optimize START");
     // currently, it's the identity function
     log!(logger, "Session map optimize END");
-    Ok(unoptimized_map)
+    Ok(m)
 }
 
 // Modify the given connector's internals to reflect
@@ -1052,7 +1055,7 @@ fn apply_my_optimizations(
         endpoint_incoming_to_getter,
     } = session_info;
     // simply overwrite the contents
-    // println!("BEFORE: {:#?}\n{:#?}", cu, comm);
+    println!("BEFORE: {:#?}\n{:#?}", cu, comm);
     cu.ips.port_info = port_info;
     assert!(cu.ips.port_info.invariant_preserved());
     cu.proto_components = proto_components;

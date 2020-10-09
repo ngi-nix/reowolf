@@ -1309,30 +1309,3 @@ fn for_msg_byte() {
     }
     c.sync(None).unwrap();
 }
-
-#[test]
-fn message_concat() {
-    // Note: PDL quirks:
-    // 1. declarations as first lines of a scope
-    // 2. var names cannot be prefixed by types. Eg `msg_concat` prohibited.
-    let test_log_path = Path::new("./logs/message_concat");
-    let pdl = b"
-    primitive message_concat(out o) {
-        msg a = create(1);
-        msg b = create(1);
-        a[0] = 0;
-        b[0] = 1;
-        synchronous() put(o, a+b);
-    }
-    ";
-    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
-    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
-
-    // setup a session between (a) native, and (b) sequencer3, connected by 3 ports.
-    let [p0, g0] = c.new_port_pair();
-    c.add_component(b"message_concat", &[p0]).unwrap();
-    c.connect(None).unwrap();
-    c.get(g0).unwrap();
-    c.sync(None).unwrap();
-    assert_eq!(&[0, 1], c.gotten(g0).unwrap().as_slice());
-}

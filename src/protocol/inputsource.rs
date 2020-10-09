@@ -28,10 +28,12 @@ primitive alternator(in i, out l, out r) {
     }
 }
 primitive replicator(in i, out l, out r) {
-    while(true) synchronous() if(fires(i)) {
-        msg m = get(i);
-        put(l, m);
-        put(r, m);
+    while(true) synchronous {
+        if(fires(i)) {
+            msg m = get(i);
+            put(l, m);
+            put(r, m);
+        }
     }
 }
 primitive merger(in l, in r, out o) {
