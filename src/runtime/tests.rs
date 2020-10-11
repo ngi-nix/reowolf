@@ -704,6 +704,7 @@ fn solo_udp_get_fail() {
     c.sync(MS300).unwrap_err();
 }
 
+#[ignore]
 #[test]
 fn reowolf_to_udp() {
     let test_log_path = Path::new("./logs/reowolf_to_udp");
@@ -734,6 +735,7 @@ fn reowolf_to_udp() {
     .unwrap();
 }
 
+#[ignore]
 #[test]
 fn udp_to_reowolf() {
     let test_log_path = Path::new("./logs/udp_to_reowolf");
