@@ -425,6 +425,9 @@ trait CuUndecided {
     fn proto_description(&self) -> &ProtocolDescription;
     fn native_component_id(&self) -> ComponentId;
     fn logger_and_protocol_description(&mut self) -> (&mut dyn Logger, &ProtocolDescription);
+    fn logger_and_protocol_components(
+        &mut self,
+    ) -> (&mut dyn Logger, &mut HashMap<ComponentId, ComponentState>);
 }
 
 // Represents a set of synchronous port operations that the native component

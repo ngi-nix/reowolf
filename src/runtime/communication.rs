@@ -72,6 +72,11 @@ impl CuUndecided for ConnectorUnphased {
     fn logger_and_protocol_description(&mut self) -> (&mut dyn Logger, &ProtocolDescription) {
         (&mut *self.logger, &self.proto_description)
     }
+    fn logger_and_protocol_components(
+        &mut self,
+    ) -> (&mut dyn Logger, &mut HashMap<ComponentId, ComponentState>) {
+        (&mut *self.logger, &mut self.proto_components)
+    }
     fn logger(&mut self) -> &mut dyn Logger {
         &mut *self.logger
     }
@@ -274,7 +279,7 @@ impl Connector {
             };
             let blocker = component.nonsync_run(&mut ctx, proto_description);
             log!(
-                cu.logger(),
+                logger,
                 "proto component {:?} ran to nonsync blocker {:?}",
                 proto_component_id,
                 &blocker
@@ -452,22 +457,23 @@ impl Connector {
             Decision::Success(predicate) => {
                 // commit changes to component states
                 cu.proto_components.clear();
-                cu.proto_components.extend(
+                let (logger, proto_components) = cu.logger_and_protocol_components();
+                proto_components.extend(
                     // "flatten" branching components, committing the speculation
                     // consistent with the predicate decided upon.
                     branching_proto_components
                         .into_iter()
-                        .map(|(cid, bpc)| (cid, bpc.collapse_with(&predicate))),
+                        .map(|(cid, bpc)| (cid, bpc.collapse_with(logger, &predicate))),
                 );
                 // commit changes to ports and id_manager
-                cu.ips = rctx.ips;
                 log!(
-                    cu.logger,
+                    logger,
                     "End round with (updated) component states {:?}",
-                    cu.proto_components.keys()
+                    proto_components.keys()
                 );
+                cu.ips = rctx.ips;
                 // consume native
-                let round_ok = branching_native.collapse_with(&mut *cu.logger(), &predicate);
+                let round_ok = branching_native.collapse_with(cu.logger(), &predicate);
                 Ok(Some(round_ok))
             }
         };
@@ -972,6 +978,7 @@ impl BranchingNative {
                 return RoundEndedNative { batch_index: index, gotten };
             }
         }
+        log!(logger, "Native had no branches matching pred {:?}", solution_predicate);
         panic!("Native had no branches matching pred {:?}", solution_predicate);
     }
 }
@@ -1214,7 +1221,11 @@ impl BranchingProtoComponent {
 
     // Given the predicate for the round's solution, collapse this
     // branching native to an ended branch whose predicate is consistent with it.
-    fn collapse_with(self, solution_predicate: &Predicate) -> ComponentState {
+    fn collapse_with(
+        self,
+        logger: &mut dyn Logger,
+        solution_predicate: &Predicate,
+    ) -> ComponentState {
         let BranchingProtoComponent { branches } = self;
         for (branch_predicate, branch) in branches {
             if branch.ended && branch_predicate.assigns_subset(solution_predicate) {
@@ -1222,6 +1233,7 @@ impl BranchingProtoComponent {
                 return state;
             }
         }
+        log!(logger, "ProtoComponent had no branches matching pred {:?}", solution_predicate);
         panic!("ProtoComponent had no branches matching pred {:?}", solution_predicate);
     }
 }

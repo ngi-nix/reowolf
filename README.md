@@ -8,6 +8,7 @@ This library provides connectors as a generalization of sockets for use in commu
 	- The resulting dylib can be found in `./target/release/`, to be used with the header file: `./reowolf.h`.
 	- *Note*: A list of immediate ancestor dependencies is visible in `./Cargo.toml`.
 	- *Note*: Run `cargo test --release` to run unit tests with release-level optimizations.
+1. By default, will compile with logging turned ON and session optimization turned OFF. Control this by passing the desired set of feature flags in {"no_logging", "session_optimization"} to the compiler. For example, `cargo build --release --features no_logging`.
 
 ## Using the library
 - The library may be used as a Rust dependency by adding it as a git dependency, i.e., by adding line `reowolf_rs = { git = "https://scm.cwi.nl/FM/reowolf" }` to downstream crate's manifest file, `Cargo.toml`.

@@ -1313,6 +1313,58 @@ fn for_msg_byte() {
 }
 
 #[test]
+fn eq_causality() {
+    let test_log_path = Path::new("./logs/eq_no_causality");
+    let pdl = b"
+    primitive eq(in a, in b, out c) {
+        msg ma = null;
+        msg mb = null;
+        while(true) synchronous {
+            if(fires(a)) {
+                // b and c also fire!
+                // left first!
+                ma = get(a);
+                put(c, ma);
+                mb = get(b);
+                assert(ma == mb);
+            }
+        }
+    }
+    ";
+    let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
+    let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
+
+    /*
+    [native]p0-->g0[eq]p1--.
+                 g1        |
+                 ^---------`
+    */
+    let [p0, g0] = c.new_port_pair();
+    let [p1, g1] = c.new_port_pair();
+    c.add_component(b"eq", &[g0, g1, p1]).unwrap();
+
+    /*
+                  V--------.
+                 g2        |
+    [native]p2-->g3[eq]p3--`
+    */
+    let [p2, g2] = c.new_port_pair();
+    let [p3, g3] = c.new_port_pair();
+    c.add_component(b"eq", &[g3, g2, p3]).unwrap();
+    c.connect(None).unwrap();
+
+    for _ in 0..4 {
+        // everything is fine with LEFT FIRST
+        c.put(p0, TEST_MSG.clone()).unwrap();
+        c.sync(MS100).unwrap();
+
+        // no solution when left is NOT FIRST
+        c.put(p2, TEST_MSG.clone()).unwrap();
+        c.sync(MS100).unwrap_err();
+    }
+}
+
+#[test]
 fn eq_no_causality() {
     let test_log_path = Path::new("./logs/eq_no_causality");
     let pdl = b"
@@ -1324,22 +1376,25 @@ fn eq_no_causality() {
         msg ma = null;
         msg mb = null;
         while(true) synchronous {
-            if(fires(leftfirsti)) {
-                // left first! DO USE DUMMY
-                ma = get(a);
-                put(c, ma);
-                mb = get(b);
+            if(fires(a)) {
+                // b and c also fire!
+                if(fires(leftfirsti)) {
+                    // left first! DO USE DUMMY
+                    ma = get(a);
+                    put(c, ma);
+                    mb = get(b);
 
-                // using dummy!
-                put(leftfirsto, ma);
-                get(leftfirsti);
-            } else {
-                // right first! DON'T USE DUMMY
-                mb = get(b);
-                put(c, mb);
-                ma = get(a);
+                    // using dummy!
+                    put(leftfirsto, ma);
+                    get(leftfirsti);
+                } else {
+                    // right first! DON'T USE DUMMY
+                    mb = get(b);
+                    put(c, mb);
+                    ma = get(a);
+                }
+                assert(ma == mb);
             }
-            assert(ma == mb);
         }
     }
     ";
@@ -1366,8 +1421,11 @@ fn eq_no_causality() {
     c.connect(None).unwrap();
 
     for _ in 0..32 {
+        // ok when they send
         c.put(p0, TEST_MSG.clone()).unwrap();
         c.put(p2, TEST_MSG.clone()).unwrap();
+        c.sync(SEC1).unwrap();
+        // ok when they don't
         c.sync(SEC1).unwrap();
     }
 }
