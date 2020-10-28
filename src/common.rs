@@ -98,7 +98,6 @@ pub(crate) enum SyncBlocker {
     CouldntReadMsg(PortId),
     CouldntCheckFiring(PortId),
     PutMsg(PortId, Payload),
-    NondetChoice { n: u16 },
 }
 pub(crate) struct DenseDebugHex<'a>(pub &'a [u8]);
 pub(crate) struct DebuggableIter<I: Iterator<Item = T> + Clone, T: Debug>(pub(crate) I);

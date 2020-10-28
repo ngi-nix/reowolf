@@ -6,7 +6,6 @@ impl TokenTarget {
     // [NET_ENDPOINT][UDP_ENDPOINT  ]
     // ^0            ^usize::MAX/2   ^usize::MAX
     const HALFWAY_INDEX: usize = usize::MAX / 2;
-    const MAX_INDEX: usize = usize::MAX;
 }
 impl From<Token> for TokenTarget {
     fn from(Token(index): Token) -> Self {
@@ -1033,7 +1032,7 @@ fn session_optimize(
 // and returning an optimized map.
 fn leader_session_map_optimize(
     logger: &mut dyn Logger,
-    mut m: HashMap<ConnectorId, SessionInfo>,
+    m: HashMap<ConnectorId, SessionInfo>,
 ) -> Result<HashMap<ConnectorId, SessionInfo>, ConnectError> {
     log!(logger, "Session map optimize START");
     // currently, it's the identity function

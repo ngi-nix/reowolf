@@ -70,7 +70,6 @@ pub(crate) struct SyncProtoContext<'a> {
 // access control.
 #[derive(Default, Debug, Clone)]
 struct ProtoComponentBranchInner {
-    untaken_choice: Option<u16>,
     did_put_or_get: HashSet<PortId>,
     inbox: HashMap<PortId, Payload>,
 }

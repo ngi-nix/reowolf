@@ -1095,20 +1095,6 @@ impl BranchingProtoComponent {
                         // This branch exits the cyclic drain
                         Self::insert_branch_merging(cd.output, predicate, branch);
                     }
-                    B::NondetChoice { n } => {
-                        // This branch requested the creation of a new n-way nondeterministic
-                        // fork of the branch with a fresh speculative variable.
-                        // ... allocate a new speculative variable
-                        let var = rctx.spec_var_stream.next();
-                        // ... and for n distinct values, create a new forked branch,
-                        // and schedule them to be rerun through the cyclic drain.
-                        for val in SpecVal::iter_domain().take(n as usize) {
-                            let predicate_n = predicate.clone().inserted(var, val);
-                            let mut branch_n = branch.clone();
-                            branch_n.inner.untaken_choice = Some(val.0);
-                            Self::insert_branch_merging(cd.swap, predicate_n, branch_n);
-                        }
-                    }
                 }
             }
             std::mem::swap(cd.input, cd.swap);
@@ -1439,15 +1425,5 @@ impl SyncProtoContext<'_> {
             self.branch_inner.did_put_or_get.insert(port);
         }
         maybe_msg
-    }
-
-    // NOT CURRENTLY USED
-    // Once this component has injected a new nondeterministic branch with
-    // SyncBlocker::NondetChoice, this is how the component retrieves it.
-    // (Two step process necessary to get around mutable access rules,
-    //  as injection of the nondeterministic choice modifies the
-    //  branch predicate, forks the branch, etc.)
-    pub(crate) fn take_choice(&mut self) -> Option<u16> {
-        self.branch_inner.untaken_choice.take()
     }
 }

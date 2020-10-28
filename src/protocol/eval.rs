@@ -6,11 +6,9 @@ use std::{i16, i32, i64, i8};
 use crate::common::*;
 
 use crate::protocol::ast::*;
-// use crate::protocol::inputsource::*;
-// use crate::protocol::parser::*;
 use crate::protocol::EvalContext;
 
-const MAX_RECURSION: usize = 1024;
+// const MAX_RECURSION: usize = 1024;
 
 const BYTE_MIN: i64 = i8::MIN as i64;
 const BYTE_MAX: i64 = i8::MAX as i64;

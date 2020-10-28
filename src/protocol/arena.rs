@@ -8,7 +8,7 @@ pub struct Id<T> {
     _phantom: PhantomData<T>,
 }
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Arena<T> {
+pub(crate) struct Arena<T> {
     store: Vec<T>,
 }
 //////////////////////////////////
