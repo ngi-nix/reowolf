@@ -31,4 +31,4 @@ The former is created using `parse`. For the most part, the user is not expected
 The latter is created with `new`, configured with methods such as `new_net_port` and `add_component`, and connected via `connect`, whereafter it can be used for multi-party communication through methods `put`, `get`, `next_batch`, and `sync`.
 
 ## Contributor Overview
-The details of the implementation are best understood by reading the doc comments, starting from the procedures listed in the section above. It is suggested to first/also refer to the Reowolf project's companion documentation (link TODO) for a higher level overview of the goals and design of the implementation.
+The details of the implementation are best understood by reading the doc comments, starting from the procedures listed in the section above. It is suggested to first/also refer to the Reowolf project's companion [documentation](https://doi.org/10.5281/zenodo.3559822) for a higher level overview of the goals and design of the implementation.
