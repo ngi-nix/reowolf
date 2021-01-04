@@ -1,0 +1,7 @@
+// It fails, so that is nice, but it fails due to the wrong reasons
+// My bad: C-ism of declarations on top
+bool some_function() {
+    result_c = false;
+    bool result_c = true;
+    return result_c;
+}

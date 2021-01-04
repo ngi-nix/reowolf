@@ -1,7 +1,7 @@
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::lexer::*;
-// use crate::protocol::library;
+use crate::protocol::library;
 
 // The following indirection is needed due to a bug in the cbindgen tool.
 type Unit = ();
@@ -796,14 +796,14 @@ impl Visitor for BuildSymbolDeclarations {
         h[pd].declarations.append(&mut self.declarations);
         Ok(())
     }
-    fn visit_import(&mut self, _h: &mut Heap, _import: ImportId) -> VisitorResult {
-        todo!()
-        // let vec = library::get_declarations(h, import)?;
-        // // Destructively iterate over the vector
-        // for decl in vec {
-        //     self.checked_add(h, decl)?;
-        // }
-        // Ok(())
+    fn visit_import(&mut self, h: &mut Heap, import: ImportId) -> VisitorResult {
+        println!("DEBUG: Warning (at {}:{}), import actually not yet implemented", file!(), line!());
+        let vec = library::get_declarations(h, import)?;
+        // Destructively iterate over the vector
+        for decl in vec {
+            self.checked_add(h, decl)?;
+        }
+        Ok(())
     }
     fn visit_symbol_definition(&mut self, h: &mut Heap, definition: DefinitionId) -> VisitorResult {
         let signature = Signature::from_definition(h, definition);
@@ -1821,66 +1821,152 @@ impl<'a> Parser<'a> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     extern crate test_generator;
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+    use std::io::Read;
+    use std::path::Path;
 
-//     use std::fs::File;
-//     use std::io::Read;
-//     use std::path::Path;
+    use super::*;
 
-//     use test_generator::test_resources;
+    #[test]
+    fn positive_tests() {
+        for resource in TestFileIter::new("testdata/parser/positive", "pdl") {
+            let resource = resource.expect("read testdata filepath");
+            // println!(" * running: {}", &resource);
+            let path = Path::new(&resource);
+            let mut heap = Heap::new();
+            let mut source = InputSource::from_file(&path).unwrap();
+            // println!("DEBUG -- input:\n{}", String::from_utf8_lossy(&source.input));
+            let mut parser = Parser::new(&mut source);
+            match parser.parse(&mut heap) {
+                Ok(_) => {}
+                Err(err) => {
+                    println!(" > file: {}", &resource);
+                    println!("{}", err.display(&source));
+                    println!("{:?}", err);
+                    assert!(false);
+                }
+            }
+        }
+    }
 
-//     use super::*;
+    #[test]
+    fn negative_tests() {
+        for resource in TestFileIter::new("testdata/parser/negative", "pdl") {
+            let resource = resource.expect("read testdata filepath");
+            let path = Path::new(&resource);
+            let expect = path.with_extension("txt");
+            let mut heap = Heap::new();
+            let mut source = InputSource::from_file(&path).unwrap();
+            let mut parser = Parser::new(&mut source);
+            match parser.parse(&mut heap) {
+                Ok(pd) => {
+                    println!("{:?}", heap[pd]);
+                    println!("Expected parse error:");
 
-//     #[test_resources("testdata/parser/positive/*.pdl")]
-//     fn batch1(resource: &str) {
-//         let path = Path::new(resource);
-//         let mut heap = Heap::new();
-//         let mut source = InputSource::from_file(&path).unwrap();
-//         let mut parser = Parser::new(&mut source);
-//         match parser.parse(&mut heap) {
-//             Ok(_) => {}
-//             Err(err) => {
-//                 println!("{}", err.display(&source));
-//                 println!("{:?}", err);
-//                 assert!(false);
-//             }
-//         }
-//     }
+                    let mut cev: Vec<u8> = Vec::new();
+                    let mut f = File::open(expect).unwrap();
+                    f.read_to_end(&mut cev).unwrap();
+                    println!("{}", String::from_utf8_lossy(&cev));
+                    assert!(false);
+                }
+                Err(err) => {
+                    println!("{:?}", err);
 
-//     #[test_resources("testdata/parser/negative/*.pdl")]
-//     fn batch2(resource: &str) {
-//         let path = Path::new(resource);
-//         let expect = path.with_extension("txt");
-//         let mut heap = Heap::new();
-//         let mut source = InputSource::from_file(&path).unwrap();
-//         let mut parser = Parser::new(&mut source);
-//         match parser.parse(&mut heap) {
-//             Ok(pd) => {
-//                 println!("{:?}", heap[pd]);
-//                 println!("Expected parse error:");
+                    let mut vec: Vec<u8> = Vec::new();
+                    err.write(&source, &mut vec).unwrap();
+                    println!("{}", String::from_utf8_lossy(&vec));
 
-//                 let mut cev: Vec<u8> = Vec::new();
-//                 let mut f = File::open(expect).unwrap();
-//                 f.read_to_end(&mut cev).unwrap();
-//                 println!("{}", String::from_utf8_lossy(&cev));
-//                 assert!(false);
-//             }
-//             Err(err) => {
-//                 println!("{:?}", err);
+                    let mut cev: Vec<u8> = Vec::new();
+                    let mut f = File::open(expect).unwrap();
+                    f.read_to_end(&mut cev).unwrap();
+                    println!("{}", String::from_utf8_lossy(&cev));
 
-//                 let mut vec: Vec<u8> = Vec::new();
-//                 err.write(&source, &mut vec).unwrap();
-//                 println!("{}", String::from_utf8_lossy(&vec));
+                    assert_eq!(vec, cev);
+                }
+            }
+        }
+    }
 
-//                 let mut cev: Vec<u8> = Vec::new();
-//                 let mut f = File::open(expect).unwrap();
-//                 f.read_to_end(&mut cev).unwrap();
-//                 println!("{}", String::from_utf8_lossy(&cev));
+    #[test]
+    fn counterexample_tests() {
+        for resource in TestFileIter::new("testdata/parser/counterexamples", "pdl") {
+            let resource = resource.expect("read testdata filepath");
+            let path = Path::new(&resource);
+            let mut heap = Heap::new();
+            let mut source = InputSource::from_file(&path).unwrap();
+            let mut parser = Parser::new(&mut source);
 
-//                 assert_eq!(vec, cev);
-//             }
-//         }
-//     }
-// }
+            fn print_header(s: &str) {
+                println!("{}", "=".repeat(80));
+                println!(" > File: {}", s);
+                println!("{}", "=".repeat(80));
+            }
+
+            match parser.parse(&mut heap) {
+                Ok(parsed) => {
+                    print_header(&resource);
+                    println!("\n  SUCCESS\n\n --- source:\n{}", String::from_utf8_lossy(&source.input));
+                },
+                Err(err) => {
+                    print_header(&resource);
+
+                    let mut err_buf = Vec::new();
+                    err.write(&source, &mut err_buf);
+                    println!(
+                        "\n  FAILURE\n\n --- error:\n{}\n --- source:\n{}",
+                        String::from_utf8_lossy(&err_buf),
+                        String::from_utf8_lossy(&source.input)
+                    )
+                }
+            }
+        }
+    }
+
+    struct TestFileIter {
+        iter: std::fs::ReadDir,
+        root: String,
+        extension: String
+    }
+
+    impl TestFileIter {
+        fn new(root_dir: &str, extension: &str) -> Self {
+            let path = Path::new(root_dir);
+            assert!(path.is_dir(), "root '{}' is not a directory", root_dir);
+
+            let iter = std::fs::read_dir(path).expect("list dir contents");
+
+            Self {
+                iter,
+                root: root_dir.to_string(),
+                extension: extension.to_string(),
+            }
+        }
+    }
+
+    impl Iterator for TestFileIter {
+        type Item = Result<String, String>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            while let Some(entry) = self.iter.next() {
+                if let Err(e) = entry {
+                    return Some(Err(format!("failed to read dir entry, because: {}", e)));
+                }
+                let entry = entry.unwrap();
+
+                let path = entry.path();
+                if !path.is_file() { continue; }
+
+                let extension = path.extension();
+                if extension.is_none() { continue; }
+                let extension = extension.unwrap().to_string_lossy();
+                if extension != self.extension { continue; }
+
+                return Some(Ok(path.to_string_lossy().to_string()));
+            }
+
+            None
+        }
+    }
+}

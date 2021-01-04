@@ -1,0 +1,10 @@
+#version 1
+
+int check_integer_specs() {
+    int a = 0xFF;
+    // no octal support, but thats fine
+    int b = 0xxxxFF;
+    int c = 0x1x2X3x4X5x6X7x8X; // Wut
+    int d = 1FF;
+    return a;
+}

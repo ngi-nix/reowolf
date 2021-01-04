@@ -1,0 +1,19 @@
+// Note sure if this is allowed. It seems silly, but could be useful to
+// select ports to return from. In any case, we are returning an out port from
+// a function returning an in port
+
+#version 1
+
+in do_something(in a, out b) {
+    return b;
+}
+
+float another_something(in a) {
+    return a;
+}
+
+whatami yet_another_one(andwhatismypurpose a) {
+    return a;
+}
+
+composite main() {}

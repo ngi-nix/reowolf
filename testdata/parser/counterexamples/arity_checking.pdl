@@ -1,0 +1,17 @@
+
+int funcy() {
+    return 5;
+}
+
+int funcadelic(int a) {
+    return  a;
+}
+
+int caller() {
+    funcy();
+    funcy(1);
+    funcy(1, 2, 3);
+    funcadelic();
+    funcadelic(5);
+    return funcadelic(1, 2, 3);
+}

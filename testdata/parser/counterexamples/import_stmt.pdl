@@ -1,0 +1,6 @@
+// Import succeeds due to bad parsing (checking for characters, not numbers,
+// should expect whitespace, then a single number
+
+#version123 456
+
+composite main() {}

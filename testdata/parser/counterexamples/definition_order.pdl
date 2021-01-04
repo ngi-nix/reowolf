@@ -1,0 +1,18 @@
+#version 1
+// My bad: C-ism of declarations on top
+
+int call_me(int later) {
+    return later;
+}
+
+int function() {
+    int a = 2;
+    int b = 3;
+
+    int d = call_me(b); // succeeds, because of assignment
+    call_me(b); // bare function call seems to work, unless we perform assignment afterwards
+
+    int d = 5;
+
+    return 2;
+}

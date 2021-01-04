@@ -1,0 +1,14 @@
+#version 1
+// My bad: C-ism of declarations on top
+
+int func_b() {
+    return 5;
+}
+
+int func_a() {
+    int a = 2; int b = 3;
+    int c = 5; func_b(c);
+    int e = 3;
+
+    return b;
+}

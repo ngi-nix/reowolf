@@ -8,7 +8,7 @@ use backtrace::Backtrace;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InputSource {
     filename: String,
-    input: Vec<u8>,
+    pub input: Vec<u8>,
     line: usize,
     column: usize,
     offset: usize,
@@ -41,13 +41,15 @@ primitive merger(in l, in r, out o) {
         if(fires(l))      put(o, get(l));
         else if(fires(r)) put(o, get(r));
     }
-}";
+}
+";
 
 impl InputSource {
     // Constructors
     pub fn new<R: io::Read, S: ToString>(filename: S, reader: &mut R) -> io::Result<InputSource> {
-        let mut vec = STD_LIB_PDL.to_vec();
+        let mut vec = Vec::new();
         reader.read_to_end(&mut vec)?;
+        vec.extend(STD_LIB_PDL.to_vec());
         Ok(InputSource {
             filename: filename.to_string(),
             input: vec,

@@ -1,0 +1,10 @@
+// Bad reporting of EOF. Also main parser loop would be fine if pragmas, imports
+// and declarations are mixed. Maybe force pragmas at top for readability...
+
+#version 1
+
+composite main() {}
+
+#version 2
+
+composite another() {}

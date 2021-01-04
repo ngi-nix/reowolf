@@ -3,7 +3,7 @@ mod ast;
 mod eval;
 pub(crate) mod inputsource;
 mod lexer;
-// mod library;
+mod library;
 mod parser;
 
 lazy_static::lazy_static! {
