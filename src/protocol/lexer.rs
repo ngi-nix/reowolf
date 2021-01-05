@@ -153,16 +153,12 @@ impl Lexer<'_> {
         }
     }
     fn has_keyword(&self, keyword: &[u8]) -> bool {
-        let len = keyword.len();
-        for i in 0..len {
-            let expected = Some(lowercase(keyword[i]));
-            let next = self.source.lookahead(i).map(lowercase);
-            if next != expected {
-                return false;
-            }
+        if !self.source.has(keyword) {
+            return false;
         }
+
         // Word boundary
-        if let Some(next) = self.source.lookahead(len) {
+        if let Some(next) = self.source.lookahead(keyword.len()) {
             !(next >= b'A' && next <= b'Z' || next >= b'a' && next <= b'z')
         } else {
             true
@@ -191,15 +187,7 @@ impl Lexer<'_> {
         Ok(())
     }
     fn has_string(&self, string: &[u8]) -> bool {
-        let len = string.len();
-        for i in 0..len {
-            let expected = Some(string[i]);
-            let next = self.source.lookahead(i);
-            if next != expected {
-                return false;
-            }
-        }
-        true
+        self.source.has(string)
     }
     fn consume_string(&mut self, string: &[u8]) -> Result<(), ParseError> {
         let len = string.len();
@@ -324,13 +312,13 @@ impl Lexer<'_> {
         }
     }
     fn has_array(&mut self) -> bool {
-        let backup = self.source.clone();
+        let backup_pos = self.source.pos();
         let mut result = false;
         match self.consume_whitespace(false) {
             Ok(_) => result = self.has_string(b"["),
             Err(_) => {}
         }
-        *self.source = backup;
+        self.source.seek(backup_pos);
         return result;
     }
     fn consume_type(&mut self) -> Result<Type, ParseError> {
@@ -1058,7 +1046,7 @@ impl Lexer<'_> {
         if self.has_builtin_keyword() {
             return true;
         }
-        let backup = self.source.clone();
+        let backup_pos = self.source.pos();
         let mut result = false;
         match self.consume_identifier_spilled() {
             Ok(_) => match self.consume_whitespace(false) {
@@ -1069,7 +1057,7 @@ impl Lexer<'_> {
             },
             Err(_) => {}
         }
-        *self.source = backup;
+        self.source.seek(backup_pos);
         return result;
     }
     fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError> {
@@ -1143,7 +1131,7 @@ impl Lexer<'_> {
         /* To prevent ambiguity with expression statements consisting
         only of an identifier, we look ahead and match the colon
         that signals a labeled statement. */
-        let backup = self.source.clone();
+        let backup_pos = self.source.pos();
         let mut result = false;
         match self.consume_identifier_spilled() {
             Ok(_) => match self.consume_whitespace(false) {
@@ -1154,7 +1142,7 @@ impl Lexer<'_> {
             },
             Err(_) => {}
         }
-        *self.source = backup;
+        self.source.seek(backup_pos);
         return result;
     }
     fn consume_statement_impl(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {
@@ -1203,14 +1191,14 @@ impl Lexer<'_> {
         if self.has_statement_keyword() {
             return false;
         }
-        let backup = self.source.clone();
+        let backup_pos = self.source.pos();
         let mut result = false;
         if let Ok(_) = self.consume_type_annotation_spilled() {
             if let Ok(_) = self.consume_whitespace(false) {
                 result = self.has_identifier();
             }
         }
-        *self.source = backup;
+        self.source.seek(backup_pos);
         return result;
     }
     fn consume_block_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {

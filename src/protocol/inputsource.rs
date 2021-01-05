@@ -49,7 +49,7 @@ impl InputSource {
     pub fn new<R: io::Read, S: ToString>(filename: S, reader: &mut R) -> io::Result<InputSource> {
         let mut vec = Vec::new();
         reader.read_to_end(&mut vec)?;
-        vec.extend(STD_LIB_PDL.to_vec());
+        // vec.extend(STD_LIB_PDL.to_vec());
         Ok(InputSource {
             filename: filename.to_string(),
             input: vec,
@@ -81,27 +81,50 @@ impl InputSource {
     pub fn pos(&self) -> InputPosition {
         InputPosition { line: self.line, column: self.column, offset: self.offset }
     }
+    pub fn seek(&mut self, pos: InputPosition) {
+        debug_assert!(pos.offset < self.input.len());
+        self.line = pos.line;
+        self.column = pos.column;
+        self.offset = pos.offset;
+    }
     pub fn error<S: ToString>(&self, message: S) -> ParseError {
         self.pos().parse_error(message)
     }
     pub fn is_eof(&self) -> bool {
         self.next() == None
     }
+
     pub fn next(&self) -> Option<u8> {
         if self.offset < self.input.len() {
-            Some((*self.input)[self.offset])
+            Some(self.input[self.offset])
         } else {
             None
         }
     }
+
     pub fn lookahead(&self, pos: usize) -> Option<u8> {
-        if let Some(x) = usize::checked_add(self.offset, pos) {
-            if x < self.input.len() {
-                return Some((*self.input)[x]);
-            }
+        let offset_pos = self.offset + pos;
+        if offset_pos < self.input.len() {
+            Some(self.input[offset_pos])
+        } else {
+            None
         }
-        None
     }
+
+    pub fn has(&self, to_compare: &[u8]) -> bool {
+        if self.offset + to_compare.len() <= self.input.len() {
+            for idx in 0..to_compare.len() {
+                if to_compare[idx] != self.input[self.offset + idx] {
+                    return false;
+                }
+            }
+
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn consume(&mut self) {
         match self.next() {
             Some(x) if x == b'\r' && self.lookahead(1) != Some(b'\n') || x == b'\n' => {
