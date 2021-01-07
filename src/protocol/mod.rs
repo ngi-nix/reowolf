@@ -1,10 +1,14 @@
 mod arena;
-mod ast;
+// mod ast;
 mod eval;
 pub(crate) mod inputsource;
-mod lexer;
+// mod lexer;
 mod library;
 mod parser;
+
+// TODO: Remove when not benchmarking
+pub(crate) mod ast;
+pub(crate) mod lexer;
 
 lazy_static::lazy_static! {
     /// Conveniently-provided protocol description initialized with a zero-length PDL string.

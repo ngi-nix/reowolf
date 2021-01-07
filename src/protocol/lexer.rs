@@ -58,6 +58,7 @@ fn is_integer_rest(x: Option<u8>) -> bool {
             || c >= b'A' && c <= b'F'
             || c == b'x'
             || c == b'X'
+            || c == b'o'
     } else {
         false
     }
@@ -218,6 +219,48 @@ impl Lexer<'_> {
             next = self.source.next();
         }
         Ok(result)
+    }
+    fn has_integer(&mut self) -> bool {
+        is_integer_start(self.source.next())
+    }
+    fn consume_integer(&mut self) -> Result<i64, ParseError> {
+        let position = self.source.pos();
+        let mut data = Vec::new();
+        let mut next = self.source.next();
+        while is_integer_rest(next) {
+            data.push(next.unwrap());
+            self.source.consume();
+            next = self.source.next();
+        }
+
+        let data_len = data.len();
+        debug_assert_ne!(data_len, 0);
+        if data_len == 1 {
+            debug_assert!(data[0] >= b'0' && data[0] <= b'9');
+            return Ok((data[0] - b'0') as i64);
+        } else {
+            // TODO: Fix, u64 should be supported as well
+            let parsed = if data[1] == b'b' {
+                let data = String::from_utf8_lossy(&data[2..]);
+                i64::from_str_radix(&data, 2)
+            } else if data[1] == b'o' {
+                let data = String::from_utf8_lossy(&data[2..]);
+                i64::from_str_radix(&data, 8)
+            } else if data[1] == b'x' {
+                let data = String::from_utf8_lossy(&data[2..]);
+                i64::from_str_radix(&data, 16)
+            } else {
+                // Assume decimal
+                let data = String::from_utf8_lossy(&data);
+                i64::from_str_radix(&data, 10)
+            };
+
+            if let Err(_err) = parsed {
+                return Err(ParseError::new(position, "Invalid integer constant"));
+            }
+
+            Ok(parsed.unwrap())
+        }
     }
 
     // Statement keywords
@@ -1025,17 +1068,11 @@ impl Lexer<'_> {
             self.source.consume();
             value = Constant::Character(data);
         } else {
-            let mut data = Vec::new();
-            let mut next = self.source.next();
-            if !is_integer_start(next) {
+            if !self.has_integer() {
                 return Err(self.source.error("Expected integer constant"));
             }
-            while is_integer_rest(next) {
-                data.push(next.unwrap());
-                self.source.consume();
-                next = self.source.next();
-            }
-            value = Constant::Integer(data);
+
+            value = Constant::Integer(self.consume_integer()?);
         }
         Ok(h.alloc_constant_expression(|this| ConstantExpression { this, position, value }))
     }
@@ -1574,8 +1611,38 @@ impl Lexer<'_> {
         if !is_vchar(self.source.next()) {
             return Err(self.source.error("Expected pragma"));
         }
-        let value = self.consume_line()?;
-        Ok(h.alloc_pragma(|this| Pragma { this, position, value }))
+        if self.has_string(b"version") {
+            self.consume_string(b"version")?;
+            self.consume_whitespace(true)?;
+            if !self.has_integer() {
+                return Err(self.source.error("Expected integer constant"));
+            }
+            let version = self.consume_integer()?;
+            debug_assert!(version >= 0);
+            return Ok(h.alloc_pragma(|this| Pragma::Version(PragmaVersion{
+                this, position, version: version as u64
+            })))
+        } else if self.has_string(b"module") {
+            self.consume_string(b"module")?;
+            self.consume_whitespace(true)?;
+            if !self.has_identifier() {
+                return Err(self.source.error("Expected identifier"));
+            }
+            let mut value = Vec::new();
+            let mut ident = self.consume_ident()?;
+            value.append(&mut ident);
+            while self.has_string(b".") {
+                self.consume_string(b".")?;
+                value.push(b'.');
+                ident = self.consume_ident()?;
+                value.append(&mut ident);
+            }
+            return Ok(h.alloc_pragma(|this| Pragma::Module(PragmaModule{
+                this, position, value
+            })));
+        } else {
+            return Err(self.source.error("Unknown pragma"));
+        }
     }
     fn has_import(&self) -> bool {
         self.has_keyword(b"import")
@@ -1635,10 +1702,37 @@ impl Lexer<'_> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::protocol::ast::Expression::*;
-//     use crate::protocol::{ast, lexer::*};
+#[cfg(test)]
+mod tests {
+    use crate::protocol::ast::Expression::*;
+    use crate::protocol::{ast, lexer::*};
+
+    #[test]
+    fn test_pragmas() {
+        let mut h = Heap::new();
+        let mut input = InputSource::from_string("
+        #version 0o7777
+        #module something.dot.separated
+        ").expect("new InputSource");
+        let mut lex = Lexer::new(&mut input);
+        let lexed = lex.consume_protocol_description(&mut h)
+            .expect("lex input source");
+        let root = &h[lexed];
+        assert_eq!(root.pragmas.len(), 2);
+        let pv = &h[root.pragmas[0]];
+        let pm = &h[root.pragmas[1]];
+
+        if let Pragma::Version(v) = pv {
+            assert_eq!(v.version, 0o7777)
+        } else {
+            assert!(false, "first pragma not version");
+        }
+        if let Pragma::Module(m) = pm {
+            assert_eq!(m.value, b"something.dot.separated");
+        } else {
+            assert!(false, "second pragma not version");
+        }
+    }
 
 //     #[test]
 //     fn test_lowercase() {
@@ -1755,4 +1849,4 @@ impl Lexer<'_> {
 //             }
 //         }
 //     }
-// }
+}

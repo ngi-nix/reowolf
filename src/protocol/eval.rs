@@ -68,10 +68,9 @@ impl Value {
             Constant::Null => Value::Message(MessageValue(None)),
             Constant::True => Value::Boolean(BooleanValue(true)),
             Constant::False => Value::Boolean(BooleanValue(false)),
-            Constant::Integer(data) => {
+            Constant::Integer(val) => {
                 // Convert raw ASCII data to UTF-8 string
-                let raw = String::from_utf8_lossy(data);
-                let val = raw.parse::<i64>().unwrap();
+                let val = *val;
                 if val >= BYTE_MIN && val <= BYTE_MAX {
                     Value::Byte(ByteValue(val as i8))
                 } else if val >= SHORT_MIN && val <= SHORT_MAX {

@@ -1246,14 +1246,36 @@ impl SyntaxElement for Root {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Pragma {
+pub enum Pragma {
+    Version(PragmaVersion),
+    Module(PragmaModule)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PragmaVersion {
+    pub this: PragmaId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PragmaModule {
     pub this: PragmaId,
     // Phase 1: parser
     pub position: InputPosition,
     pub value: Vec<u8>,
 }
 
-impl SyntaxElement for Pragma {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PragmaOld {
+    pub this: PragmaId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub value: Vec<u8>,
+}
+
+impl SyntaxElement for PragmaOld {
     fn position(&self) -> InputPosition {
         self.position
     }
@@ -1481,7 +1503,7 @@ impl SyntaxElement for TypeAnnotation {
 }
 
 type CharacterData = Vec<u8>;
-type IntegerData = Vec<u8>;
+type IntegerData = i64;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Constant {
