@@ -1,8 +1,18 @@
-target
-/.idea
-**/*.rs.bk
+# TODO Documents
+todo_*.md
+
+# Build system
 Cargo.lock
+target
+**/*.rs.bk
+
+# IDEs
+/.idea
+
+# Binaries
 main
+
+# Examples
 examples/*/*.exe
 examples/*.dll
 examples/reowolf*
@@ -12,5 +22,7 @@ examples/lib*.*
 examples/*/amy
 examples/*/bob
 examples/*/main
+
+# Logs
 logs/*
 logs/*/*

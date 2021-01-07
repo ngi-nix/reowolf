@@ -49,7 +49,7 @@ impl InputSource {
     pub fn new<R: io::Read, S: ToString>(filename: S, reader: &mut R) -> io::Result<InputSource> {
         let mut vec = Vec::new();
         reader.read_to_end(&mut vec)?;
-        // vec.extend(STD_LIB_PDL.to_vec());
+        vec.extend(STD_LIB_PDL.to_vec());
         Ok(InputSource {
             filename: filename.to_string(),
             input: vec,
