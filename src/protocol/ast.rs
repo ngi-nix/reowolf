@@ -3,38 +3,18 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Index, IndexMut};
 
 use super::arena::{Arena, Id};
+// use super::containers::StringAllocator;
 
 use crate::protocol::inputsource::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct RootId(Id<Root>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct RootId(pub(crate) Id<Root>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PragmaId(Id<Pragma>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImportId(Id<Import>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct IdentifierId(Id<Identifier>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct SourceIdentifierId(IdentifierId);
-
-impl SourceIdentifierId {
-    pub fn upcast(self) -> IdentifierId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ExternalIdentifierId(IdentifierId);
-
-impl ExternalIdentifierId {
-    pub fn upcast(self) -> IdentifierId {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypeAnnotationId(Id<TypeAnnotation>);
@@ -62,6 +42,24 @@ impl LocalId {
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DefinitionId(Id<Definition>);
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StructId(DefinitionId);
+
+impl StructId {
+    pub fn upcast(self) -> DefinitionId{
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EnumId(DefinitionId);
+
+impl EnumId {
+    pub fn upcast(self) -> DefinitionId{
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComponentId(DefinitionId);
@@ -407,14 +405,18 @@ impl ImportedDeclarationId {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
-    // Phase 0: allocation
+    // Allocators
+    // #[serde[skip]] string_alloc: StringAllocator,
+    // Root arena, contains the entry point for different modules. Each root
+    // contains lists of IDs that correspond to the other arenas.
     protocol_descriptions: Arena<Root>,
+    // Contents of a file, these are the elements the `Root` elements refer to
     pragmas: Arena<Pragma>,
-    imports: Arena<Import>,
+    pub(crate) imports: Arena<Import>,
     identifiers: Arena<Identifier>,
     type_annotations: Arena<TypeAnnotation>,
     variables: Arena<Variable>,
-    definitions: Arena<Definition>,
+    pub(crate) definitions: Arena<Definition>,
     statements: Arena<Statement>,
     expressions: Arena<Expression>,
     declarations: Arena<Declaration>,
@@ -423,6 +425,7 @@ pub struct Heap {
 impl Heap {
     pub fn new() -> Heap {
         Heap {
+            // string_alloc: StringAllocator::new(),
             protocol_descriptions: Arena::new(),
             pragmas: Arena::new(),
             imports: Arena::new(),
@@ -434,25 +437,6 @@ impl Heap {
             expressions: Arena::new(),
             declarations: Arena::new(),
         }
-    }
-    pub fn alloc_source_identifier(
-        &mut self,
-        f: impl FnOnce(SourceIdentifierId) -> SourceIdentifier,
-    ) -> SourceIdentifierId {
-        SourceIdentifierId(IdentifierId(
-            self.identifiers
-                .alloc_with_id(|id| Identifier::Source(f(SourceIdentifierId(IdentifierId(id))))),
-        ))
-    }
-    pub fn alloc_external_identifier(
-        &mut self,
-        f: impl FnOnce(ExternalIdentifierId) -> ExternalIdentifier,
-    ) -> ExternalIdentifierId {
-        ExternalIdentifierId(IdentifierId(
-            self.identifiers.alloc_with_id(|id| {
-                Identifier::External(f(ExternalIdentifierId(IdentifierId(id))))
-            }),
-        ))
     }
     pub fn alloc_type_annotation(
         &mut self,
@@ -739,6 +723,16 @@ impl Heap {
             }),
         ))
     }
+    pub fn alloc_struct_definition(&mut self, f: impl FnOnce(StructId) -> StructDefinition) -> StructId {
+        StructId(DefinitionId(self.definitions.alloc_with_id(|id| {
+            Definition::Struct(f(StructId(DefinitionId(id))))
+        })))
+    }
+    pub fn alloc_enum_definition(&mut self, f: impl FnOnce(EnumId) -> EnumDefinition) -> EnumId {
+        EnumId(DefinitionId(self.definitions.alloc_with_id(|id| {
+            Definition::Enum(f(EnumId(DefinitionId(id))))
+        })))
+    }
     pub fn alloc_composite(&mut self, f: impl FnOnce(CompositeId) -> Composite) -> CompositeId {
         CompositeId(ComponentId(DefinitionId(self.definitions.alloc_with_id(|id| {
             Definition::Component(Component::Composite(f(CompositeId(ComponentId(DefinitionId(
@@ -786,16 +780,6 @@ impl Heap {
             }),
         ))
     }
-
-    pub fn get_external_identifier(&mut self, ident: &[u8]) -> ExternalIdentifierId {
-        for (_, id) in self.identifiers.iter() {
-            if id.is_external() && id.ident() == ident {
-                return id.as_external().this;
-            }
-        }
-        // Not found
-        self.alloc_external_identifier(|this| ExternalIdentifier { this, value: ident.to_vec() })
-    }
 }
 
 impl Index<RootId> for Heap {
@@ -825,24 +809,9 @@ impl Index<ImportId> for Heap {
     }
 }
 
-impl Index<IdentifierId> for Heap {
-    type Output = Identifier;
-    fn index(&self, index: IdentifierId) -> &Self::Output {
-        &self.identifiers[index.0]
-    }
-}
-
-impl Index<SourceIdentifierId> for Heap {
-    type Output = SourceIdentifier;
-    fn index(&self, index: SourceIdentifierId) -> &Self::Output {
-        &self.identifiers[(index.0).0].as_source()
-    }
-}
-
-impl Index<ExternalIdentifierId> for Heap {
-    type Output = ExternalIdentifier;
-    fn index(&self, index: ExternalIdentifierId) -> &Self::Output {
-        &self.identifiers[(index.0).0].as_external()
+impl IndexMut<ImportId> for Heap {
+    fn index_mut(&mut self, index: ImportId) -> &mut Self::Output {
+        &mut self.imports[index.0]
     }
 }
 
@@ -1213,26 +1182,19 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn get_definition(&self, h: &Heap, id: IdentifierId) -> Option<DefinitionId> {
-        for &def in self.definitions.iter() {
-            if h[h[def].identifier()] == h[id] {
-                return Some(def);
-            }
-        }
-        None
-    }
     pub fn get_definition_ident(&self, h: &Heap, id: &[u8]) -> Option<DefinitionId> {
         for &def in self.definitions.iter() {
-            if h[h[def].identifier()].ident() == id {
+            if h[def].identifier().value == id {
                 return Some(def);
             }
         }
         None
     }
-    pub fn get_declaration(&self, h: &Heap, id: IdentifierId) -> Option<DeclarationId> {
-        for &decl in self.declarations.iter() {
-            if h[h[decl].identifier()] == h[id] {
-                return Some(decl);
+    pub fn get_declaration(&self, h: &Heap, id: &Identifier) -> Option<DeclarationId> {
+        for declaration_id in self.declarations.iter() {
+            let declaration = &h[*declaration_id];
+            if declaration.identifier().value == id.value {
+                return Some(*declaration_id);
             }
         }
         None
@@ -1282,48 +1244,128 @@ impl SyntaxElement for PragmaOld {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Import {
-    pub this: ImportId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub value: Vec<u8>,
+pub enum Import {
+    Module(ImportModule),
+    Symbols(ImportSymbols)
+}
+
+impl Import {
+    pub(crate) fn as_module(&self) -> &ImportModule {
+        match self {
+            Import::Module(m) => m,
+            _ => panic!("Unable to cast 'Import' to 'ImportModule'")
+        }
+    }
+    pub(crate) fn as_symbols(&self) -> &ImportSymbols {
+        match self {
+            Import::Symbols(m) => m,
+            _ => panic!("Unable to cast 'Import' to 'ImportSymbols'")
+        }
+    }
 }
 
 impl SyntaxElement for Import {
     fn position(&self) -> InputPosition {
-        self.position
+        match self {
+            Import::Module(m) => m.position,
+            Import::Symbols(m) => m.position
+        }
     }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Identifier {
-    External(ExternalIdentifier),
-    Source(SourceIdentifier),
+pub struct ImportModule {
+    pub this: ImportId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub module_name: Vec<u8>,
+    pub alias: Vec<u8>,
+    // Phase 2: module resolving
+    pub module_id: Option<RootId>,
 }
 
-impl Identifier {
-    pub fn as_source(&self) -> &SourceIdentifier {
-        match self {
-            Identifier::Source(result) => result,
-            _ => panic!("Unable to cast `Identifier` to `SourceIdentifier`"),
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AliasedSymbol {
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub name: Vec<u8>,
+    pub alias: Vec<u8>,
+    // Phase 2: symbol resolving
+    pub definition_id: Option<DefinitionId>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ImportSymbols {
+    pub this: ImportId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub module_name: Vec<u8>,
+    // Phase 2: module resolving
+    pub module_id: Option<RootId>,
+    // Phase 1&2
+    // if symbols is empty, then we implicitly import all symbols without any
+    // aliases for them. If it is not empty, then symbols are explicitly
+    // specified, and optionally given an alias.
+    pub symbols: Vec<AliasedSymbol>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Identifier {
+    pub position: InputPosition,
+    pub value: Vec<u8>
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NamespacedIdentifier {
+    pub position: InputPosition,
+    pub num_namespaces: u8,
+    pub value: Vec<u8>,
+}
+
+impl NamespacedIdentifier {
+    fn iter(&self) -> NamespacedIdentifierIter {
+        NamespacedIdentifierIter{
+            value: &self.value,
+            cur_offset: 0,
+            num_returned: 0,
+            num_total: self.num_namespaces
         }
     }
-    pub fn is_external(&self) -> bool {
-        match self {
-            Identifier::External(_) => true,
-            _ => false,
-        }
-    }
-    pub fn as_external(&self) -> &ExternalIdentifier {
-        match self {
-            Identifier::External(result) => result,
-            _ => panic!("Unable to cast `Identifier` to `ExternalIdentifier`"),
-        }
-    }
-    fn ident(&self) -> &[u8] {
-        match self {
-            Identifier::External(eid) => eid.ident(),
-            Identifier::Source(sid) => sid.ident(),
+}
+
+struct NamespacedIdentifierIter<'a> {
+    value: &'a Vec<u8>,
+    cur_offset: usize,
+    num_returned: u8,
+    num_total: u8,
+}
+
+impl<'a> Iterator for NamespacedIdentifierIter<'a> {
+    type Item = &'a [u8];
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur_offset >= self.value.len() {
+            debug_assert_eq!(self.num_returned, self.num_total);
+            None
+        } else {
+            debug_assert!(self.num_returned < self.num_total);
+            let start = self.cur_offset;
+            let mut end = start;
+            while end < self.value.len() - 1 {
+                if self.value[end] == b':' && self.value[end + 1] == b':' {
+                    self.cur_offset = end + 2;
+                    self.num_returned += 1;
+                    return Some(&self.value[start..end]);
+                }
+                end += 1;
+            }
+
+            // If NamespacedIdentifier is constructed properly, then we cannot
+            // end with "::" in the value, so
+            debug_assert!(end == 0 || (self.value[end - 1] != b':' && self.value[end] != b':'));
+            debug_assert_eq!(self.num_returned + 1, self.num_total);
+            self.cur_offset = self.value.len();
+            self.num_returned += 1;
+            return Some(&self.value[start..]);
         }
     }
 }
@@ -1331,78 +1373,7 @@ impl Identifier {
 impl Display for Identifier {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         // A source identifier is in ASCII range.
-        write!(f, "{}", String::from_utf8_lossy(self.ident()))
-    }
-}
-
-impl PartialEq<Identifier> for Identifier {
-    fn eq(&self, rhs: &Identifier) -> bool {
-        self.ident() == rhs.ident()
-    }
-}
-
-impl PartialEq<SourceIdentifier> for Identifier {
-    fn eq(&self, rhs: &SourceIdentifier) -> bool {
-        self.ident() == rhs.ident()
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExternalIdentifier {
-    pub this: ExternalIdentifierId,
-    // Phase 1: parser
-    pub value: Vec<u8>,
-}
-
-impl ExternalIdentifier {
-    fn ident(&self) -> &[u8] {
-        &self.value
-    }
-}
-
-impl Display for ExternalIdentifier {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // A source identifier is in ASCII range.
         write!(f, "{}", String::from_utf8_lossy(&self.value))
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SourceIdentifier {
-    pub this: SourceIdentifierId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub value: Vec<u8>,
-}
-
-impl SourceIdentifier {
-    pub fn ident(&self) -> &[u8] {
-        &self.value
-    }
-}
-
-impl SyntaxElement for SourceIdentifier {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
-impl Display for SourceIdentifier {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // A source identifier is in ASCII range.
-        write!(f, "{}", String::from_utf8_lossy(&self.value))
-    }
-}
-
-impl PartialEq<Identifier> for SourceIdentifier {
-    fn eq(&self, rhs: &Identifier) -> bool {
-        self.ident() == rhs.ident()
-    }
-}
-
-impl PartialEq<SourceIdentifier> for SourceIdentifier {
-    fn eq(&self, rhs: &SourceIdentifier) -> bool {
-        self.ident() == rhs.ident()
     }
 }
 
@@ -1519,13 +1490,13 @@ pub enum Method {
     Get,
     Fires,
     Create,
-    Symbolic(SourceIdentifierId),
+    Symbolic(Identifier),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Field {
     Length,
-    Symbolic(SourceIdentifierId),
+    Symbolic(Identifier),
 }
 impl Field {
     pub fn is_length(&self) -> bool {
@@ -1554,7 +1525,7 @@ impl Scope {
 
 pub trait VariableScope {
     fn parent_scope(&self, h: &Heap) -> Option<Scope>;
-    fn get_variable(&self, h: &Heap, id: SourceIdentifierId) -> Option<VariableId>;
+    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId>;
 }
 
 impl VariableScope for Scope {
@@ -1565,7 +1536,7 @@ impl VariableScope for Scope {
             Scope::Synchronous(stmt) => h[*stmt].parent_scope(h),
         }
     }
-    fn get_variable(&self, h: &Heap, id: SourceIdentifierId) -> Option<VariableId> {
+    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         match self {
             Scope::Definition(def) => h[*def].get_variable(h, id),
             Scope::Block(stmt) => h[*stmt].get_variable(h, id),
@@ -1581,10 +1552,10 @@ pub enum Variable {
 }
 
 impl Variable {
-    pub fn identifier(&self) -> SourceIdentifierId {
+    pub fn identifier(&self) -> &Identifier {
         match self {
-            Variable::Parameter(var) => var.identifier,
-            Variable::Local(var) => var.identifier,
+            Variable::Parameter(var) => &var.identifier,
+            Variable::Local(var) => &var.identifier,
         }
     }
     pub fn is_parameter(&self) -> bool {
@@ -1628,7 +1599,7 @@ pub struct Parameter {
     // Phase 1: parser
     pub position: InputPosition,
     pub type_annotation: TypeAnnotationId,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
 }
 
 impl SyntaxElement for Parameter {
@@ -1643,7 +1614,7 @@ pub struct Local {
     // Phase 1: parser
     pub position: InputPosition,
     pub type_annotation: TypeAnnotationId,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
 }
 impl SyntaxElement for Local {
     fn position(&self) -> InputPosition {
@@ -1653,11 +1624,37 @@ impl SyntaxElement for Local {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Definition {
+    Struct(StructDefinition),
+    Enum(EnumDefinition),
     Component(Component),
     Function(Function),
 }
 
 impl Definition {
+    pub fn is_struct(&self) -> bool {
+        match self {
+            Definition::Struct(_) => true,
+            _ => false
+        }
+    }
+    pub fn as_struct(&self) -> &StructDefinition {
+        match self {
+            Definition::Struct(result) => result,
+            _ => panic!("Unable to cast 'Definition' to 'StructDefinition'"),
+        }
+    }
+    pub fn is_enum(&self) -> bool {
+        match self {
+            Definition::Enum(_) => true,
+            _ => false,
+        }
+    }
+    pub fn as_enum(&self) -> &EnumDefinition {
+        match self {
+            Definition::Enum(result) => result,
+            _ => panic!("Unable to cast 'Definition' to 'EnumDefinition'"),
+        }
+    }
     pub fn is_component(&self) -> bool {
         match self {
             Definition::Component(_) => true,
@@ -1682,22 +1679,29 @@ impl Definition {
     pub fn as_primitive(&self) -> &Primitive {
         self.as_component().as_primitive()
     }
-    pub fn identifier(&self) -> SourceIdentifierId {
+    pub fn identifier(&self) -> &Identifier {
         match self {
+            Definition::Struct(def) => &def.identifier,
+            Definition::Enum(def) => &def.identifier,
             Definition::Component(com) => com.identifier(),
-            Definition::Function(fun) => fun.identifier,
+            Definition::Function(fun) => &fun.identifier,
         }
     }
     pub fn parameters(&self) -> &Vec<ParameterId> {
+        // TODO: Fix this
+        static EMPTY_VEC: Vec<ParameterId> = Vec::new();
         match self {
             Definition::Component(com) => com.parameters(),
             Definition::Function(fun) => &fun.parameters,
+            _ => &EMPTY_VEC,
         }
     }
     pub fn body(&self) -> StatementId {
+        // TODO: Fix this
         match self {
             Definition::Component(com) => com.body(),
             Definition::Function(fun) => fun.body,
+            _ => panic!("cannot retrieve body (for EnumDefinition or StructDefinition)")
         }
     }
 }
@@ -1705,6 +1709,8 @@ impl Definition {
 impl SyntaxElement for Definition {
     fn position(&self) -> InputPosition {
         match self {
+            Definition::Struct(def) => def.position,
+            Definition::Enum(def) => def.position,
             Definition::Component(def) => def.position(),
             Definition::Function(def) => def.position(),
         }
@@ -1715,14 +1721,54 @@ impl VariableScope for Definition {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
         None
     }
-    fn get_variable(&self, h: &Heap, id: SourceIdentifierId) -> Option<VariableId> {
-        for &param in self.parameters().iter() {
-            if h[h[param].identifier] == h[id] {
-                return Some(param.0);
+    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
+        for &parameter_id in self.parameters().iter() {
+            let parameter = &h[parameter_id];
+            if parameter.identifier.value == id.value {
+                return Some(parameter_id.0);
             }
         }
         None
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StructFieldDefinition {
+    pub position: InputPosition,
+    pub field: Identifier,
+    pub the_type: TypeAnnotationId,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StructDefinition {
+    pub this: StructId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub identifier: Identifier,
+    pub fields: Vec<StructFieldDefinition>
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum EnumVariantValue {
+    None,
+    Integer(i64),
+    Type(TypeAnnotationId),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EnumVariantDefinition {
+    pub position: InputPosition,
+    pub identifier: Identifier,
+    pub value: EnumVariantValue,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EnumDefinition {
+    pub this: EnumId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub identifier: Identifier,
+    pub variants: Vec<EnumVariantDefinition>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1750,10 +1796,10 @@ impl Component {
             _ => panic!("Unable to cast `Component` to `Primitive`"),
         }
     }
-    fn identifier(&self) -> SourceIdentifierId {
+    fn identifier(&self) -> &Identifier {
         match self {
-            Component::Composite(com) => com.identifier,
-            Component::Primitive(prim) => prim.identifier,
+            Component::Composite(com) => &com.identifier,
+            Component::Primitive(prim) => &prim.identifier,
         }
     }
     pub fn parameters(&self) -> &Vec<ParameterId> {
@@ -1784,7 +1830,7 @@ pub struct Composite {
     pub this: CompositeId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
@@ -1800,7 +1846,7 @@ pub struct Primitive {
     pub this: PrimitiveId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
@@ -1817,7 +1863,7 @@ pub struct Function {
     // Phase 1: parser
     pub position: InputPosition,
     pub return_type: TypeAnnotationId,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
@@ -1841,7 +1887,7 @@ impl Declaration {
             Declaration::Imported(decl) => &decl.signature,
         }
     }
-    pub fn identifier(&self) -> IdentifierId {
+    pub fn identifier(&self) -> &Identifier {
         self.signature().identifier()
     }
     pub fn is_component(&self) -> bool {
@@ -1882,16 +1928,18 @@ pub enum Signature {
 
 impl Signature {
     pub fn from_definition(h: &Heap, def: DefinitionId) -> Signature {
+        // TODO: Fix this
         match &h[def] {
             Definition::Component(com) => Signature::Component(ComponentSignature {
-                identifier: com.identifier().0,
+                identifier: com.identifier().clone(), // TODO: @fix
                 arity: Signature::convert_parameters(h, com.parameters()),
             }),
             Definition::Function(fun) => Signature::Function(FunctionSignature {
                 return_type: h[fun.return_type].the_type.clone(),
-                identifier: fun.identifier.0,
+                identifier: fun.identifier.clone(), // TODO: @fix
                 arity: Signature::convert_parameters(h, &fun.parameters),
             }),
+            _ => panic!("cannot retrieve signature (for StructDefinition or EnumDefinition)")
         }
     }
     fn convert_parameters(h: &Heap, params: &Vec<ParameterId>) -> Vec<Type> {
@@ -1901,10 +1949,10 @@ impl Signature {
         }
         result
     }
-    fn identifier(&self) -> IdentifierId {
+    fn identifier(&self) -> &Identifier {
         match self {
-            Signature::Component(com) => com.identifier,
-            Signature::Function(fun) => fun.identifier,
+            Signature::Component(com) => &com.identifier,
+            Signature::Function(fun) => &fun.identifier,
         }
     }
     pub fn is_component(&self) -> bool {
@@ -1923,14 +1971,14 @@ impl Signature {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ComponentSignature {
-    pub identifier: IdentifierId,
+    pub identifier: Identifier,
     pub arity: Vec<Type>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FunctionSignature {
     pub return_type: Type,
-    pub identifier: IdentifierId,
+    pub identifier: Identifier,
     pub arity: Vec<Type>,
 }
 
@@ -2222,10 +2270,11 @@ impl VariableScope for BlockStatement {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
         self.parent_scope
     }
-    fn get_variable(&self, h: &Heap, id: SourceIdentifierId) -> Option<VariableId> {
-        for &local in self.locals.iter() {
-            if h[h[local].identifier] == h[id] {
-                return Some(local.0);
+    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
+        for local_id in self.locals.iter() {
+            let local = &h[*local_id];
+            if local.identifier.value == id.value {
+                return Some(local_id.0);
             }
         }
         None
@@ -2328,7 +2377,7 @@ pub struct LabeledStatement {
     pub this: LabeledStatementId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub label: SourceIdentifierId,
+    pub label: Identifier,
     pub body: StatementId,
     // Phase 2: linker
     pub in_sync: Option<SynchronousStatementId>,
@@ -2407,7 +2456,7 @@ pub struct BreakStatement {
     pub this: BreakStatementId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub label: Option<SourceIdentifierId>,
+    pub label: Option<Identifier>,
     // Phase 2: linker
     pub target: Option<EndWhileStatementId>,
 }
@@ -2423,7 +2472,7 @@ pub struct ContinueStatement {
     pub this: ContinueStatementId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub label: Option<SourceIdentifierId>,
+    pub label: Option<Identifier>,
     // Phase 2: linker
     pub target: Option<WhileStatementId>,
 }
@@ -2455,10 +2504,11 @@ impl VariableScope for SynchronousStatement {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
         self.parent_scope
     }
-    fn get_variable(&self, h: &Heap, id: SourceIdentifierId) -> Option<VariableId> {
-        for &param in self.parameters.iter() {
-            if h[h[param].identifier] == h[id] {
-                return Some(param.0);
+    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
+        for parameter_id in self.parameters.iter() {
+            let parameter = &h[*parameter_id];
+            if parameter.identifier.value == id.value {
+                return Some(parameter_id.0);
             }
         }
         None
@@ -2514,7 +2564,7 @@ pub struct GotoStatement {
     pub this: GotoStatementId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub label: SourceIdentifierId,
+    pub label: Identifier,
     // Phase 2: linker
     pub target: Option<LabeledStatementId>,
 }
@@ -2897,7 +2947,7 @@ pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: SourceIdentifierId,
+    pub identifier: Identifier,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
 }

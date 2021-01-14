@@ -1432,11 +1432,11 @@ impl Store {
     fn get(&mut self, h: &Heap, ctx: &mut EvalContext, rexpr: ExpressionId) -> EvalResult {
         match &h[rexpr] {
             Expression::Variable(var) => {
-                let var = var.declaration.unwrap();
+                let var_id = var.declaration.unwrap();
                 let value = self
                     .map
-                    .get(&var)
-                    .expect(&format!("Uninitialized variable {:?}", h[h[var].identifier()]));
+                    .get(&var_id)
+                    .expect(&format!("Uninitialized variable {:?}", String::from_utf8_lossy(&var.identifier.value)));
                 Ok(value.clone())
             }
             Expression::Indexing(indexing) => {
@@ -1569,7 +1569,7 @@ impl Store {
                 todo!()
             }
             Expression::Constant(expr) => Ok(Value::from_constant(&expr.value)),
-            Expression::Call(expr) => match expr.method {
+            Expression::Call(expr) => match &expr.method {
                 Method::Create => {
                     assert_eq!(1, expr.arguments.len());
                     let length = self.eval(h, ctx, expr.arguments[0])?;

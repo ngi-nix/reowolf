@@ -5,6 +5,7 @@ pub(crate) mod inputsource;
 // mod lexer;
 mod library;
 mod parser;
+mod containers;
 
 // TODO: Remove when not benchmarking
 pub(crate) mod ast;
@@ -51,17 +52,17 @@ impl std::fmt::Debug for ProtocolDescription {
 }
 impl ProtocolDescription {
     pub fn parse(buffer: &[u8]) -> Result<Self, String> {
-        let mut heap = Heap::new();
-        let mut source = InputSource::from_buffer(buffer).unwrap();
-        let mut parser = Parser::new(&mut source);
-        match parser.parse(&mut heap) {
+        // TODO: @fixme, keep code compilable, but needs support for multiple
+        //  input files.
+        let source = InputSource::from_buffer(buffer).unwrap();
+        let mut parser = Parser::new();
+        parser.feed(source).expect("failed to parse source");
+        match parser.parse() {
             Ok(root) => {
-                return Ok(ProtocolDescription { heap, source, root });
+                return Ok(ProtocolDescription { heap: parser.heap, source: parser.modules[0].source.clone(), root });
             }
             Err(err) => {
-                let mut vec: Vec<u8> = Vec::new();
-                err.write(&source, &mut vec).unwrap();
-                Err(String::from_utf8_lossy(&vec).to_string())
+                Err(format!("{}", err))
             }
         }
     }

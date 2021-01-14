@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Id<T> {
-    index: u32,
+    pub(crate) index: u32,
     _phantom: PhantomData<T>,
 }
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -35,6 +35,7 @@ impl<T> Hash for Id<T> {
         self.index.hash(h);
     }
 }
+
 impl<T> Arena<T> {
     pub fn new() -> Self {
         Self { store: vec![] }
@@ -48,8 +49,8 @@ impl<T> Arena<T> {
         self.store.push(f(id));
         id
     }
-    pub fn iter(&self) -> impl Iterator<Item = (Id<T>, &T)> {
-        (0..).map(|index| Id { index, _phantom: Default::default() }).zip(self.store.iter())
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.store.iter()
     }
 }
 impl<T> core::ops::Index<Id<T>> for Arena<T> {

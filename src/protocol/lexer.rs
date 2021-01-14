@@ -57,7 +57,6 @@ fn is_integer_rest(x: Option<u8>) -> bool {
             || c >= b'a' && c <= b'f'
             || c >= b'A' && c <= b'F'
             || c == b'x'
-            || c == b'X'
             || c == b'o'
     } else {
         false
@@ -81,12 +80,15 @@ impl Lexer<'_> {
     pub fn new(source: &mut InputSource) -> Lexer {
         Lexer { source, level: 0 }
     }
-    fn consume_line(&mut self) -> Result<Vec<u8>, ParseError> {
+    fn error_at_pos(&self, msg: &str) -> ParseError2 {
+        ParseError2::new_error(self.source, self.source.pos(), msg)
+    }
+    fn consume_line(&mut self) -> Result<Vec<u8>, ParseError2> {
         let mut result: Vec<u8> = Vec::new();
         let mut next = self.source.next();
         while next.is_some() && next != Some(b'\n') && next != Some(b'\r') {
             if !(is_vchar(next) || is_wsp(next)) {
-                return Err(self.source.error("Expected visible character or whitespace"));
+                return Err(self.error_at_pos("Expected visible character or whitespace"));
             }
             result.push(next.unwrap());
             self.source.consume();
@@ -100,7 +102,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_whitespace(&mut self, expected: bool) -> Result<(), ParseError> {
+    fn consume_whitespace(&mut self, expected: bool) -> Result<(), ParseError2> {
         let mut found = false;
         let mut next = self.source.next();
         while next.is_some() {
@@ -148,7 +150,7 @@ impl Lexer<'_> {
             break;
         }
         if expected && !found {
-            Err(self.source.error("Expected whitespace"))
+            Err(self.error_at_pos("Expected whitespace"))
         } else {
             Ok(())
         }
@@ -165,24 +167,19 @@ impl Lexer<'_> {
             true
         }
     }
-    fn consume_keyword(&mut self, keyword: &[u8]) -> Result<(), ParseError> {
+    fn consume_keyword(&mut self, keyword: &[u8]) -> Result<(), ParseError2> {
         let len = keyword.len();
         for i in 0..len {
             let expected = Some(lowercase(keyword[i]));
             let next = self.source.next();
             if next != expected {
-                return Err(self
-                    .source
-                    .error(format!("Expected keyword: {}", String::from_utf8_lossy(keyword))));
+                return Err(self.error_at_pos(&format!("Expected keyword '{}'", String::from_utf8_lossy(keyword))));
             }
             self.source.consume();
         }
         if let Some(next) = self.source.next() {
-            if next >= b'A' && next <= b'Z' || next >= b'a' && next <= b'z' {
-                return Err(self.source.error(format!(
-                    "Expected word boundary after keyword: {}",
-                    String::from_utf8_lossy(keyword)
-                )));
+            if next >= b'A' && next <= b'Z' || next >= b'a' && next <= b'z' || next >= b'0' && next <= b'9' {
+                return Err(self.error_at_pos(&format!("Expected word boundary after '{}'", String::from_utf8_lossy(keyword))));
             }
         }
         Ok(())
@@ -190,23 +187,21 @@ impl Lexer<'_> {
     fn has_string(&self, string: &[u8]) -> bool {
         self.source.has(string)
     }
-    fn consume_string(&mut self, string: &[u8]) -> Result<(), ParseError> {
+    fn consume_string(&mut self, string: &[u8]) -> Result<(), ParseError2> {
         let len = string.len();
         for i in 0..len {
             let expected = Some(string[i]);
             let next = self.source.next();
             if next != expected {
-                return Err(self
-                    .source
-                    .error(format!("Expected {}", String::from_utf8_lossy(string))));
+                return Err(self.error_at_pos(&format!("Expected {}", String::from_utf8_lossy(string))));
             }
             self.source.consume();
         }
         Ok(())
     }
-    fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError> {
+    fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError2> {
         if !self.has_identifier() {
-            return Err(self.source.error("Expected identifier"));
+            return Err(self.error_at_pos("Expected identifier"));
         }
         let mut result = Vec::new();
         let mut next = self.source.next();
@@ -223,7 +218,7 @@ impl Lexer<'_> {
     fn has_integer(&mut self) -> bool {
         is_integer_start(self.source.next())
     }
-    fn consume_integer(&mut self) -> Result<i64, ParseError> {
+    fn consume_integer(&mut self) -> Result<i64, ParseError2> {
         let position = self.source.pos();
         let mut data = Vec::new();
         let mut next = self.source.next();
@@ -256,7 +251,7 @@ impl Lexer<'_> {
             };
 
             if let Err(_err) = parsed {
-                return Err(ParseError::new(position, "Invalid integer constant"));
+                return Err(ParseError2::new_error(&self.source, position, "Invalid integer constant"));
             }
 
             Ok(parsed.unwrap())
@@ -305,18 +300,17 @@ impl Lexer<'_> {
         let next = self.source.next();
         is_ident_start(next)
     }
-    fn consume_identifier(&mut self, h: &mut Heap) -> Result<SourceIdentifierId, ParseError> {
+    fn consume_identifier(&mut self, h: &mut Heap) -> Result<Identifier, ParseError2> {
         if self.has_statement_keyword() || self.has_type_keyword() || self.has_builtin_keyword() {
-            return Err(self.source.error("Expected identifier"));
+            return Err(self.error_at_pos("Expected identifier"));
         }
         let position = self.source.pos();
         let value = self.consume_ident()?;
-        let id = h.alloc_source_identifier(|this| SourceIdentifier { this, position, value });
-        Ok(id)
+        Ok(Identifier{ position, value })
     }
-    fn consume_identifier_spilled(&mut self) -> Result<(), ParseError> {
+    fn consume_identifier_spilled(&mut self) -> Result<(), ParseError2> {
         if self.has_statement_keyword() || self.has_type_keyword() || self.has_builtin_keyword() {
-            return Err(self.source.error("Expected identifier"));
+            return Err(self.error_at_pos("Expected identifier"));
         }
         self.consume_ident()?;
         Ok(())
@@ -324,7 +318,7 @@ impl Lexer<'_> {
 
     // Types and type annotations
 
-    fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError> {
+    fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
         if self.has_keyword(b"in") {
             self.consume_keyword(b"in")?;
             Ok(PrimitiveType::Input)
@@ -364,7 +358,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_type(&mut self) -> Result<Type, ParseError> {
+    fn consume_type(&mut self) -> Result<Type, ParseError2> {
         let primitive = self.consume_primitive_type()?;
         let array;
         if self.has_array() {
@@ -375,32 +369,32 @@ impl Lexer<'_> {
         }
         Ok(Type { primitive, array })
     }
-    fn create_type_annotation_input(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError> {
+    fn create_type_annotation_input(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
         let position = self.source.pos();
         let the_type = Type::INPUT;
         let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
         Ok(id)
     }
-    fn create_type_annotation_output(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError> {
+    fn create_type_annotation_output(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
         let position = self.source.pos();
         let the_type = Type::OUTPUT;
         let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
         Ok(id)
     }
-    fn consume_type_annotation(&mut self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError> {
+    fn consume_type_annotation(&mut self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
         let position = self.source.pos();
         let the_type = self.consume_type()?;
         let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
         Ok(id)
     }
-    fn consume_type_annotation_spilled(&mut self) -> Result<(), ParseError> {
+    fn consume_type_annotation_spilled(&mut self) -> Result<(), ParseError2> {
         self.consume_type()?;
         Ok(())
     }
 
     // Parameters
 
-    fn consume_parameter(&mut self, h: &mut Heap) -> Result<ParameterId, ParseError> {
+    fn consume_parameter(&mut self, h: &mut Heap) -> Result<ParameterId, ParseError2> {
         let position = self.source.pos();
         let type_annotation = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
@@ -413,7 +407,7 @@ impl Lexer<'_> {
         &mut self,
         h: &mut Heap,
         params: &mut Vec<ParameterId>,
-    ) -> Result<(), ParseError> {
+    ) -> Result<(), ParseError2> {
         self.consume_string(b"(")?;
         self.consume_whitespace(false)?;
         if !self.has_string(b")") {
@@ -427,14 +421,16 @@ impl Lexer<'_> {
                 self.consume_whitespace(false)?;
             }
         }
-        self.consume_string(b")")
+        self.consume_string(b")")?;
+
+        Ok(())
     }
 
     // ====================
     // Expressions
     // ====================
 
-    fn consume_paren_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_paren_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         self.consume_string(b"(")?;
         self.consume_whitespace(false)?;
         let result = self.consume_expression(h)?;
@@ -442,16 +438,16 @@ impl Lexer<'_> {
         self.consume_string(b")")?;
         Ok(result)
     }
-    fn consume_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         if self.level >= MAX_LEVEL {
-            return Err(self.source.error("Too deeply nested expression"));
+            return Err(self.error_at_pos("Too deeply nested expression"));
         }
         self.level += 1;
         let result = self.consume_assignment_expression(h);
         self.level -= 1;
         result
     }
-    fn consume_assignment_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_assignment_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let result = self.consume_conditional_expression(h)?;
         self.consume_whitespace(false)?;
         if self.has_assignment_operator() {
@@ -485,7 +481,7 @@ impl Lexer<'_> {
             || self.has_string(b"^=")
             || self.has_string(b"|=")
     }
-    fn consume_assignment_operator(&mut self) -> Result<AssignmentOperator, ParseError> {
+    fn consume_assignment_operator(&mut self) -> Result<AssignmentOperator, ParseError2> {
         if self.has_string(b"=") {
             self.consume_string(b"=")?;
             Ok(AssignmentOperator::Set)
@@ -520,10 +516,10 @@ impl Lexer<'_> {
             self.consume_string(b"|=")?;
             Ok(AssignmentOperator::BitwiseOred)
         } else {
-            Err(self.source.error("Expected assignment operator"))
+            Err(self.error_at_pos("Expected assignment operator"))
         }
     }
-    fn consume_conditional_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_conditional_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let result = self.consume_concat_expression(h)?;
         self.consume_whitespace(false)?;
         if self.has_string(b"?") {
@@ -548,7 +544,7 @@ impl Lexer<'_> {
             Ok(result)
         }
     }
-    fn consume_concat_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_concat_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_lor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"@") {
@@ -571,7 +567,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_lor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_lor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_land_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"||") {
@@ -594,7 +590,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_land_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_land_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_bor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"&&") {
@@ -617,7 +613,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_bor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_bor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_xor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"|") && !self.has_string(b"||") && !self.has_string(b"|=") {
@@ -640,7 +636,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_xor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_xor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_band_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"^") && !self.has_string(b"^=") {
@@ -663,7 +659,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_band_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_band_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_eq_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"&") && !self.has_string(b"&&") && !self.has_string(b"&=") {
@@ -686,7 +682,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_eq_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_eq_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_rel_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"==") || self.has_string(b"!=") {
@@ -715,7 +711,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_rel_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_rel_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_shift_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"<=")
@@ -754,7 +750,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_shift_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_shift_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_add_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"<<") && !self.has_string(b"<<=")
@@ -785,7 +781,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_add_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_add_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_mul_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"+") && !self.has_string(b"+=")
@@ -816,7 +812,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_mul_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_mul_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_prefix_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"*") && !self.has_string(b"*=")
@@ -851,7 +847,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_prefix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_prefix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         if self.has_string(b"+")
             || self.has_string(b"-")
             || self.has_string(b"~")
@@ -884,7 +880,7 @@ impl Lexer<'_> {
             }
             self.consume_whitespace(false)?;
             if self.level >= MAX_LEVEL {
-                return Err(self.source.error("Too deeply nested expression"));
+                return Err(self.error_at_pos("Too deeply nested expression"));
             }
             self.level += 1;
             let result = self.consume_prefix_expression(h);
@@ -901,7 +897,7 @@ impl Lexer<'_> {
         }
         self.consume_postfix_expression(h)
     }
-    fn consume_postfix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_postfix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         let mut result = self.consume_primary_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"++")
@@ -997,7 +993,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_primary_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+    fn consume_primary_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
         if self.has_string(b"(") {
             return self.consume_paren_expression(h);
         }
@@ -1016,7 +1012,7 @@ impl Lexer<'_> {
         }
         Ok(self.consume_variable_expression(h)?.upcast())
     }
-    fn consume_array_expression(&mut self, h: &mut Heap) -> Result<ArrayExpressionId, ParseError> {
+    fn consume_array_expression(&mut self, h: &mut Heap) -> Result<ArrayExpressionId, ParseError2> {
         let position = self.source.pos();
         let mut elements = Vec::new();
         self.consume_string(b"{")?;
@@ -1041,7 +1037,7 @@ impl Lexer<'_> {
     fn consume_constant_expression(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ConstantExpressionId, ParseError> {
+    ) -> Result<ConstantExpressionId, ParseError2> {
         let position = self.source.pos();
         let value;
         if self.has_keyword(b"null") {
@@ -1063,13 +1059,13 @@ impl Lexer<'_> {
                 next = self.source.next();
             }
             if next != Some(b'\'') || data.is_empty() {
-                return Err(self.source.error("Expected character constant"));
+                return Err(self.error_at_pos("Expected character constant"));
             }
             self.source.consume();
             value = Constant::Character(data);
         } else {
             if !self.has_integer() {
-                return Err(self.source.error("Expected integer constant"));
+                return Err(self.error_at_pos("Expected integer constant"));
             }
 
             value = Constant::Integer(self.consume_integer()?);
@@ -1097,7 +1093,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError> {
+    fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError2> {
         let position = self.source.pos();
         let method;
         if self.has_keyword(b"get") {
@@ -1140,7 +1136,7 @@ impl Lexer<'_> {
     fn consume_variable_expression(
         &mut self,
         h: &mut Heap,
-    ) -> Result<VariableExpressionId, ParseError> {
+    ) -> Result<VariableExpressionId, ParseError2> {
         let position = self.source.pos();
         let identifier = self.consume_identifier(h)?;
         Ok(h.alloc_variable_expression(|this| VariableExpression {
@@ -1155,9 +1151,9 @@ impl Lexer<'_> {
     // Statements
     // ====================
 
-    fn consume_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {
+    fn consume_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
         if self.level >= MAX_LEVEL {
-            return Err(self.source.error("Too deeply nested statement"));
+            return Err(self.error_at_pos("Too deeply nested statement"));
         }
         self.level += 1;
         let result = self.consume_statement_impl(h);
@@ -1182,7 +1178,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_statement_impl(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {
+    fn consume_statement_impl(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
         if self.has_string(b"{") {
             Ok(self.consume_block_statement(h)?)
         } else if self.has_keyword(b"skip") {
@@ -1238,7 +1234,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_block_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {
+    fn consume_block_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
         let position = self.source.pos();
         let mut statements = Vec::new();
         self.consume_string(b"{")?;
@@ -1266,7 +1262,7 @@ impl Lexer<'_> {
             .upcast())
         }
     }
-    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<LocalStatementId, ParseError> {
+    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<LocalStatementId, ParseError2> {
         if self.has_keyword(b"channel") {
             Ok(self.consume_channel_statement(h)?.upcast())
         } else {
@@ -1276,7 +1272,7 @@ impl Lexer<'_> {
     fn consume_channel_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ChannelStatementId, ParseError> {
+    ) -> Result<ChannelStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"channel")?;
         self.consume_whitespace(true)?;
@@ -1309,7 +1305,7 @@ impl Lexer<'_> {
             next: None,
         }))
     }
-    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<MemoryStatementId, ParseError> {
+    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<MemoryStatementId, ParseError2> {
         let position = self.source.pos();
         let type_annotation = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
@@ -1332,7 +1328,7 @@ impl Lexer<'_> {
     fn consume_labeled_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<LabeledStatementId, ParseError> {
+    ) -> Result<LabeledStatementId, ParseError2> {
         let position = self.source.pos();
         let label = self.consume_identifier(h)?;
         self.consume_whitespace(false)?;
@@ -1347,14 +1343,14 @@ impl Lexer<'_> {
             in_sync: None,
         }))
     }
-    fn consume_skip_statement(&mut self, h: &mut Heap) -> Result<SkipStatementId, ParseError> {
+    fn consume_skip_statement(&mut self, h: &mut Heap) -> Result<SkipStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"skip")?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }))
     }
-    fn consume_if_statement(&mut self, h: &mut Heap) -> Result<IfStatementId, ParseError> {
+    fn consume_if_statement(&mut self, h: &mut Heap) -> Result<IfStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"if")?;
         self.consume_whitespace(false)?;
@@ -1371,7 +1367,7 @@ impl Lexer<'_> {
         };
         Ok(h.alloc_if_statement(|this| IfStatement { this, position, test, true_body, false_body }))
     }
-    fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError> {
+    fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"while")?;
         self.consume_whitespace(false)?;
@@ -1387,7 +1383,7 @@ impl Lexer<'_> {
             in_sync: None,
         }))
     }
-    fn consume_break_statement(&mut self, h: &mut Heap) -> Result<BreakStatementId, ParseError> {
+    fn consume_break_statement(&mut self, h: &mut Heap) -> Result<BreakStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"break")?;
         self.consume_whitespace(false)?;
@@ -1404,7 +1400,7 @@ impl Lexer<'_> {
     fn consume_continue_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ContinueStatementId, ParseError> {
+    ) -> Result<ContinueStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"continue")?;
         self.consume_whitespace(false)?;
@@ -1426,7 +1422,7 @@ impl Lexer<'_> {
     fn consume_synchronous_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<SynchronousStatementId, ParseError> {
+    ) -> Result<SynchronousStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"synchronous")?;
         self.consume_whitespace(false)?;
@@ -1435,7 +1431,7 @@ impl Lexer<'_> {
             self.consume_parameters(h, &mut parameters)?;
             self.consume_whitespace(false)?;
         } else if !self.has_keyword(b"skip") && !self.has_string(b"{") {
-            return Err(self.source.error("Expected block statement"));
+            return Err(self.error_at_pos("Expected block statement"));
         }
         let body = self.consume_statement(h)?;
         Ok(h.alloc_synchronous_statement(|this| SynchronousStatement {
@@ -1446,7 +1442,7 @@ impl Lexer<'_> {
             parent_scope: None,
         }))
     }
-    fn consume_return_statement(&mut self, h: &mut Heap) -> Result<ReturnStatementId, ParseError> {
+    fn consume_return_statement(&mut self, h: &mut Heap) -> Result<ReturnStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"return")?;
         self.consume_whitespace(false)?;
@@ -1459,7 +1455,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(h.alloc_return_statement(|this| ReturnStatement { this, position, expression }))
     }
-    fn consume_assert_statement(&mut self, h: &mut Heap) -> Result<AssertStatementId, ParseError> {
+    fn consume_assert_statement(&mut self, h: &mut Heap) -> Result<AssertStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"assert")?;
         self.consume_whitespace(false)?;
@@ -1477,7 +1473,7 @@ impl Lexer<'_> {
             next: None,
         }))
     }
-    fn consume_goto_statement(&mut self, h: &mut Heap) -> Result<GotoStatementId, ParseError> {
+    fn consume_goto_statement(&mut self, h: &mut Heap) -> Result<GotoStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"goto")?;
         self.consume_whitespace(false)?;
@@ -1486,7 +1482,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(h.alloc_goto_statement(|this| GotoStatement { this, position, label, target: None }))
     }
-    fn consume_new_statement(&mut self, h: &mut Heap) -> Result<NewStatementId, ParseError> {
+    fn consume_new_statement(&mut self, h: &mut Heap) -> Result<NewStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"new")?;
         self.consume_whitespace(false)?;
@@ -1495,7 +1491,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(h.alloc_new_statement(|this| NewStatement { this, position, expression, next: None }))
     }
-    fn consume_put_statement(&mut self, h: &mut Heap) -> Result<PutStatementId, ParseError> {
+    fn consume_put_statement(&mut self, h: &mut Heap) -> Result<PutStatementId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"put")?;
         self.consume_whitespace(false)?;
@@ -1514,7 +1510,7 @@ impl Lexer<'_> {
     fn consume_expression_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ExpressionStatementId, ParseError> {
+    ) -> Result<ExpressionStatementId, ParseError2> {
         let position = self.source.pos();
         let expression = self.consume_expression(h)?;
         self.consume_whitespace(false)?;
@@ -1537,21 +1533,165 @@ impl Lexer<'_> {
             || self.has_type_keyword()
             || self.has_identifier()
     }
-    fn consume_symbol_definition(&mut self, h: &mut Heap) -> Result<DefinitionId, ParseError> {
-        if self.has_keyword(b"composite") || self.has_keyword(b"primitive") {
+    fn consume_symbol_definition(&mut self, h: &mut Heap) -> Result<DefinitionId, ParseError2> {
+        if self.has_keyword(b"struct") {
+            Ok(self.consume_struct_definition(h)?.upcast())
+        } else if self.has_keyword(b"enum") {
+            Ok(self.consume_enum_definition(h)?.upcast())
+        } else if self.has_keyword(b"composite") || self.has_keyword(b"primitive") {
             Ok(self.consume_component_definition(h)?.upcast())
         } else {
             Ok(self.consume_function_definition(h)?.upcast())
         }
     }
-    fn consume_component_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError> {
+    fn consume_struct_definition(&mut self, h: &mut Heap) -> Result<StructId, ParseError2> {
+        // Parse "struct" keyword and its identifier
+        let struct_pos = self.source.pos();
+        self.consume_keyword(b"struct")?;
+        self.consume_whitespace(true)?;
+        let struct_ident = self.consume_identifier(h)?;
+        self.consume_whitespace(false)?;
+
+        // Parse struct fields
+        self.consume_string(b"{")?;
+        let mut next = self.source.next();
+        let mut fields = Vec::new();
+        while next.is_some() {
+            let char = next.unwrap();
+            if char == b'}' {
+                break;
+            }
+
+            // Consume field definition
+            self.consume_whitespace(false)?;
+            let field_position = self.source.pos();
+            let field_type = self.consume_type_annotation(h)?;
+            self.consume_whitespace(true)?;
+            let field_ident = self.consume_identifier(h)?;
+            self.consume_whitespace(false)?;
+
+            fields.push(StructFieldDefinition{
+                position: field_position,
+                field: field_ident,
+                the_type: field_type,
+            });
+
+            // If we have a comma, then we may or may not have another field
+            // definition. Otherwise we expect the struct to be fully defined
+            // and expect a closing brace
+            next = self.source.next();
+            if let Some(b',') = next {
+                self.source.consume();
+                self.consume_whitespace(false)?;
+                next = self.source.next();
+            } else {
+                break;
+            }
+        }
+
+        // End of struct definition, so we expect a closing brace
+        self.consume_string(b"}")?;
+
+        // Valid struct definition
+        Ok(h.alloc_struct_definition(|this| StructDefinition{
+            this,
+            position: struct_pos,
+            identifier: struct_ident,
+            fields,
+        }))
+    }
+    fn consume_enum_definition(&mut self, h: &mut Heap) -> Result<EnumId, ParseError2> {
+        // Parse "enum" keyword and its identifier
+        let enum_pos = self.source.pos();
+        self.consume_keyword(b"enum")?;
+        self.consume_whitespace(true)?;
+        let enum_ident = self.consume_identifier(h)?;
+        self.consume_whitespace(false)?;
+
+        // Parse enum variants
+        self.consume_string(b"{")?;
+        let mut next = self.source.next();
+        let mut variants = Vec::new();
+        while next.is_some() {
+            let char = next.unwrap();
+            if char == b'}' {
+                break;
+            }
+
+            // Consume variant identifier
+            self.consume_whitespace(false)?;
+            let variant_position = self.source.pos();
+            let variant_ident = self.consume_identifier(h)?;
+            self.consume_whitespace(false)?;
+
+            // Consume variant (tag) value: may be nothing, in which case it is
+            // assigned automatically, may be a constant integer, or an embedded
+            // type as value, resulting in a tagged union
+            next = self.source.next();
+            let variant_value = if let Some(b',') = next {
+                EnumVariantValue::None
+            } else if let Some(b'=') = next {
+                self.source.consume();
+                self.consume_whitespace(false)?;
+                if !self.has_integer() {
+                    return Err(self.error_at_pos("expected integer"));
+                }
+                let variant_int = self.consume_integer()?;
+                self.consume_whitespace(false)?;
+                EnumVariantValue::Integer(variant_int)
+            } else if let Some(b'(') = next {
+                self.source.consume();
+                self.consume_whitespace(false)?;
+                let variant_type = self.consume_type_annotation(h)?;
+                self.consume_whitespace(false)?;
+                self.consume_string(b")")?;
+                self.consume_whitespace(false)?;
+                EnumVariantValue::Type(variant_type)
+            } else {
+                return Err(self.error_at_pos("expected ',', '=', or '('"));
+            };
+
+            variants.push(EnumVariantDefinition{
+                position: variant_position,
+                identifier: variant_ident,
+                value: variant_value
+            });
+
+            // If we have a comma, then we may or may not have another variant,
+            // otherwise we expect the enum is fully defined
+            next = self.source.next();
+            if let Some(b',') = next {
+                self.source.consume();
+                self.consume_whitespace(false)?;
+                next = self.source.next();
+            } else {
+                break;
+            }
+        }
+
+        self.consume_string(b"}")?;
+
+        // An enum without variants is somewhat valid, but completely useless
+        // within the language
+        if variants.is_empty() {
+            return Err(ParseError2::new_error(self.source, enum_pos, "enum definition without variants"));
+        }
+
+        Ok(h.alloc_enum_definition(|this| EnumDefinition{
+            this,
+            position: enum_pos,
+            identifier: enum_ident,
+            variants,
+        }))
+    }
+    fn consume_component_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
         if self.has_keyword(b"composite") {
             Ok(self.consume_composite_definition(h)?.upcast())
         } else {
             Ok(self.consume_primitive_definition(h)?.upcast())
         }
     }
-    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<CompositeId, ParseError> {
+    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<CompositeId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"composite")?;
         self.consume_whitespace(true)?;
@@ -1563,7 +1703,7 @@ impl Lexer<'_> {
         let body = self.consume_block_statement(h)?;
         Ok(h.alloc_composite(|this| Composite { this, position, identifier, parameters, body }))
     }
-    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<PrimitiveId, ParseError> {
+    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<PrimitiveId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"primitive")?;
         self.consume_whitespace(true)?;
@@ -1575,7 +1715,7 @@ impl Lexer<'_> {
         let body = self.consume_block_statement(h)?;
         Ok(h.alloc_primitive(|this| Primitive { this, position, identifier, parameters, body }))
     }
-    fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError> {
+    fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError2> {
         let position = self.source.pos();
         let return_type = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
@@ -1601,21 +1741,21 @@ impl Lexer<'_> {
             false
         }
     }
-    fn consume_pragma(&mut self, h: &mut Heap) -> Result<PragmaId, ParseError> {
+    fn consume_pragma(&mut self, h: &mut Heap) -> Result<PragmaId, ParseError2> {
         let position = self.source.pos();
         let next = self.source.next();
         if next != Some(b'#') {
-            return Err(self.source.error("Expected pragma"));
+            return Err(self.error_at_pos("Expected pragma"));
         }
         self.source.consume();
         if !is_vchar(self.source.next()) {
-            return Err(self.source.error("Expected pragma"));
+            return Err(self.error_at_pos("Expected pragma"));
         }
         if self.has_string(b"version") {
             self.consume_string(b"version")?;
             self.consume_whitespace(true)?;
             if !self.has_integer() {
-                return Err(self.source.error("Expected integer constant"));
+                return Err(self.error_at_pos("Expected integer constant"));
             }
             let version = self.consume_integer()?;
             debug_assert!(version >= 0);
@@ -1626,7 +1766,7 @@ impl Lexer<'_> {
             self.consume_string(b"module")?;
             self.consume_whitespace(true)?;
             if !self.has_identifier() {
-                return Err(self.source.error("Expected identifier"));
+                return Err(self.error_at_pos("Expected identifier"));
             }
             let mut value = Vec::new();
             let mut ident = self.consume_ident()?;
@@ -1641,30 +1781,152 @@ impl Lexer<'_> {
                 this, position, value
             })));
         } else {
-            return Err(self.source.error("Unknown pragma"));
+            return Err(self.error_at_pos("Unknown pragma"));
         }
     }
+
     fn has_import(&self) -> bool {
         self.has_keyword(b"import")
     }
-    fn consume_import(&mut self, h: &mut Heap) -> Result<ImportId, ParseError> {
+    fn consume_import(&mut self, h: &mut Heap) -> Result<ImportId, ParseError2> {
+        // Parse the word "import" and the name of the module
         let position = self.source.pos();
         self.consume_keyword(b"import")?;
         self.consume_whitespace(true)?;
         let mut value = Vec::new();
         let mut ident = self.consume_ident()?;
         value.append(&mut ident);
+        let mut last_ident_start = 0;
+
         while self.has_string(b".") {
             self.consume_string(b".")?;
             value.push(b'.');
             ident = self.consume_ident()?;
+            last_ident_start = value.len();
             value.append(&mut ident);
         }
+
+
+        self.consume_whitespace(false)?;
+
+        // Check for the potential aliasing or specific module imports
+        let import = if self.has_string(b"as") {
+            self.consume_string(b"as")?;
+            self.consume_whitespace(true)?;
+            let alias = self.consume_ident()?;
+
+            h.alloc_import(|this| Import::Module(ImportModule{
+                this,
+                position,
+                module_name: value,
+                alias,
+                module_id: None,
+            }))
+        } else if self.has_string(b"::") {
+            self.consume_string(b"::")?;
+            self.consume_whitespace(false)?;
+
+            if let Some(b'{') = self.source.next() {
+                // Import specific symbols, optionally with an alias
+                self.source.consume();
+                self.consume_whitespace(false)?;
+
+                let mut symbols = Vec::new();
+                let mut next = self.source.next();
+
+                while next.is_some() {
+                    let char = next.unwrap();
+                    if char == b'}' {
+                        break;
+                    }
+
+                    let symbol_position = self.source.pos();
+                    let symbol_name = self.consume_ident()?;
+                    self.consume_whitespace(false)?;
+                    if self.has_string(b"as") {
+                        // Symbol has an alias
+                        self.consume_string(b"as")?;
+                        self.consume_whitespace(true)?;
+                        let symbol_alias = self.consume_ident()?;
+
+                        symbols.push(AliasedSymbol{
+                            position: symbol_position,
+                            name: symbol_name,
+                            alias: symbol_alias,
+                            definition_id: None,
+                        });
+                    } else {
+                        // Symbol does not have an alias
+                        symbols.push(AliasedSymbol{
+                            position: symbol_position,
+                            name: symbol_name.clone(),
+                            alias: symbol_name,
+                            definition_id: None,
+                        });
+                    }
+
+                    // A comma indicates that we may have another symbol coming
+                    // up (not necessary), but if not present then we expect the
+                    // end of the symbol list
+                    self.consume_whitespace(false)?;
+
+                    next = self.source.next();
+                    if let Some(b',') = next {
+                        self.source.consume();
+                        self.consume_whitespace(false)?;
+                        next = self.source.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(b'}') = next {
+                    // We are fine, push the imported symbols
+                    self.source.consume();
+                    if symbols.is_empty() {
+                        return Err(ParseError2::new_error(self.source, position, "empty symbol import list"));
+                    }
+
+                    h.alloc_import(|this| Import::Symbols(ImportSymbols{
+                        this,
+                        position,
+                        module_name: value,
+                        module_id: None,
+                        symbols,
+                    }))
+                } else {
+                    return Err(self.error_at_pos("Expected '}'"));
+                }
+            } else if let Some(b'*') = self.source.next() {
+                // Import all symbols without alias
+                self.source.consume();
+                h.alloc_import(|this| Import::Symbols(ImportSymbols{
+                    this,
+                    position,
+                    module_name: value,
+                    module_id: None,
+                    symbols: Vec::new()
+                }))
+            } else {
+                return Err(self.error_at_pos("Expected '*' or '{'"));
+            }
+        } else {
+            // No explicit alias or subimports, so implicit alias
+            let alias = Vec::from(&value[last_ident_start..]);
+            h.alloc_import(|this| Import::Module(ImportModule{
+                this,
+                position,
+                module_name: value,
+                alias,
+                module_id: None,
+            }))
+        };
+
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
-        Ok(h.alloc_import(|this| Import { this, position, value }))
+        Ok(import)
     }
-    pub fn consume_protocol_description(&mut self, h: &mut Heap) -> Result<RootId, ParseError> {
+    pub fn consume_protocol_description(&mut self, h: &mut Heap) -> Result<RootId, ParseError2> {
         let position = self.source.pos();
         let mut pragmas = Vec::new();
         let mut imports = Vec::new();
@@ -1680,16 +1942,14 @@ impl Lexer<'_> {
             imports.push(import);
             self.consume_whitespace(false)?;
         }
-        // do-while block
-        while {
+        while self.has_symbol_definition() {
             let def = self.consume_symbol_definition(h)?;
             definitions.push(def);
             self.consume_whitespace(false)?;
-            self.has_symbol_definition()
-        } {}
+        }
         // end of file
         if !self.source.is_eof() {
-            return Err(self.source.error("Expected end of file"));
+            return Err(self.error_at_pos("Expected end of file"));
         }
         Ok(h.alloc_protocol_description(|this| Root {
             this,
@@ -1704,8 +1964,9 @@ impl Lexer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::protocol::ast::Expression::*;
+    use crate::protocol::ast::*;
     use crate::protocol::{ast, lexer::*};
+    use crate::protocol::inputsource::*;
 
     #[test]
     fn test_pragmas() {
@@ -1730,8 +1991,169 @@ mod tests {
         if let Pragma::Module(m) = pm {
             assert_eq!(m.value, b"something.dot.separated");
         } else {
-            assert!(false, "second pragma not version");
+            assert!(false, "second pragma not module");
         }
+    }
+
+    #[test]
+    fn test_import() {
+        let mut h = Heap::new();
+        let mut input = InputSource::from_string("
+        // Module imports, with optional and explicit aliasing
+        import single_module;
+        import std.reo;
+        import something.other as alias;
+        // Symbol imports
+        import some_module::*;
+        import some_module::{Foo as Bar, Qux, Dix as Flu};
+        import std.reo::{
+            Foo as Bar, // because thing
+            Qux as Mox, // more explanations
+            Dix, /* yesh, import me */
+        };
+        ").unwrap();
+        let mut lex = Lexer::new(&mut input);
+        let lexed = lex.consume_protocol_description(&mut h).unwrap();
+        let root = &h[lexed];
+        assert_eq!(root.imports.len(), 6);
+        let no_alias_single = h[root.imports[0]].as_module();
+        let no_alias_multi = h[root.imports[1]].as_module();
+        let with_alias = h[root.imports[2]].as_module();
+
+        assert_eq!(no_alias_single.module_name, b"single_module");
+        assert_eq!(no_alias_single.alias, b"single_module");
+        assert_eq!(no_alias_multi.module_name, b"std.reo");
+        assert_eq!(no_alias_multi.alias, b"reo");
+        assert_eq!(with_alias.module_name, b"something.other");
+        assert_eq!(with_alias.alias, b"alias");
+
+        let all_symbols = h[root.imports[3]].as_symbols();
+        let single_line_symbols = h[root.imports[4]].as_symbols();
+        let multi_line_symbols = h[root.imports[5]].as_symbols();
+
+        assert_eq!(all_symbols.module_name, b"some_module");
+        assert!(all_symbols.symbols.is_empty());
+        assert_eq!(single_line_symbols.module_name, b"some_module");
+        assert_eq!(single_line_symbols.symbols.len(), 3);
+        assert_eq!(single_line_symbols.symbols[0].name, b"Foo");
+        assert_eq!(single_line_symbols.symbols[0].alias, b"Bar");
+        assert_eq!(single_line_symbols.symbols[1].name, b"Qux");
+        assert_eq!(single_line_symbols.symbols[1].alias, b"Qux");
+        assert_eq!(single_line_symbols.symbols[2].name, b"Dix");
+        assert_eq!(single_line_symbols.symbols[2].alias, b"Flu");
+        assert_eq!(multi_line_symbols.module_name, b"std.reo");
+        assert_eq!(multi_line_symbols.symbols.len(), 3);
+        assert_eq!(multi_line_symbols.symbols[0].name, b"Foo");
+        assert_eq!(multi_line_symbols.symbols[0].alias, b"Bar");
+        assert_eq!(multi_line_symbols.symbols[1].name, b"Qux");
+        assert_eq!(multi_line_symbols.symbols[1].alias, b"Mox");
+        assert_eq!(multi_line_symbols.symbols[2].name, b"Dix");
+        assert_eq!(multi_line_symbols.symbols[2].alias, b"Dix");
+    }
+
+    #[test]
+    fn test_struct_definition() {
+        let mut h = Heap::new();
+        let mut input = InputSource::from_string("
+        struct Foo {
+            byte one,
+            short two,
+            Bar three,
+        }
+        struct Bar{int[] one, int[] two, Qux[] three}
+        ").unwrap();
+        let mut lex = Lexer::new(&mut input);
+        let lexed = lex.consume_protocol_description(&mut h);
+        if let Err(err) = &lexed {
+            println!("{}", err);
+        }
+        let lexed = lexed.unwrap();
+        let root = &h[lexed];
+
+        assert_eq!(root.definitions.len(), 2);
+
+        let foo_def = h[root.definitions[0]].as_struct();
+        assert_eq!(foo_def.identifier.value, b"Foo");
+        assert_eq!(foo_def.fields.len(), 3);
+        assert_eq!(foo_def.fields[0].field.value, b"one");
+        assert_eq!(h[foo_def.fields[0].the_type].the_type, Type::BYTE);
+        assert_eq!(foo_def.fields[1].field.value, b"two");
+        assert_eq!(h[foo_def.fields[1].the_type].the_type, Type::SHORT);
+        assert_eq!(foo_def.fields[2].field.value, b"three");
+        assert_eq!(h[foo_def.fields[2].the_type].the_type.primitive, PrimitiveType::Symbolic(Vec::from("Bar".as_bytes())));
+
+        let bar_def = h[root.definitions[1]].as_struct();
+        assert_eq!(bar_def.identifier.value, b"Bar");
+        assert_eq!(bar_def.fields.len(), 3);
+        assert_eq!(bar_def.fields[0].field.value, b"one");
+        assert_eq!(h[bar_def.fields[0].the_type].the_type, Type::INT_ARRAY);
+        assert_eq!(bar_def.fields[1].field.value, b"two");
+        assert_eq!(h[bar_def.fields[1].the_type].the_type, Type::INT_ARRAY);
+        assert_eq!(bar_def.fields[2].field.value, b"three");
+        assert_eq!(h[bar_def.fields[2].the_type].the_type.array, true);
+        assert_eq!(h[bar_def.fields[2].the_type].the_type.primitive, PrimitiveType::Symbolic(Vec::from("Qux".as_bytes())));
+    }
+
+    #[test]
+    fn test_enum_definition() {
+        let mut h = Heap::new();
+        let mut input = InputSource::from_string("
+        enum Foo {
+            A = 0,
+            B = 5,
+            C,
+            D = 0xFF,
+        }
+        enum Bar { Ayoo, Byoo, Cyoo,}
+        enum Qux { A(byte[]), B(Bar[]), C(byte)
+        }
+        ").unwrap();
+        let mut lex = Lexer::new(&mut input);
+        let lexed = lex.consume_protocol_description(&mut h).unwrap();
+        let root = &h[lexed];
+
+        assert_eq!(root.definitions.len(), 3);
+
+        let foo_def = h[root.definitions[0]].as_enum();
+        assert_eq!(foo_def.identifier.value, b"Foo");
+        assert_eq!(foo_def.variants.len(), 4);
+        assert_eq!(foo_def.variants[0].identifier.value, b"A");
+        assert_eq!(foo_def.variants[0].value, EnumVariantValue::Integer(0));
+        assert_eq!(foo_def.variants[1].identifier.value, b"B");
+        assert_eq!(foo_def.variants[1].value, EnumVariantValue::Integer(5));
+        assert_eq!(foo_def.variants[2].identifier.value, b"C");
+        assert_eq!(foo_def.variants[2].value, EnumVariantValue::None);
+        assert_eq!(foo_def.variants[3].identifier.value, b"D");
+        assert_eq!(foo_def.variants[3].value, EnumVariantValue::Integer(0xFF));
+
+        let bar_def = h[root.definitions[1]].as_enum();
+        assert_eq!(bar_def.identifier.value, b"Bar");
+        assert_eq!(bar_def.variants.len(), 3);
+        assert_eq!(bar_def.variants[0].identifier.value, b"Ayoo");
+        assert_eq!(bar_def.variants[0].value, EnumVariantValue::None);
+        assert_eq!(bar_def.variants[1].identifier.value, b"Byoo");
+        assert_eq!(bar_def.variants[1].value, EnumVariantValue::None);
+        assert_eq!(bar_def.variants[2].identifier.value, b"Cyoo");
+        assert_eq!(bar_def.variants[2].value, EnumVariantValue::None);
+
+        let qux_def = h[root.definitions[2]].as_enum();
+        let enum_type = |value: &EnumVariantValue| -> &TypeAnnotation {
+            if let EnumVariantValue::Type(t) = value {
+                &h[*t]
+            } else {
+                assert!(false);
+                unreachable!();
+            }
+        };
+        assert_eq!(qux_def.identifier.value, b"Qux");
+        assert_eq!(qux_def.variants.len(), 3);
+        assert_eq!(qux_def.variants[0].identifier.value, b"A");
+        assert_eq!(enum_type(&qux_def.variants[0].value).the_type, Type::BYTE_ARRAY);
+        assert_eq!(qux_def.variants[1].identifier.value, b"B");
+        assert_eq!(enum_type(&qux_def.variants[1].value).the_type.array, true);
+        assert_eq!(enum_type(&qux_def.variants[1].value).the_type.primitive, PrimitiveType::Symbolic(Vec::from("Bar".as_bytes())));
+        assert_eq!(qux_def.variants[2].identifier.value, b"C");
+        assert_eq!(enum_type(&qux_def.variants[2].value).the_type, Type::BYTE);
     }
 
 //     #[test]

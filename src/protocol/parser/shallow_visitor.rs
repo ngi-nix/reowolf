@@ -6,5 +6,7 @@ type Unit = ();
 type VisitorResult = Result<Unit, ParseError>;
 
 trait ShallowVisitor: Sized {
-    fn visit_protocol_description(&mut self, h: &mut Heap, pd: RootId) -> 
+    fn visit_protocol_description(&mut self, h: &mut Heap, pd: RootId) -> VisitorResult {
+
+    }
 }
