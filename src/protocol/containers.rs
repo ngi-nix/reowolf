@@ -1,6 +1,10 @@
 /// Containers.rs
 ///
 /// Contains specialized containers for the parser/compiler
+/// TODO: Actually implement, I really want to remove all of the identifier
+///     allocations.
+
+use std::collections::LinkedList;
 
 const PAGE_SIZE: usize = 4096;
 
@@ -12,12 +16,11 @@ struct StringPage {
 
 impl StringPage {
     fn new() -> Self{
-        let res = Self{
+        Self{
             buffer: [0; PAGE_SIZE],
             remaining: PAGE_SIZE,
             next_page: None
-        };
-        res
+        }
     }
 }
 
@@ -30,6 +33,8 @@ pub(crate) struct StringAllocator {
     first_page: Box<StringPage>,
     last_page: *mut StringPage,
 }
+
+unsafe impl Send for StringAllocator {}
 
 impl StringAllocator {
     pub(crate) fn new() -> StringAllocator {
@@ -90,10 +95,14 @@ mod tests {
         assert!(alloc.first_page.next_page.is_none());
         assert_eq!(alloc.first_page.as_ref() as *const StringPage, alloc.last_page);
 
+        // Insert and make page full, should not allocate another page yet
         let input = "I am a simple static string";
         let filler = " ".repeat(PAGE_SIZE - input.len());
         let ref_first = alloc.alloc(input.as_bytes()).expect("alloc first");
         let ref_filler = alloc.alloc(filler.as_bytes()).expect("alloc filler");
+        assert!(alloc.first_page.next_page.is_none());
+        assert_eq!(alloc.first_page.as_ref() as *const StringPage, alloc.last_page);
+
         let ref_second = alloc.alloc(input.as_bytes()).expect("alloc second");
 
         assert!(alloc.first_page.next_page.is_some());

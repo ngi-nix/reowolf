@@ -40,7 +40,7 @@ impl LocalId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DefinitionId(Id<Definition>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -75,24 +75,6 @@ pub struct FunctionId(DefinitionId);
 
 impl FunctionId {
     pub fn upcast(self) -> DefinitionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CompositeId(ComponentId);
-
-impl CompositeId {
-    pub fn upcast(self) -> ComponentId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PrimitiveId(ComponentId);
-
-impl PrimitiveId {
-    pub fn upcast(self) -> ComponentId {
         self.0
     }
 }
@@ -406,7 +388,7 @@ impl ImportedDeclarationId {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
     // Allocators
-    // #[serde[skip]] string_alloc: StringAllocator,
+    // #[serde(skip)] string_alloc: StringAllocator,
     // Root arena, contains the entry point for different modules. Each root
     // contains lists of IDs that correspond to the other arenas.
     protocol_descriptions: Arena<Root>,
@@ -733,19 +715,12 @@ impl Heap {
             Definition::Enum(f(EnumId(DefinitionId(id))))
         })))
     }
-    pub fn alloc_composite(&mut self, f: impl FnOnce(CompositeId) -> Composite) -> CompositeId {
-        CompositeId(ComponentId(DefinitionId(self.definitions.alloc_with_id(|id| {
-            Definition::Component(Component::Composite(f(CompositeId(ComponentId(DefinitionId(
-                id,
-            ))))))
-        }))))
-    }
-    pub fn alloc_primitive(&mut self, f: impl FnOnce(PrimitiveId) -> Primitive) -> PrimitiveId {
-        PrimitiveId(ComponentId(DefinitionId(self.definitions.alloc_with_id(|id| {
-            Definition::Component(Component::Primitive(f(PrimitiveId(ComponentId(DefinitionId(
-                id,
-            ))))))
-        }))))
+    pub fn alloc_component(&mut self, f: impl FnOnce(ComponentId) -> Component) -> ComponentId {
+        ComponentId(DefinitionId(self.definitions.alloc_with_id(|id| {
+            Definition::Component(f(ComponentId(
+                DefinitionId(id),
+            )))
+        })))
     }
     pub fn alloc_function(&mut self, f: impl FnOnce(FunctionId) -> Function) -> FunctionId {
         FunctionId(DefinitionId(
@@ -861,20 +836,6 @@ impl Index<FunctionId> for Heap {
     type Output = Function;
     fn index(&self, index: FunctionId) -> &Self::Output {
         &self.definitions[(index.0).0].as_function()
-    }
-}
-
-impl Index<CompositeId> for Heap {
-    type Output = Composite;
-    fn index(&self, index: CompositeId) -> &Self::Output {
-        &self.definitions[((index.0).0).0].as_composite()
-    }
-}
-
-impl Index<PrimitiveId> for Heap {
-    type Output = Primitive;
-    fn index(&self, index: PrimitiveId) -> &Self::Output {
-        &self.definitions[((index.0).0).0].as_primitive()
     }
 }
 
@@ -1199,6 +1160,16 @@ impl Root {
         }
         None
     }
+    pub fn get_declaration_namespaced(&self, h: &Heap, id: &NamespacedIdentifier) -> Option<DeclarationId> {
+        for declaration_id in self.declarations.iter() {
+            let declaration = &h[*declaration_id];
+            // TODO: @fixme
+            if declaration.identifier().value == id.value {
+                return Some(*declaration_id);
+            }
+        }
+        None
+    }
 }
 
 impl SyntaxElement for Root {
@@ -1323,7 +1294,7 @@ pub struct NamespacedIdentifier {
 }
 
 impl NamespacedIdentifier {
-    fn iter(&self) -> NamespacedIdentifierIter {
+    pub(crate) fn iter(&self) -> NamespacedIdentifierIter {
         NamespacedIdentifierIter{
             value: &self.value,
             cur_offset: 0,
@@ -1333,11 +1304,28 @@ impl NamespacedIdentifier {
     }
 }
 
-struct NamespacedIdentifierIter<'a> {
+impl PartialEq for NamespacedIdentifier {
+    fn eq(&self, other: &Self) -> bool {
+        return self.value == other.value
+    }
+}
+impl Eq for NamespacedIdentifier{}
+
+// TODO: Just keep ref to NamespacedIdentifier
+pub(crate) struct NamespacedIdentifierIter<'a> {
     value: &'a Vec<u8>,
     cur_offset: usize,
     num_returned: u8,
     num_total: u8,
+}
+
+impl<'a> NamespacedIdentifierIter<'a> {
+    pub(crate) fn num_returned(&self) -> u8 {
+        return self.num_returned;
+    }
+    pub(crate) fn num_remaining(&self) -> u8 {
+        return self.num_total - self.num_returned
+    }
 }
 
 impl<'a> Iterator for NamespacedIdentifierIter<'a> {
@@ -1377,8 +1365,6 @@ impl Display for Identifier {
     }
 }
 
-type TypeData = Vec<u8>;
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveType {
     Input,
@@ -1389,8 +1375,24 @@ pub enum PrimitiveType {
     Short,
     Int,
     Long,
-    Symbolic(TypeData),
+    Symbolic(PrimitiveSymbolic)
 }
+
+// TODO: @cleanup, remove PartialEq implementations
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PrimitiveSymbolic {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    // Phase 2: typing
+    pub(crate) definition: Option<DefinitionId>
+}
+
+impl PartialEq for PrimitiveSymbolic {
+    fn eq(&self, other: &Self) -> bool {
+        self.identifier == other.identifier
+    }
+}
+impl Eq for PrimitiveSymbolic{}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Type {
@@ -1448,7 +1450,18 @@ impl Display for Type {
             }
             PrimitiveType::Symbolic(data) => {
                 // Type data is in ASCII range.
-                write!(f, "{}", String::from_utf8_lossy(&data))?;
+                if let Some(id) = &data.definition {
+                    write!(
+                        f, "Symbolic({}, id: {})", 
+                        String::from_utf8_lossy(&data.identifier.value),
+                        id.0.index
+                    )?;
+                } else {
+                    write!(
+                        f, "Symbolic({}, id: Unresolved)",
+                        String::from_utf8_lossy(&data.identifier.value)
+                    )?;
+                }
             }
         }
         if self.array {
@@ -1490,7 +1503,13 @@ pub enum Method {
     Get,
     Fires,
     Create,
-    Symbolic(Identifier),
+    Symbolic(MethodSymbolic)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MethodSymbolic {
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) definition: Option<DefinitionId>
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1673,17 +1692,11 @@ impl Definition {
             _ => panic!("Unable to cast `Definition` to `Function`"),
         }
     }
-    pub fn as_composite(&self) -> &Composite {
-        self.as_component().as_composite()
-    }
-    pub fn as_primitive(&self) -> &Primitive {
-        self.as_component().as_primitive()
-    }
     pub fn identifier(&self) -> &Identifier {
         match self {
             Definition::Struct(def) => &def.identifier,
             Definition::Enum(def) => &def.identifier,
-            Definition::Component(com) => com.identifier(),
+            Definition::Component(com) => &com.identifier,
             Definition::Function(fun) => &fun.identifier,
         }
     }
@@ -1691,7 +1704,7 @@ impl Definition {
         // TODO: Fix this
         static EMPTY_VEC: Vec<ParameterId> = Vec::new();
         match self {
-            Definition::Component(com) => com.parameters(),
+            Definition::Component(com) => &com.parameters,
             Definition::Function(fun) => &fun.parameters,
             _ => &EMPTY_VEC,
         }
@@ -1699,7 +1712,7 @@ impl Definition {
     pub fn body(&self) -> StatementId {
         // TODO: Fix this
         match self {
-            Definition::Component(com) => com.body(),
+            Definition::Component(com) => com.body,
             Definition::Function(fun) => fun.body,
             _ => panic!("cannot retrieve body (for EnumDefinition or StructDefinition)")
         }
@@ -1771,87 +1784,24 @@ pub struct EnumDefinition {
     pub variants: Vec<EnumVariantDefinition>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Component {
-    Composite(Composite),
-    Primitive(Primitive),
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum ComponentVariant {
+    Primitive,
+    Composite,
 }
 
-impl Component {
-    pub fn this(&self) -> ComponentId {
-        match self {
-            Component::Composite(com) => com.this.upcast(),
-            Component::Primitive(prim) => prim.this.upcast(),
-        }
-    }
-    pub fn as_composite(&self) -> &Composite {
-        match self {
-            Component::Composite(result) => result,
-            _ => panic!("Unable to cast `Component` to `Composite`"),
-        }
-    }
-    pub fn as_primitive(&self) -> &Primitive {
-        match self {
-            Component::Primitive(result) => result,
-            _ => panic!("Unable to cast `Component` to `Primitive`"),
-        }
-    }
-    fn identifier(&self) -> &Identifier {
-        match self {
-            Component::Composite(com) => &com.identifier,
-            Component::Primitive(prim) => &prim.identifier,
-        }
-    }
-    pub fn parameters(&self) -> &Vec<ParameterId> {
-        match self {
-            Component::Composite(com) => &com.parameters,
-            Component::Primitive(prim) => &prim.parameters,
-        }
-    }
-    pub fn body(&self) -> StatementId {
-        match self {
-            Component::Composite(com) => com.body,
-            Component::Primitive(prim) => prim.body,
-        }
-    }
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Component {
+    pub this: ComponentId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub variant: ComponentVariant,
+    pub identifier: Identifier,
+    pub parameters: Vec<ParameterId>,
+    pub body: StatementId,
 }
 
 impl SyntaxElement for Component {
-    fn position(&self) -> InputPosition {
-        match self {
-            Component::Composite(def) => def.position(),
-            Component::Primitive(def) => def.position(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Composite {
-    pub this: CompositeId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub identifier: Identifier,
-    pub parameters: Vec<ParameterId>,
-    pub body: StatementId,
-}
-
-impl SyntaxElement for Composite {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Primitive {
-    pub this: PrimitiveId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub identifier: Identifier,
-    pub parameters: Vec<ParameterId>,
-    pub body: StatementId,
-}
-
-impl SyntaxElement for Primitive {
     fn position(&self) -> InputPosition {
         self.position
     }
@@ -1931,8 +1881,8 @@ impl Signature {
         // TODO: Fix this
         match &h[def] {
             Definition::Component(com) => Signature::Component(ComponentSignature {
-                identifier: com.identifier().clone(), // TODO: @fix
-                arity: Signature::convert_parameters(h, com.parameters()),
+                identifier: com.identifier.clone(), // TODO: @fix
+                arity: Signature::convert_parameters(h, &com.parameters),
             }),
             Definition::Function(fun) => Signature::Function(FunctionSignature {
                 return_type: h[fun.return_type].the_type.clone(),

@@ -1,3 +1,10 @@
+// TODO: Maybe allow namespaced-aliased imports. It is currently not possible
+//  to express the following:
+//      import Module.Submodule as SubMod
+//      import SubMod::{Symbol}
+//  And it is especially not possible to express the following:
+//      import SubMod::{Symbol}
+//      import Module.Submodule as SubMod
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 
@@ -18,11 +25,17 @@ pub(crate) enum Symbol {
 pub(crate) struct SymbolValue {
     // Position refers to the origin of the symbol definition (i.e. the module's
     // RootId that is in the key being used to lookup this value)
-    position: InputPosition,
-    symbol: Symbol,
+    pub(crate) position: InputPosition,
+    pub(crate) symbol: Symbol,
 }
 
 impl SymbolValue {
+    pub(crate) fn is_namespace(&self) -> bool {
+        match &self.symbol {
+            Symbol::Namespace(_) => true,
+            _ => false
+        }
+    }
     pub(crate) fn as_namespace(&self) -> Option<RootId> {
         match &self.symbol {
             Symbol::Namespace(root_id) => Some(*root_id),
@@ -48,10 +61,6 @@ impl SymbolValue {
 /// namespaced identifiers (e.g. Module::Enum::EnumVariant) to the appropriate
 /// definition (i.e. not namespaces; as the language has no way to use
 /// namespaces except for using them in namespaced identifiers).
-// TODO: Maybe allow namespaced-aliased imports. It is currently not possible
-//  to express the following:
-//  import Module.Submodule as ModSub
-//  import SubMod::{Symbol}
 pub(crate) struct SymbolTable {
     // Lookup from module name (not any aliases) to the root id
     module_lookup: HashMap<Vec<u8>, RootId>,
@@ -283,8 +292,75 @@ impl SymbolTable {
     /// (i.e. an enum variant, or simply an erroneous instance of too many
     /// chained identifiers). This function will return None if nothing could be
     /// resolved at all.
-    pub(crate) fn resolve_namespaced_symbol(&self, _within_module_id: RootId) {
-        todo!("implement")
+    pub(crate) fn resolve_namespaced_symbol<'t, 'i>(
+        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier
+    ) -> Option<(&SymbolValue, NamespacedIdentifierIter<'i>)> {
+        let mut iter = identifier.iter();
+        let mut symbol: Option<&SymbolValue> = None;
+        let mut within_module_id = root_module_id;
+        while let Some(partial) = iter.next() {
+            // Lookup the symbol within the currently iterated upon module
+            let lookup_key = SymbolKey{ module_id: within_module_id, symbol_name: Vec::from(partial) };
+            let new_symbol = self.symbol_lookup.get(&lookup_key);
+            
+            match new_symbol {
+                None => {
+                    // Can't find anything
+                    break; 
+                },
+                Some(new_symbol) => {
+                    // Found something, but if we already moved to another
+                    // module then we don't want to keep jumping across modules,
+                    // we're only interested in symbols defined within that
+                    // module.
+                    match &new_symbol.symbol {
+                        Symbol::Namespace(new_root_id) => {
+                            if root_module_id != within_module_id {
+                                // Don't jump from module to module, keep the
+                                // old symbol (which must be a Namespace) and
+                                // break
+                                debug_assert!(symbol.is_some());
+                                debug_assert!(symbol.unwrap().is_namespace());
+                                debug_assert!(iter.num_returned() > 1);
+
+                                // For handling this error, we need to revert
+                                // the iterator by one
+                                let to_skip = iter.num_returned() - 1;
+                                iter = identifier.iter();
+                                for _ in 0..to_skip { iter.next(); }
+                                break;
+                            }
+
+                            within_module_id = *new_root_id;
+                            symbol = Some(new_symbol);
+                        },
+                        Symbol::Definition((definition_root_id, _)) => {
+                            // Found a definition, but if we already jumped
+                            // modules, then this must be defined within that
+                            // module.
+                            if root_module_id != within_module_id && within_module_id != *definition_root_id {
+                                // This is an imported definition within the module
+                                // TODO: Maybe factor out? Dunno...
+                                debug_assert!(symbol.is_some());
+                                debug_assert!(symbol.unwrap().is_namespace());
+                                debug_assert!(iter.num_returned() > 1);
+                                let to_skip = iter.num_returned() - 1;
+                                iter = identifier.iter();
+                                for _ in 0..to_skip { iter.next(); }
+                                break;
+                            }
+                            symbol = Some(new_symbol);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        match symbol {
+            None => None,
+            Some(symbol) => Some((symbol, iter))
+        }
     }
 
     /// Attempts to add a namespace symbol. Returns `Ok` if the symbol was
@@ -292,7 +368,7 @@ impl SymbolTable {
     /// together with the previous definition's source position (in the origin
     /// module's source file).
     // Note: I would love to return a reference to the value, but Rust is
-    // preventing me from doing so...
+    // preventing me from doing so... That, or I'm not smart enough...
     fn add_namespace_symbol(
         &mut self, origin_module_id: RootId, origin_position: InputPosition, symbol_name: &Vec<u8>, target_module_id: RootId
     ) -> Result<(), InputPosition> {

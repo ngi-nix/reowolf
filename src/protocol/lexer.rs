@@ -2,6 +2,7 @@ use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 
 const MAX_LEVEL: usize = 128;
+const MAX_NAMESPACES: u8 = 8; // only three levels are supported at the moment
 
 fn is_vchar(x: Option<u8>) -> bool {
     if let Some(c) = x {
@@ -259,7 +260,7 @@ impl Lexer<'_> {
     }
 
     // Statement keywords
-
+    // TODO: Clean up these functions
     fn has_statement_keyword(&self) -> bool {
         self.has_keyword(b"channel")
             || self.has_keyword(b"skip")
@@ -272,7 +273,7 @@ impl Lexer<'_> {
             || self.has_keyword(b"assert")
             || self.has_keyword(b"goto")
             || self.has_keyword(b"new")
-            || self.has_keyword(b"put")
+            || self.has_keyword(b"put") // TODO: @fix, should be a function, even though it has sideeffects
     }
     fn has_type_keyword(&self) -> bool {
         self.has_keyword(b"in")
@@ -290,6 +291,17 @@ impl Lexer<'_> {
             || self.has_keyword(b"create")
             || self.has_keyword(b"length")
     }
+    fn has_reserved(&self) -> bool {
+        self.has_statement_keyword()
+            || self.has_type_keyword()
+            || self.has_builtin_keyword()
+            || self.has_keyword(b"let")
+            || self.has_keyword(b"struct")
+            || self.has_keyword(b"enum")
+            || self.has_keyword(b"true")
+            || self.has_keyword(b"false")
+            || self.has_keyword(b"null")
+    }
 
     // Identifiers
 
@@ -300,7 +312,7 @@ impl Lexer<'_> {
         let next = self.source.next();
         is_ident_start(next)
     }
-    fn consume_identifier(&mut self, h: &mut Heap) -> Result<Identifier, ParseError2> {
+    fn consume_identifier(&mut self) -> Result<Identifier, ParseError2> {
         if self.has_statement_keyword() || self.has_type_keyword() || self.has_builtin_keyword() {
             return Err(self.error_at_pos("Expected identifier"));
         }
@@ -315,9 +327,33 @@ impl Lexer<'_> {
         self.consume_ident()?;
         Ok(())
     }
+    fn has_namespaced_identifier(&self) -> bool { 
+        self.has_identifier() 
+    }
+    fn consume_namespaced_identifier(&mut self) -> Result<NamespacedIdentifier, ParseError2> {
+        if self.has_reserved() {
+            return Err(self.error_at_pos("Encountered reserved keyword"));
+        }
+
+        let position = self.source.pos();
+        let mut ns_ident = self.consume_ident()?;
+        let mut num_namespaces = 1;
+        while self.has_string(b"::") {
+            if num_namespaces >= MAX_NAMESPACES {
+                return Err(self.error_at_pos("Too many namespaces in identifier"));
+            }
+            let new_ident = self.consume_ident()?;
+            num_namespaces += 1;
+        }
+
+        Ok(NamespacedIdentifier{
+            position,
+            value: ns_ident,
+            num_namespaces,
+        })
+    }
 
     // Types and type annotations
-
     fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
         if self.has_keyword(b"in") {
             self.consume_keyword(b"in")?;
@@ -343,9 +379,14 @@ impl Lexer<'_> {
         } else if self.has_keyword(b"long") {
             self.consume_keyword(b"long")?;
             Ok(PrimitiveType::Long)
+        } else if self.has_keyword(b"let") {
+            return Err(self.error_at_pos("inferred types using 'let' are reserved, but not yet implemented"));
         } else {
-            let data = self.consume_ident()?;
-            Ok(PrimitiveType::Symbolic(data))
+            let identifier = self.consume_namespaced_identifier()?;
+            Ok(PrimitiveType::Symbolic(PrimitiveSymbolic{
+                identifier,
+                definition: None
+            }))
         }
     }
     fn has_array(&mut self) -> bool {
@@ -398,7 +439,7 @@ impl Lexer<'_> {
         let position = self.source.pos();
         let type_annotation = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         let id =
             h.alloc_parameter(|this| Parameter { this, position, type_annotation, identifier });
         Ok(id)
@@ -979,7 +1020,7 @@ impl Lexer<'_> {
                     self.consume_keyword(b"length")?;
                     field = Field::Length;
                 } else {
-                    field = Field::Symbolic(self.consume_identifier(h)?);
+                    field = Field::Symbolic(self.consume_identifier()?);
                 }
                 result = h
                     .alloc_select_expression(|this| SelectExpression {
@@ -1106,8 +1147,11 @@ impl Lexer<'_> {
             self.consume_keyword(b"create")?;
             method = Method::Create;
         } else {
-            let identifier = self.consume_identifier(h)?;
-            method = Method::Symbolic(identifier)
+            let identifier = self.consume_namespaced_identifier()?;
+            method = Method::Symbolic(MethodSymbolic{
+                identifier,
+                definition: None
+            })
         }
         self.consume_whitespace(false)?;
         let mut arguments = Vec::new();
@@ -1138,7 +1182,7 @@ impl Lexer<'_> {
         h: &mut Heap,
     ) -> Result<VariableExpressionId, ParseError2> {
         let position = self.source.pos();
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         Ok(h.alloc_variable_expression(|this| VariableExpression {
             this,
             position,
@@ -1277,12 +1321,12 @@ impl Lexer<'_> {
         self.consume_keyword(b"channel")?;
         self.consume_whitespace(true)?;
         let from_annotation = self.create_type_annotation_output(h)?;
-        let from_identifier = self.consume_identifier(h)?;
+        let from_identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b"->")?;
         self.consume_whitespace(false)?;
         let to_annotation = self.create_type_annotation_input(h)?;
-        let to_identifier = self.consume_identifier(h)?;
+        let to_identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         let from = h.alloc_local(|this| Local {
@@ -1309,7 +1353,7 @@ impl Lexer<'_> {
         let position = self.source.pos();
         let type_annotation = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b"=")?;
         self.consume_whitespace(false)?;
@@ -1330,7 +1374,7 @@ impl Lexer<'_> {
         h: &mut Heap,
     ) -> Result<LabeledStatementId, ParseError2> {
         let position = self.source.pos();
-        let label = self.consume_identifier(h)?;
+        let label = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b":")?;
         self.consume_whitespace(false)?;
@@ -1389,7 +1433,7 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         let label;
         if self.has_identifier() {
-            label = Some(self.consume_identifier(h)?);
+            label = Some(self.consume_identifier()?);
             self.consume_whitespace(false)?;
         } else {
             label = None;
@@ -1406,7 +1450,7 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         let label;
         if self.has_identifier() {
-            label = Some(self.consume_identifier(h)?);
+            label = Some(self.consume_identifier()?);
             self.consume_whitespace(false)?;
         } else {
             label = None;
@@ -1477,7 +1521,7 @@ impl Lexer<'_> {
         let position = self.source.pos();
         self.consume_keyword(b"goto")?;
         self.consume_whitespace(false)?;
-        let label = self.consume_identifier(h)?;
+        let label = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_goto_statement(|this| GotoStatement { this, position, label, target: None }))
@@ -1549,7 +1593,7 @@ impl Lexer<'_> {
         let struct_pos = self.source.pos();
         self.consume_keyword(b"struct")?;
         self.consume_whitespace(true)?;
-        let struct_ident = self.consume_identifier(h)?;
+        let struct_ident = self.consume_identifier()?;
         self.consume_whitespace(false)?;
 
         // Parse struct fields
@@ -1567,7 +1611,7 @@ impl Lexer<'_> {
             let field_position = self.source.pos();
             let field_type = self.consume_type_annotation(h)?;
             self.consume_whitespace(true)?;
-            let field_ident = self.consume_identifier(h)?;
+            let field_ident = self.consume_identifier()?;
             self.consume_whitespace(false)?;
 
             fields.push(StructFieldDefinition{
@@ -1605,7 +1649,7 @@ impl Lexer<'_> {
         let enum_pos = self.source.pos();
         self.consume_keyword(b"enum")?;
         self.consume_whitespace(true)?;
-        let enum_ident = self.consume_identifier(h)?;
+        let enum_ident = self.consume_identifier()?;
         self.consume_whitespace(false)?;
 
         // Parse enum variants
@@ -1621,7 +1665,7 @@ impl Lexer<'_> {
             // Consume variant identifier
             self.consume_whitespace(false)?;
             let variant_position = self.source.pos();
-            let variant_ident = self.consume_identifier(h)?;
+            let variant_ident = self.consume_identifier()?;
             self.consume_whitespace(false)?;
 
             // Consume variant (tag) value: may be nothing, in which case it is
@@ -1685,41 +1729,46 @@ impl Lexer<'_> {
         }))
     }
     fn consume_component_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+        // TODO: Cleanup
         if self.has_keyword(b"composite") {
-            Ok(self.consume_composite_definition(h)?.upcast())
+            Ok(self.consume_composite_definition(h)?)
         } else {
-            Ok(self.consume_primitive_definition(h)?.upcast())
+            Ok(self.consume_primitive_definition(h)?)
         }
     }
-    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<CompositeId, ParseError2> {
+    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"composite")?;
         self.consume_whitespace(true)?;
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
         self.consume_whitespace(false)?;
         let body = self.consume_block_statement(h)?;
-        Ok(h.alloc_composite(|this| Composite { this, position, identifier, parameters, body }))
+        Ok(h.alloc_component(|this| Component { 
+            this, variant: ComponentVariant::Composite, position, identifier, parameters, body 
+        }))
     }
-    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<PrimitiveId, ParseError2> {
+    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
         let position = self.source.pos();
         self.consume_keyword(b"primitive")?;
         self.consume_whitespace(true)?;
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
         self.consume_whitespace(false)?;
         let body = self.consume_block_statement(h)?;
-        Ok(h.alloc_primitive(|this| Primitive { this, position, identifier, parameters, body }))
+        Ok(h.alloc_component(|this| Component { 
+            this, variant: ComponentVariant::Primitive, position, identifier, parameters, body 
+        }))
     }
     fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError2> {
         let position = self.source.pos();
         let return_type = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
-        let identifier = self.consume_identifier(h)?;
+        let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
@@ -2072,6 +2121,15 @@ mod tests {
 
         assert_eq!(root.definitions.len(), 2);
 
+        let symbolic_type = |v: &PrimitiveType| -> Vec<u8> {
+            if let PrimitiveType::Symbolic(v) = v {
+                v.identifier.value.clone()
+            } else {
+                assert!(false);
+                unreachable!();
+            }
+        };
+
         let foo_def = h[root.definitions[0]].as_struct();
         assert_eq!(foo_def.identifier.value, b"Foo");
         assert_eq!(foo_def.fields.len(), 3);
@@ -2080,7 +2138,10 @@ mod tests {
         assert_eq!(foo_def.fields[1].field.value, b"two");
         assert_eq!(h[foo_def.fields[1].the_type].the_type, Type::SHORT);
         assert_eq!(foo_def.fields[2].field.value, b"three");
-        assert_eq!(h[foo_def.fields[2].the_type].the_type.primitive, PrimitiveType::Symbolic(Vec::from("Bar".as_bytes())));
+        assert_eq!(
+            symbolic_type(&h[foo_def.fields[2].the_type].the_type.primitive), 
+            Vec::from("Bar".as_bytes())
+        );
 
         let bar_def = h[root.definitions[1]].as_struct();
         assert_eq!(bar_def.identifier.value, b"Bar");
@@ -2091,7 +2152,10 @@ mod tests {
         assert_eq!(h[bar_def.fields[1].the_type].the_type, Type::INT_ARRAY);
         assert_eq!(bar_def.fields[2].field.value, b"three");
         assert_eq!(h[bar_def.fields[2].the_type].the_type.array, true);
-        assert_eq!(h[bar_def.fields[2].the_type].the_type.primitive, PrimitiveType::Symbolic(Vec::from("Qux".as_bytes())));
+        assert_eq!(
+            symbolic_type(&h[bar_def.fields[2].the_type].the_type.primitive), 
+            Vec::from("Qux".as_bytes())
+        );
     }
 
     #[test]
@@ -2151,7 +2215,10 @@ mod tests {
         assert_eq!(enum_type(&qux_def.variants[0].value).the_type, Type::BYTE_ARRAY);
         assert_eq!(qux_def.variants[1].identifier.value, b"B");
         assert_eq!(enum_type(&qux_def.variants[1].value).the_type.array, true);
-        assert_eq!(enum_type(&qux_def.variants[1].value).the_type.primitive, PrimitiveType::Symbolic(Vec::from("Bar".as_bytes())));
+        if let PrimitiveType::Symbolic(t) = &enum_type(&qux_def.variants[1].value).the_type.primitive {
+            assert_eq!(t.identifier.value, Vec::from("Bar".as_bytes()));
+        } else { assert!(false) }
+
         assert_eq!(qux_def.variants[2].identifier.value, b"C");
         assert_eq!(enum_type(&qux_def.variants[2].value).the_type, Type::BYTE);
     }

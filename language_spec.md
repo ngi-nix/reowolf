@@ -101,7 +101,7 @@ keyword =
     "while" | "break" | "continue" | "return" |
     "synchronous" | "assert" |
     "goto" | "skip" | "new" | "let"
-builtin = "put" | "get" | "fires" | "create" | "sizeof" | "assert"
+builtin = "put" | "get" | "fires" | "create" | "assert"
 identifier = identifier-any WITHOUT (keyword | builtin)
 
 // Identifier with any number of prefixed namespaces

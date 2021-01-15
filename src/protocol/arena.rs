@@ -52,6 +52,9 @@ impl<T> Arena<T> {
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.store.iter()
     }
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
 }
 impl<T> core::ops::Index<Id<T>> for Arena<T> {
     type Output = T;

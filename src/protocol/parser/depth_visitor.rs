@@ -30,10 +30,10 @@ pub(crate) trait Visitor: Sized {
     fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         recursive_component_definition(self, h, def)
     }
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: CompositeId) -> VisitorResult {
+    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         recursive_composite_definition(self, h, def)
     }
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: PrimitiveId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         recursive_primitive_definition(self, h, def)
     }
     fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
@@ -236,7 +236,7 @@ fn recursive_symbol_definition<T: Visitor>(
     match h[def].clone() {
         Definition::Struct(def) => this.visit_struct_definition(h, def.this),
         Definition::Enum(def) => this.visit_enum_definition(h, def.this),
-        Definition::Component(cdef) => this.visit_component_definition(h, cdef.this()),
+        Definition::Component(cdef) => this.visit_component_definition(h, cdef.this),
         Definition::Function(fdef) => this.visit_function_definition(h, fdef.this),
     }
 }
@@ -246,16 +246,17 @@ fn recursive_component_definition<T: Visitor>(
     h: &mut Heap,
     def: ComponentId,
 ) -> VisitorResult {
-    match h[def].clone() {
-        Component::Composite(cdef) => this.visit_composite_definition(h, cdef.this),
-        Component::Primitive(pdef) => this.visit_primitive_definition(h, pdef.this),
+    let component_variant = h[def].variant;
+    match component_variant {
+        ComponentVariant::Primitive => this.visit_primitive_definition(h, def),
+        ComponentVariant::Composite => this.visit_composite_definition(h, def),
     }
 }
 
 fn recursive_composite_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: CompositeId,
+    def: ComponentId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
         recursive_parameter_as_variable(this, h, param)?;
@@ -266,7 +267,7 @@ fn recursive_composite_definition<T: Visitor>(
 fn recursive_primitive_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: PrimitiveId,
+    def: ComponentId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
         recursive_parameter_as_variable(this, h, param)?;
@@ -551,7 +552,7 @@ impl NestedSynchronousStatements {
 }
 
 impl Visitor for NestedSynchronousStatements {
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: CompositeId) -> VisitorResult {
+    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         assert!(!self.illegal);
         self.illegal = true;
         recursive_composite_definition(self, h, def)?;
@@ -597,7 +598,7 @@ impl ChannelStatementOccurrences {
 }
 
 impl Visitor for ChannelStatementOccurrences {
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: PrimitiveId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         assert!(!self.illegal);
         self.illegal = true;
         recursive_primitive_definition(self, h, def)?;
@@ -695,7 +696,7 @@ impl Visitor for ComponentStatementReturnNew {
         self.illegal_return = false;
         Ok(())
     }
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: PrimitiveId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         assert!(!self.illegal_new);
         self.illegal_new = true;
         recursive_primitive_definition(self, h, def)?;
@@ -849,6 +850,15 @@ impl LinkCallExpressions {
             None => Err((id.position, "Unresolved method".to_string())),
         }
     }
+    fn get_declaration_namespaced(
+        &self, h: &Heap, id: &NamespacedIdentifier
+    ) -> Result<DeclarationId, VisitorError> {
+        // TODO: @fixme
+        match h[self.pd.unwrap()].get_declaration_namespaced(h, id) {
+            Some(id) => Ok(id),
+            None => Err((id.position, "Unresolved method".to_string()))
+        }
+    }
 }
 
 impl Visitor for LinkCallExpressions {
@@ -858,7 +868,7 @@ impl Visitor for LinkCallExpressions {
         self.pd = None;
         Ok(())
     }
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: CompositeId) -> VisitorResult {
+    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         assert!(!self.composite);
         self.composite = true;
         recursive_composite_definition(self, h, def)?;
@@ -876,12 +886,12 @@ impl Visitor for LinkCallExpressions {
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         if let Method::Symbolic(id) = &h[expr].method {
             // TODO: @symbol_table
-            let decl = self.get_declaration(h, id)?;
+            let decl = self.get_declaration_namespaced(h, &id.identifier)?;
             if self.new_statement && h[decl].is_function() {
-                return Err((id.position, "Illegal call expression".to_string()));
+                return Err((id.identifier.position, "Illegal call expression".to_string()));
             }
             if !self.new_statement && h[decl].is_component() {
-                return Err((id.position, "Illegal call expression".to_string()));
+                return Err((id.identifier.position, "Illegal call expression".to_string()));
             }
             // Set the corresponding declaration of the call
             h[expr].declaration = Some(decl);
