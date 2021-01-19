@@ -57,7 +57,7 @@ pub struct FunctionArgument {
 }
 
 pub struct FunctionType {
-    return_type: Type,
+    return_type: TypeAnnotationId,
     arguments: Vec<FunctionArgument>
 }
 
@@ -87,7 +87,7 @@ enum LookupResult {
 ///     will have to come up with something nice in the future.
 /// TODO: Need to factor out the repeated lookup in some kind of state machine.
 impl TypeTable {
-    fn new(
+    pub(crate) fn new(
         symbols: &SymbolTable, heap: &Heap, modules: &[LexedModule]
     ) -> Result<TypeTable, ParseError2> {
         if cfg!(debug_assertions) {
@@ -115,6 +115,75 @@ impl TypeTable {
             Linear((usize, usize)),
             Jumping((RootId, DefinitionId))
         }
+
+        // Helper to handle the return value from lookup_type_definition. If
+        // resolved/builtin we return `true`, if an error we complete the error
+        // and return it. If unresolved then we check for cyclic types and
+        // return an error if cyclic, otherwise return false (indicating we need
+        // to continue in the breadcrumb-based resolving loop)
+        let handle_lookup_result = |
+            heap: &Heap, all_modules: &[LexedModule], cur_module: &LexedModule,
+            breadcrumbs: &mut Vec<Breadcrumb>, result: LookupResult
+        | -> Result<bool, ParseError2> {
+            return match result {
+                LookupResult::BuiltIn | LookupResult::Resolved(_) => Ok(true),
+                LookupResult::Unresolved((new_root_id, new_definition_id)) => {
+                    // Check for cyclic dependencies
+                    let mut is_cyclic = false;
+                    for breadcrumb in breadcrumbs.iter() {
+                        let (root_id, definition_id) = match breadcrumb {
+                            Breadcrumb::Linear((root_index, definition_index)) => {
+                                let root_id = all_modules[*root_index].root_id;
+                                let definition_id = heap[root_id].definitions[*definition_index];
+                                (root_id, definition_id)
+                            },
+                            Breadcrumb::Jumping(root_id_and_definition_id) => *root_id_and_definition_id
+                        };
+
+                        if root_id == new_root_id && definition_id == new_definition_id {
+                            // Oh noes!
+                            is_cyclic = true;
+                            break;
+                        }
+                    }
+
+                    if is_cyclic {
+                        let mut error = ParseError2::new_error(
+                            &all_modules[new_root_id.0.index as usize].source,
+                            heap[new_definition_id].position(),
+                            "Evaluating this definition results in a a cyclic dependency"
+                        );
+                        for (index, breadcrumb) in breadcrumbs.iter().enumerate() {
+                            match breadcrumb {
+                                Breadcrumb::Linear((root_index, definition_index)) => {
+                                    debug_assert_eq!(index, 0);
+                                    error = error.with_postfixed_info(
+                                        &all_modules[*root_index].source,
+                                        heap[heap[all_modules[*root_index].root_id].definitions[*definition_index]].position(),
+                                        "The cycle started with this definition"
+                                    )
+                                },
+                                Breadcrumb::Jumping((root_id, definition_id)) => {
+                                    debug_assert!(index > 0);
+                                    error = error.with_postfixed_info(
+                                        &all_modules[root_id.0.index as usize].source,
+                                        heap[*definition_id].position(),
+                                        "Which depends on this definition"
+                                    )
+                                }
+                            }
+                        }
+                        Err(error)
+                    } else {
+                        breadcrumbs.push(Breadcrumb::Jumping((new_root_id, new_definition_id)));
+                        Ok(false)
+                    }
+                },
+                LookupResult::Error((position, message)) => {
+                    Err(ParseError2::new_error(&cur_module.source, position, &message))
+                }
+            }
+        };
 
         let mut module_index = 0;
         let mut definition_index = 0;
@@ -177,18 +246,13 @@ impl TypeTable {
                                     if has_tag_values.is_none() { has_tag_values = Some(variant.position); }
 
                                     let variant_type = &heap[*variant_type];
-                                    match lookup_type_definition(
+
+                                    let lookup_result = lookup_type_definition(
                                         heap, &table, symbols, module.root_id,
                                         &variant_type.the_type.primitive
-                                    ) {
-                                        LookupResult::BuiltIn | LookupResult::Resolved(_) => {},
-                                        LookupResult::Unresolved(root_and_definition_id) => {
-                                            breadcrumbs.push(Breadcrumb::Jumping(root_and_definition_id));
-                                            continue 'resolve_loop;
-                                        },
-                                        LookupResult::Error((position, message)) => {
-                                            return Err(ParseError2::new_error(&module.source, position, &message));
-                                        }
+                                    );
+                                    if !handle_lookup_result(heap, modules, module, &mut breadcrumbs, lookup_result)? {
+                                        continue 'resolve_loop;
                                     }
                                 },
                             }
@@ -288,18 +352,12 @@ impl TypeTable {
                         // actually resolve all of the field types
                         for field_definition in &definition.fields {
                             let type_definition = &heap[field_definition.the_type];
-                            match lookup_type_definition(
+                            let lookup_result = lookup_type_definition(
                                 heap, &table, symbols, module.root_id,
                                 &type_definition.the_type.primitive
-                            ) {
-                                LookupResult::BuiltIn | LookupResult::Resolved(_) => {},
-                                LookupResult::Unresolved(root_and_definition_id) => {
-                                    breadcrumbs.push(Breadcrumb::Jumping(root_and_definition_id));
-                                    continue 'resolve_loop;
-                                },
-                                LookupResult::Error((position, message)) => {
-                                    return Err(ParseError2::new_error(&module.source, position, &message));
-                                }
+                            );
+                            if !handle_lookup_result(heap, modules, module, &mut breadcrumbs, lookup_result)? {
+                                continue 'resolve_loop;
                             }
                         }
 
@@ -326,18 +384,12 @@ impl TypeTable {
                         for parameter_id in &definition.parameters {
                             let parameter = &heap[*parameter_id];
                             let type_definition = &heap[parameter.type_annotation];
-                            match lookup_type_definition(
+                            let lookup_result = lookup_type_definition(
                                 heap, &table, symbols, module.root_id,
                                 &type_definition.the_type.primitive
-                            ) {
-                                LookupResult::BuiltIn | LookupResult::Resolved(_) => {},
-                                LookupResult::Unresolved(root_and_definition_id) => {
-                                    breadcrumbs.push(Breadcrumb::Jumping(root_and_definition_id));
-                                    continue 'resolve_loop;
-                                },
-                                LookupResult::Error((position, message)) => {
-                                    return Err(ParseError2::new_error(&module.source, position, &message));
-                                }
+                            );
+                            if !handle_lookup_result(heap, modules, module, &mut breadcrumbs, lookup_result)? {
+                                continue 'resolve_loop;
                             }
                         }
 
@@ -362,7 +414,46 @@ impl TypeTable {
                         }));
                     },
                     Definition::Function(definition) => {
-                        // TODO: Onto the last one!
+                        // Handle checking the return type
+                        let lookup_result = lookup_type_definition(
+                            heap, &table, symbols, module.root_id,
+                            &heap[definition.return_type].the_type.primitive
+                        );
+                        if !handle_lookup_result(heap, modules, module, &mut breadcrumbs, lookup_result)? {
+                            continue 'resolve_loop;
+                        }
+
+                        for parameter_id in &definition.parameters {
+                            let parameter = &heap[*parameter_id];
+                            let type_definition = &heap[parameter.type_annotation];
+                            let lookup_result = lookup_type_definition(
+                                heap, &table, symbols, module.root_id,
+                                &type_definition.the_type.primitive
+                            );
+                            if !handle_lookup_result(heap, modules, module, &mut breadcrumbs, lookup_result)? {
+                                continue 'resolve_loop;
+                            }
+                        }
+
+                        // Resolve function's types
+                        let mut parameters = Vec::with_capacity(definition.parameters.len());
+                        for parameter_id in &definition.parameters {
+                            let parameter = &heap[*parameter_id];
+                            let type_definition = &heap[parameter.type_annotation];
+                            if cfg!(debug_assertions) {
+                                ensure_type_definition(heap, &table, symbols, module.root_id, &type_definition.the_type.primitive);
+                            }
+
+                            parameters.push(FunctionArgument{
+                                identifier: parameter.identifier.clone(),
+                                argument_type: parameter.type_annotation
+                            });
+                        }
+
+                        table.add_definition(definition_id, DefinedType::Function(FunctionType{
+                            return_type: definition.return_type.clone(),
+                            arguments: parameters,
+                        }));
                     },
                 }
 

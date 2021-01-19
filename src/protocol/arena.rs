@@ -52,6 +52,9 @@ impl<T> Arena<T> {
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.store.iter()
     }
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.store.iter_mut()
+    }
     pub fn len(&self) -> usize {
         self.store.len()
     }

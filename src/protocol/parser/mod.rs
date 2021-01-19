@@ -1,13 +1,17 @@
 mod depth_visitor;
 mod symbol_table;
 mod type_table;
+mod visitor;
+mod functions;
 
 use depth_visitor::*;
 use symbol_table::SymbolTable;
+use type_table::TypeTable;
 
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::lexer::*;
+
 
 use std::collections::HashMap;
 
@@ -180,7 +184,34 @@ impl Parser {
 
         // All imports in the AST are now annotated. We now use the symbol table
         // to construct the type table.
+        let type_table = TypeTable::new(&symbol_table, &self.heap, &self.modules)?;
 
+        // We should now be able to resolve all definitions and statements
+        // using those definitions.
+        // Temporary personal notes
+        //  memory declaration = Statement::Local(Local::Memory(...))
+        //      -> VariableId
+        //      -> TypeAnnotationId
+        //      -> PrimitiveType::Symbolic variant
+        //      -> Option<DefinitionId> field
+        //  method call = Expression::Call
+        //      -> Method::Symbolic field
+        //      -> Option<DefinitionId> field
+        // TODO: I might not actually want to do this here
+        module_index = 0;
+        let mut definition_index = 0;
+        let mut statement_index = 0;
+        loop {
+            if module_index >= self.modules.len() {
+                break;
+            }
+
+            let module_root_id = self.modules[module_index].root_id;
+            let statement_id = {
+                let root = &self.heap[module_root_id];
+                if statement_index >= root.
+            }
+        }
 
         Ok(())
     }

@@ -396,11 +396,11 @@ pub struct Heap {
     pragmas: Arena<Pragma>,
     pub(crate) imports: Arena<Import>,
     identifiers: Arena<Identifier>,
-    type_annotations: Arena<TypeAnnotation>,
-    variables: Arena<Variable>,
+    pub(crate) type_annotations: Arena<TypeAnnotation>,
+    pub(crate) variables: Arena<Variable>,
     pub(crate) definitions: Arena<Definition>,
-    statements: Arena<Statement>,
-    expressions: Arena<Expression>,
+    pub(crate) statements: Arena<Statement>,
+    pub(crate) expressions: Arena<Expression>,
     declarations: Arena<Declaration>,
 }
 
@@ -1527,17 +1527,31 @@ impl Field {
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub enum Scope {
+pub enum ScopeVariant {
     Definition(DefinitionId),
-    Block(BlockStatementId),
-    Synchronous(SynchronousStatementId),
+    Regular(BlockStatementId),
+    Synchronous((SynchronousStatementId, BlockStatementId)),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Scope {
+    pub variant: ScopeVariant,
+    pub parent: Option<Scope>,
 }
 
 impl Scope {
+    pub fn is_block(&self) -> bool {
+        match &self.variant {
+            ScopeVariant::Definition(_) => false,
+            ScopeVariant::Regular(_) => true,
+            ScopeVariant::Synchronous(_) => true,
+        }
+    }
     pub fn to_block(&self) -> BlockStatementId {
-        match &self {
-            Scope::Block(id) => *id,
-            _ => panic!("Unable to cast `Scope` to `BlockStatement`"),
+        match &self.variant {
+            ScopeVariant::Regular(id) => *id,
+            ScopeVariant::Synchronous((_, id)) => *id,
+            _ => panic!("unable to get BlockStatement from Scope")
         }
     }
 }
@@ -1634,6 +1648,8 @@ pub struct Local {
     pub position: InputPosition,
     pub type_annotation: TypeAnnotationId,
     pub identifier: Identifier,
+    // Phase 2: linker
+    pub relative_pos_in_block: u32,
 }
 impl SyntaxElement for Local {
     fn position(&self) -> InputPosition {
@@ -2177,6 +2193,7 @@ pub struct BlockStatement {
     pub statements: Vec<StatementId>,
     // Phase 2: linker
     pub parent_scope: Option<Scope>,
+    pub relative_pos_in_parent: u32,
     pub locals: Vec<LocalId>,
     pub labels: Vec<LabeledStatementId>,
 }
@@ -2298,6 +2315,7 @@ pub struct ChannelStatement {
     pub from: LocalId, // output
     pub to: LocalId,   // input
     // Phase 2: linker
+    pub relative_pos_in_block: u32,
     pub next: Option<StatementId>,
 }
 
@@ -2330,6 +2348,7 @@ pub struct LabeledStatement {
     pub label: Identifier,
     pub body: StatementId,
     // Phase 2: linker
+    pub relative_pos_in_block: u32,
     pub in_sync: Option<SynchronousStatementId>,
 }
 
@@ -2347,6 +2366,8 @@ pub struct IfStatement {
     pub test: ExpressionId,
     pub true_body: StatementId,
     pub false_body: StatementId,
+    // Phase 2: linker
+    pub end_if: Option<EndIfStatementId>,
 }
 
 impl SyntaxElement for IfStatement {
@@ -2359,6 +2380,7 @@ impl SyntaxElement for IfStatement {
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
     // Phase 2: linker
+    pub start_if: IfStatementId,
     pub position: InputPosition, // of corresponding if statement
     pub next: Option<StatementId>,
 }
@@ -2377,7 +2399,7 @@ pub struct WhileStatement {
     pub test: ExpressionId,
     pub body: StatementId,
     // Phase 2: linker
-    pub next: Option<EndWhileStatementId>,
+    pub end_while: Option<EndWhileStatementId>,
     pub in_sync: Option<SynchronousStatementId>,
 }
 
@@ -2391,6 +2413,7 @@ impl SyntaxElement for WhileStatement {
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
     // Phase 2: linker
+    pub start_while: Option<WhileStatementId>,
     pub position: InputPosition, // of corresponding while
     pub next: Option<StatementId>,
 }
