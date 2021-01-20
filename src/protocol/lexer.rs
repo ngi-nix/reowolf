@@ -1182,7 +1182,7 @@ impl Lexer<'_> {
         h: &mut Heap,
     ) -> Result<VariableExpressionId, ParseError2> {
         let position = self.source.pos();
-        let identifier = self.consume_identifier()?;
+        let identifier = self.consume_namespaced_identifier()?;
         Ok(h.alloc_variable_expression(|this| VariableExpression {
             this,
             position,
@@ -1470,18 +1470,18 @@ impl Lexer<'_> {
         let position = self.source.pos();
         self.consume_keyword(b"synchronous")?;
         self.consume_whitespace(false)?;
-        let mut parameters = Vec::new();
-        if self.has_string(b"(") {
-            self.consume_parameters(h, &mut parameters)?;
-            self.consume_whitespace(false)?;
-        } else if !self.has_keyword(b"skip") && !self.has_string(b"{") {
-            return Err(self.error_at_pos("Expected block statement"));
-        }
+        // TODO: What was the purpose of this? Seems superfluous and confusing?
+        // let mut parameters = Vec::new();
+        // if self.has_string(b"(") {
+        //     self.consume_parameters(h, &mut parameters)?;
+        //     self.consume_whitespace(false)?;
+        // } else if !self.has_keyword(b"skip") && !self.has_string(b"{") {
+        //     return Err(self.error_at_pos("Expected block statement"));
+        // }
         let body = self.consume_statement(h)?;
         Ok(h.alloc_synchronous_statement(|this| SynchronousStatement {
             this,
             position,
-            parameters,
             body,
             parent_scope: None,
         }))

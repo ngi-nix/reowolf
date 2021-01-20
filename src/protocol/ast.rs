@@ -1533,10 +1533,10 @@ pub enum ScopeVariant {
     Synchronous((SynchronousStatementId, BlockStatementId)),
 }
 
+// TODO: Cleanup
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Scope {
-    pub variant: ScopeVariant,
-    pub parent: Option<Scope>,
+    pub variant: ScopeVariant
 }
 
 impl Scope {
@@ -2235,7 +2235,7 @@ impl SyntaxElement for BlockStatement {
 
 impl VariableScope for BlockStatement {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
-        self.parent_scope
+        self.parent_scope.clone()
     }
     fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         for local_id in self.locals.iter() {
@@ -2461,9 +2461,10 @@ pub struct SynchronousStatement {
     pub this: SynchronousStatementId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub parameters: Vec<ParameterId>,
+    // pub parameters: Vec<ParameterId>,
     pub body: StatementId,
     // Phase 2: linker
+    pub end_sync: Option<EndSynchronousStatementId>,
     pub parent_scope: Option<Scope>,
 }
 
@@ -2475,7 +2476,7 @@ impl SyntaxElement for SynchronousStatement {
 
 impl VariableScope for SynchronousStatement {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
-        self.parent_scope
+        self.parent_scope.clone()
     }
     fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         for parameter_id in self.parameters.iter() {
@@ -2493,6 +2494,7 @@ pub struct EndSynchronousStatement {
     pub this: EndSynchronousStatementId,
     // Phase 2: linker
     pub position: InputPosition, // of corresponding sync statement
+    pub start_sync: SynchronousStatementId,
     pub next: Option<StatementId>,
 }
 
@@ -2891,8 +2893,6 @@ pub struct CallExpression {
     pub position: InputPosition,
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
-    // Phase 2: linker
-    pub declaration: Option<DeclarationId>,
 }
 
 impl SyntaxElement for CallExpression {
@@ -2920,7 +2920,7 @@ pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: Identifier,
+    pub identifier: NamespacedIdentifier,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
 }
