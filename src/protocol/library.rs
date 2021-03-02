@@ -3,7 +3,7 @@ use crate::protocol::inputsource::*;
 
 // TABBED OUT FOR NOW
 
-pub fn get_declarations(h: &mut Heap, i: ImportId) -> Result<Vec<DeclarationId>, ParseError2> {
+pub fn get_declarations(_h: &mut Heap, _i: ImportId) -> Result<Vec<DeclarationId>, ParseError2> {
     todo!("implement me");
     // if h[i].value == b"std.reo" {
     //     let mut vec = Vec::new();

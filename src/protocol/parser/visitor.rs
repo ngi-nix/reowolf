@@ -1,16 +1,15 @@
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
-use crate::protocol::library;
 use crate::protocol::parser::{symbol_table::*, type_table::*, LexedModule};
 
 type Unit = ();
 pub(crate) type VisitorResult = Result<Unit, ParseError2>;
 
 pub(crate) struct Ctx<'p> {
-    heap: &'p mut Heap,
-    module: &'p LexedModule,
-    symbols: &'p mut SymbolTable,
-    types: &'p mut TypeTable,
+    pub heap: &'p mut Heap,
+    pub module: &'p LexedModule,
+    pub symbols: &'p mut SymbolTable,
+    pub types: &'p mut TypeTable,
 }
 
 /// Visitor is a generic trait that will fully walk the AST. The default
@@ -31,7 +30,8 @@ pub(crate) trait Visitor2 {
                 root.definitions[def_index]
             };
 
-            self.visit_definition(ctx, definition_id)
+            self.visit_definition(ctx, definition_id)?;
+            def_index += 1;
         }
     }
 
@@ -39,48 +39,111 @@ pub(crate) trait Visitor2 {
     // --- enum matching
     fn visit_definition(&mut self, ctx: &mut Ctx, id: DefinitionId) -> VisitorResult {
         match &ctx.heap[id] {
-            Definition::Enum(def) => self.visit_enum_definition(ctx, def.this),
-            Definition::Struct(def) => self.visit_struct_definition(ctx, def.this),
-            Definition::Component(def) => self.visit_component_definition(ctx, def.this),
-            Definition::Function(def) => self.visit_function_definition(ctx, def.this)
+            Definition::Enum(def) => {
+                let def = def.this;
+                self.visit_enum_definition(ctx, def)
+            },
+            Definition::Struct(def) => {
+                let def = def.this;
+                self.visit_struct_definition(ctx, def)
+            },
+            Definition::Component(def) => {
+                let def = def.this;
+                self.visit_component_definition(ctx, def)
+            },
+            Definition::Function(def) => {
+                let def = def.this;
+                self.visit_function_definition(ctx, def)
+            }
         }
     }
 
     // --- enum variant handling
-    fn visit_enum_definition(&mut self, _ctx: &mut Ctx, id: EnumId) -> VisitorResult { Ok(()) }
-    fn visit_struct_definition(&mut self, _ctx: &mut Ctx, id: StructId) -> VisitorResult { Ok(()) }
-    fn visit_component_definition(&mut self, _ctx: &mut Ctx, id: ComponentId) -> VisitorResult { Ok(()) }
-    fn visit_function_definition(&mut self, _ctx: &mut Ctx, id: FunctionId) -> VisitorResult { Ok(()) }
+    fn visit_enum_definition(&mut self, _ctx: &mut Ctx, _id: EnumId) -> VisitorResult { Ok(()) }
+    fn visit_struct_definition(&mut self, _ctx: &mut Ctx, _id: StructId) -> VisitorResult { Ok(()) }
+    fn visit_component_definition(&mut self, _ctx: &mut Ctx, _id: ComponentId) -> VisitorResult { Ok(()) }
+    fn visit_function_definition(&mut self, _ctx: &mut Ctx, _id: FunctionId) -> VisitorResult { Ok(()) }
 
     // Statements
     // --- enum matching
     fn visit_stmt(&mut self, ctx: &mut Ctx, id: StatementId) -> VisitorResult {
         match &ctx.heap[id] {
-            Statement::Block(stmt) => self.visit_block_stmt(ctx, stmt.this),
-            Statement::Local(stmt) => self.visit_local_stmt(ctx, stmt.this),
-            Statement::Skip(stmt) => self.visit_skip_stmt(ctx, stmt.this),
-            Statement::Labeled(stmt) => self.visit_labeled_stmt(ctx, stmt.this),
-            Statement::If(stmt) => self.visit_if_stmt(ctx, stmt.this),
+            Statement::Block(stmt) => {
+                let this = stmt.this;
+                self.visit_block_stmt(ctx, this)
+            },
+            Statement::Local(stmt) => {
+                let this = stmt.this();
+                self.visit_local_stmt(ctx, this)
+            },
+            Statement::Skip(stmt) => {
+                let this = stmt.this;
+                self.visit_skip_stmt(ctx, this)
+            },
+            Statement::Labeled(stmt) => {
+                let this = stmt.this;
+                self.visit_labeled_stmt(ctx, this)
+            },
+            Statement::If(stmt) => {
+                let this = stmt.this;
+                self.visit_if_stmt(ctx, this)
+            },
             Statement::EndIf(_stmt) => Ok(()),
-            Statement::While(stmt) => self.visit_while_stmt(ctx, stmt.this),
+            Statement::While(stmt) => {
+                let this = stmt.this;
+                self.visit_while_stmt(ctx, this)
+            },
             Statement::EndWhile(_stmt) => Ok(()),
-            Statement::Break(stmt) => self.visit_break_stmt(ctx, stmt.this),
-            Statement::Continue(stmt) => self.visit_continue_stmt(ctx, stmt.this),
-            Statement::Synchronous(stmt) => self.visit_synchronous_stmt(ctx, stmt.this),
+            Statement::Break(stmt) => {
+                let this = stmt.this;
+                self.visit_break_stmt(ctx, this)
+            },
+            Statement::Continue(stmt) => {
+                let this = stmt.this;
+                self.visit_continue_stmt(ctx, this)
+            },
+            Statement::Synchronous(stmt) => {
+                let this = stmt.this;
+                self.visit_synchronous_stmt(ctx, this)
+            },
             Statement::EndSynchronous(_stmt) => Ok(()),
-            Statement::Return(stmt) => self.visit_return_stmt(ctx, stmt.this),
-            Statement::Assert(stmt) => self.visit_assert_stmt(ctx, stmt.this),
-            Statement::Goto(stmt) => self.visit_goto_stmt(ctx, stmt.this),
-            Statement::New(stmt) => self.visit_new_stmt(ctx, stmt.this),
-            Statement::Put(stmt) => self.visit_put_stmt(ctx, stmt.this),
-            Statement::Expression(stmt) => self.visit_expr_stmt(ctx, stmt.this),
+            Statement::Return(stmt) => {
+                let this = stmt.this;
+                self.visit_return_stmt(ctx, this)
+            },
+            Statement::Assert(stmt) => {
+                let this = stmt.this;
+                self.visit_assert_stmt(ctx, this)
+            },
+            Statement::Goto(stmt) => {
+                let this = stmt.this;
+                self.visit_goto_stmt(ctx, this)
+            },
+            Statement::New(stmt) => {
+                let this = stmt.this;
+                self.visit_new_stmt(ctx, this)
+            },
+            Statement::Put(stmt) => {
+                let this = stmt.this;
+                self.visit_put_stmt(ctx, this)
+            },
+            Statement::Expression(stmt) => {
+                let this = stmt.this;
+                self.visit_expr_stmt(ctx, this)
+            }
         }
     }
 
     fn visit_local_stmt(&mut self, ctx: &mut Ctx, id: LocalStatementId) -> VisitorResult {
         match &ctx.heap[id] {
-            LocalStatement::Channel(stmt) => self.visit_local_channel_stmt(ctx, stmt.this),
-            LocalStatement::Memory(stmt) => self.visit_local_memory_stmt(ctx, stmt.this),
+            LocalStatement::Channel(stmt) => {
+                let this = stmt.this;
+                self.visit_local_channel_stmt(ctx, this)
+            },
+            LocalStatement::Memory(stmt) => {
+                let this = stmt.this;
+                self.visit_local_memory_stmt(ctx, this)
+            },
         }
     }
 
@@ -106,17 +169,50 @@ pub(crate) trait Visitor2 {
     // --- enum matching
     fn visit_expr(&mut self, ctx: &mut Ctx, id: ExpressionId) -> VisitorResult {
         match &ctx.heap[id] {
-            Expression::Assignment(expr) => self.visit_assignment_expr(ctx, expr.this),
-            Expression::Conditional(expr) => self.visit_conditional_expr(ctx, expr.this),
-            Expression::Binary(expr) => self.visit_binary_expr(ctx, expr.this),
-            Expression::Unary(expr) => self.visit_unary_expr(ctx, expr.this),
-            Expression::Indexing(expr) => self.visit_indexing_expr(ctx, expr.this),
-            Expression::Slicing(expr) => self.visit_slicing_expr(ctx, expr.this),
-            Expression::Select(expr) => self.visit_select_expr(ctx, expr.this),
-            Expression::Array(expr) => self.visit_array_expr(ctx, expr.this),
-            Expression::Constant(expr) => self.visit_constant_expr(ctx, expr.this),
-            Expression::Call(expr) => self.visit_call_expr(ctx, expr.this),
-            Expression::Variable(expr) => self.visit_variable_expr(ctx, expr.this),
+            Expression::Assignment(expr) => {
+                let this = expr.this;
+                self.visit_assignment_expr(ctx, this)
+            },
+            Expression::Conditional(expr) => {
+                let this = expr.this;
+                self.visit_conditional_expr(ctx, this)
+            }
+            Expression::Binary(expr) => {
+                let this = expr.this;
+                self.visit_binary_expr(ctx, this)
+            }
+            Expression::Unary(expr) => {
+                let this = expr.this;
+                self.visit_unary_expr(ctx, this)
+            }
+            Expression::Indexing(expr) => {
+                let this = expr.this;
+                self.visit_indexing_expr(ctx, this)
+            }
+            Expression::Slicing(expr) => {
+                let this = expr.this;
+                self.visit_slicing_expr(ctx, this)
+            }
+            Expression::Select(expr) => {
+                let this = expr.this;
+                self.visit_select_expr(ctx, this)
+            }
+            Expression::Array(expr) => {
+                let this = expr.this;
+                self.visit_array_expr(ctx, this)
+            }
+            Expression::Constant(expr) => {
+                let this = expr.this;
+                self.visit_constant_expr(ctx, this)
+            }
+            Expression::Call(expr) => {
+                let this = expr.this;
+                self.visit_call_expr(ctx, this)
+            }
+            Expression::Variable(expr) => {
+                let this = expr.this;
+                self.visit_variable_expr(ctx, this)
+            }
         }
     }
 
@@ -133,6 +229,7 @@ pub(crate) trait Visitor2 {
     fn visit_variable_expr(&mut self, _ctx: &mut Ctx, _id: VariableExpressionId) -> VisitorResult { Ok(()) }
 }
 
+#[derive(PartialEq, Eq)]
 enum DefinitionType {
     Primitive,
     Composite,
@@ -159,7 +256,7 @@ enum DefinitionType {
 ///
 /// Because of this scheme expressions will not be visited in the breadth-first
 /// pass.
-struct ValidityAndLinkerVisitor {
+pub(crate) struct ValidityAndLinkerVisitor {
     /// `in_sync` is `Some(id)` if the visitor is visiting the children of a
     /// synchronous statement. A single value is sufficient as nested
     /// synchronous statements are not allowed
@@ -186,7 +283,7 @@ struct ValidityAndLinkerVisitor {
 }
 
 impl ValidityAndLinkerVisitor {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self{
             in_sync: None,
             in_while: None,
@@ -219,52 +316,31 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentId) -> VisitorResult {
         self.reset_state();
 
-        let block_id = {
-            let def = &ctx.heap[id];
-            match def.variant {
-                ComponentVariant::Primitive => self.def_type = DefinitionType::Primitive,
-                ComponentVariant::Composite => self.def_type = DefinitionType::Composite,
-            }
-
-            let body = ctx.heap[def.body].as_block_mut();
-
-            self.statement_buffer.extend_from_slice(&body.statements);
-            self.statement_stack_indices.push(0);
-            body.this
+        self.def_type = match &ctx.heap[id].variant {
+            ComponentVariant::Primitive => DefinitionType::Primitive,
+            ComponentVariant::Composite => DefinitionType::Composite,
         };
-
-        self.cur_scope = Some(Scope {
-            variant: ScopeVariant::Definition(id.upcast()),
-        });
+        self.cur_scope = Some(Scope::Definition(id.upcast()));
+        let body_id = ctx.heap[id].body;
 
         self.performing_breadth_pass = true;
-        self.visit_block_stmt(ctx, block_id)?;
+        self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
-        self.visit_block_stmt(ctx, block_id)
+        self.visit_stmt(ctx, body_id)
     }
 
     fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionId) -> VisitorResult {
         self.reset_state();
 
         // Set internal statement indices
-        let block_id = {
-            let def = &ctx.heap[id];
-            self.def_type = DefinitionType::Function;
-            let body = ctx.heap[def.body].as_block_mut();
-
-            self.statement_buffer.extend_from_slice(&body.statements);
-            self.statement_stack_indices.push(0);
-            body.this
-        };
-
-        self.cur_scope = Some(Scope {
-            variant: ScopeVariant::Definition(id.upcast()),
-        });
+        self.def_type = DefinitionType::Function;
+        self.cur_scope = Some(Scope::Definition(id.upcast()));
+        let body_id = ctx.heap[id].body;
 
         self.performing_breadth_pass = true;
-        self.visit_block_stmt(ctx, block_id)?;
+        self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
-        self.visit_block_stmt(ctx, block_id)
+        self.visit_stmt(ctx, body_id)
     }
 
     //--------------------------------------------------------------------------
@@ -277,9 +353,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_local_memory_stmt(&mut self, ctx: &mut Ctx, id: MemoryStatementId) -> VisitorResult {
         if self.performing_breadth_pass {
-            let stmt = &ctx.heap[id];
-            stmt.relative_pos_in_block = self.relative_pos_in_block;
-            self.checked_local_add(ctx, stmt.variable)?;
+            let variable_id = ctx.heap[id].variable;
+            self.checked_local_add(ctx, self.relative_pos_in_block, variable_id)?;
         } else {
             self.visit_expr(ctx, ctx.heap[id].initial)?;
         }
@@ -287,28 +362,28 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         Ok(())
     }
 
+    fn visit_local_channel_stmt(&mut self, ctx: &mut Ctx, id: ChannelStatementId) -> VisitorResult {
+        if self.performing_breadth_pass {
+            let (from_id, to_id) = {
+                let stmt = &ctx.heap[id];
+                (stmt.from, stmt.to)
+            };
+            self.checked_local_add(ctx, self.relative_pos_in_block, from_id)?;
+            self.checked_local_add(ctx, self.relative_pos_in_block, to_id)?;
+        }
+
+        Ok(())
+    }
+
     fn visit_labeled_stmt(&mut self, ctx: &mut Ctx, id: LabeledStatementId) -> VisitorResult {
         if self.performing_breadth_pass {
-            // Retrieve scope
-            let scope = self.cur_scope.as_ref().unwrap();
-            debug_assert!(scope.statement.is_some(), "expected scope statement at labeled stmt");
-            debug_assert_eq!(
-                scope.variant == ScopeVariant::Synchronous,
-                self.in_sync.is_some(),
-                "in synchronous scope variant, but 'in_sync' not set"
-            );
-
             // Add label to block lookup
             self.checked_label_add(ctx, id)?;
 
             // Modify labeled statement itself
             let labeled = &mut ctx.heap[id];
             labeled.relative_pos_in_block = self.relative_pos_in_block;
-            labeled.in_sync = if scope.variant == ScopeVariant::Synchronous {
-                self.in_sync.clone()
-            } else {
-                None
-            };
+            labeled.in_sync = self.in_sync.clone();
         }
 
         let body_id = ctx.heap[id].body;
@@ -347,17 +422,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_while_stmt(&mut self, ctx: &mut Ctx, id: WhileStatementId) -> VisitorResult {
         if self.performing_breadth_pass {
-            let scope = self.cur_scope.as_ref().unwrap();
             let position = ctx.heap[id].position;
-            debug_assert_eq!(
-                scope.variant == ScopeVariant::Synchronous,
-                self.in_sync.is_some(),
-                "in synchronous scope variant, but 'in_sync' not set"
-            );
             let end_while_id = ctx.heap.alloc_end_while_statement(|this| {
                 EndWhileStatement {
                     this,
-                    start_while: Some(id),
+                    start_while: id,
                     position,
                     next: None,
                 }
@@ -417,19 +486,19 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_synchronous_stmt(&mut self, ctx: &mut Ctx, id: SynchronousStatementId) -> VisitorResult {
         if self.performing_breadth_pass {
             // Check for validity of synchronous statement
-            let cur_sync = &ctx.heap[id];
+            let cur_sync_position = ctx.heap[id].position;
             if self.in_sync.is_some() {
                 // Nested synchronous statement
                 let old_sync = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, cur_sync.position, "Illegal nested synchronous statement")
+                    ParseError2::new_error(&ctx.module.source, cur_sync_position, "Illegal nested synchronous statement")
                         .with_postfixed_info(&ctx.module.source, old_sync.position, "It is nested in this synchronous statement")
                 );
             }
 
             if self.def_type != DefinitionType::Primitive {
                 return Err(ParseError2::new_error(
-                    &ctx.module.source, cur_sync.position,
+                    &ctx.module.source, cur_sync_position,
                     "Synchronous statements may only be used in primitive components"
                 ));
             }
@@ -437,7 +506,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // Append SynchronousEnd pseudo-statement
             let sync_end_id = ctx.heap.alloc_end_synchronous_statement(|this| EndSynchronousStatement{
                 this,
-                position: stmt.position,
+                position: cur_sync_position,
                 start_sync: id,
                 next: None,
             });
@@ -445,8 +514,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             sync_start.end_sync = Some(sync_end_id);
             self.insert_buffer.push((self.relative_pos_in_block + 1, sync_end_id.upcast()));
         } else {
+            let sync_body = ctx.heap[id].body;
             let old = self.in_sync.replace(id);
-            self.visit_stmt_with_hint(ctx, stmt.body, Some(id))?;
+            self.visit_stmt_with_hint(ctx, sync_body, Some(id))?;
             self.in_sync = old;
         }
 
@@ -490,7 +560,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 );
             }
         } else {
-            self.visit_expr(ctx, stmt.expression)?;
+            let expr_id = stmt.expression;
+            self.visit_expr(ctx, expr_id)?;
         }
 
         Ok(())
@@ -501,9 +572,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // Must perform goto label resolving after the breadth pass, this
             // way we are able to find all the labels in current and outer
             // scopes.
-            let goto_stmt = &mut ctx.heap[id];
-            let target_id = self.find_label(ctx, &goto_stmt.label)?;
-            goto_stmt.target = Some(target_id);
+            let target_id = self.find_label(ctx, &ctx.heap[id].label)?;
+            ctx.heap[id].target = Some(target_id);
 
             let target = &ctx.heap[target_id];
             if self.in_sync != target.in_sync {
@@ -511,6 +581,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 // nested sync statements are not allowed so if the value does
                 // not match, then we must be inside a sync scope
                 debug_assert!(self.in_sync.is_some());
+                let goto_stmt = &ctx.heap[id];
                 let sync_stmt = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
                     ParseError2::new_error(&ctx.module.source, goto_stmt.position, "Goto may not escape the surrounding synchronous block")
@@ -527,8 +598,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         if self.performing_breadth_pass {
             // TODO: Cleanup error messages, can be done cleaner
             // Make sure new statement occurs within a composite component
-            let new_stmt = &ctx.heap[id];
+            let call_expr_id = ctx.heap[id].expression;
             if self.def_type != DefinitionType::Composite {
+                let new_stmt = &ctx.heap[id];
                 return Err(
                     ParseError2::new_error(&ctx.module.source, new_stmt.position, "Instantiating components may only be done in composite components")
                 );
@@ -536,35 +608,33 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
             // No fancy recursive parsing, must be followed by a call expression
             let definition_id = {
-                let call_expr = &ctx.heap[new_stmt.expression];
-                if let Expression::Call(call_expr) = call_expr {
-                    if let Method::Symbolic(symbolic) = &call_expr.method {
-                        // Resolve method
-                        let (symbol, iter) = ctx.symbols.resolve_namespaced_symbol(ctx.module.root_id, &symbolic.identifier)?;
-                        if iter.num_remaining() != 0 {
-                            return Err(
-                                ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
-                            )
-                        }
+                let call_expr = &ctx.heap[call_expr_id];
+                if let Method::Symbolic(symbolic) = &call_expr.method {
+                    // Resolve method
+                    let maybe_symbol = ctx.symbols.resolve_namespaced_symbol(ctx.module.root_id, &symbolic.identifier);
+                    if maybe_symbol.is_none() {
+                        return Err(ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component"));
+                    }
+                    let (symbol, iter) = maybe_symbol.unwrap();
+                    if iter.num_remaining() != 0 {
+                        return Err(
+                            ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
+                        )
+                    }
 
-                        match symbol.symbol {
-                            Symbol::Namespace(_) => return Err(
-                                ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
-                                    .with_postfixed_info(&ctx.module.source, symbol.position, "The identifier points to this import")
-                            ),
-                            Symbol::Definition((target_root_id, target_definition_id)) => {
-                                match &ctx.heap[target_definition_id] {
-                                    Definition::Component(_) => target_definition_id,
-                                    _ => return Err(
-                                        ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Must instantiate a component")
-                                    )
-                                }
+                    match symbol.symbol {
+                        Symbol::Namespace(_) => return Err(
+                            ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
+                                .with_postfixed_info(&ctx.module.source, symbol.position, "The identifier points to this import")
+                        ),
+                        Symbol::Definition((_target_root_id, target_definition_id)) => {
+                            match &ctx.heap[target_definition_id] {
+                                Definition::Component(_) => target_definition_id,
+                                _ => return Err(
+                                    ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Must instantiate a component")
+                                )
                             }
                         }
-                    } else {
-                        return Err(
-                            ParseError2::new_error(&ctx.module.source, call_expr.position, "Must instantiate a component")
-                        );
                     }
                 } else {
                     return Err(
@@ -575,7 +645,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
             // Modify new statement's symbolic call to point to the appropriate
             // definition.
-            let call_expr = &mut ctx.heap[new_stmt.expression];
+            let call_expr = &mut ctx.heap[call_expr_id];
             match &mut call_expr.method {
                 Method::Symbolic(method) => method.definition = Some(definition_id),
                 _ => unreachable!()
@@ -597,8 +667,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
         } else {
             let put_stmt = &ctx.heap[id];
-            self.visit_expr(ctx, put_stmt.port)?;
-            self.visit_expr(ctx, put_stmt.message)?;
+            let port = put_stmt.port;
+            let message = put_stmt.message;
+            self.visit_expr(ctx, port)?;
+            self.visit_expr(ctx, message)?;
         }
 
         Ok(())
@@ -606,8 +678,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_expr_stmt(&mut self, ctx: &mut Ctx, id: ExpressionStatementId) -> VisitorResult {
         if !self.performing_breadth_pass {
-            let expr = &ctx.heap[id];
-            self.visit_expr(ctx, expr.expression)?;
+            let expr_id = ctx.heap[id].expression;
+            self.visit_expr(ctx, expr_id)?;
         }
 
         Ok(())
@@ -626,32 +698,39 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         let conditional_expr = &ctx.heap[id];
-        self.visit_expr(ctx, conditional_expr.test)?;
-        self.visit_expr(ctx, conditional_expr.true_expression)?;
-        self.visit_expr(ctx, conditional_expr.false_expression)?;
+        let test_expr_id = conditional_expr.test;
+        let true_expr_id = conditional_expr.true_expression;
+        let false_expr_id = conditional_expr.false_expression;
+        self.visit_expr(ctx, test_expr_id)?;
+        self.visit_expr(ctx, true_expr_id)?;
+        self.visit_expr(ctx, false_expr_id)?;
         Ok(())
     }
 
     fn visit_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         let binary_expr = &ctx.heap[id];
-        self.visit_expr(ctx, binary_expr.left)?;
-        self.visit_expr(ctx, binary_expr.right)?;
+        let left_expr_id = binary_expr.left;
+        let right_expr_id = binary_expr.right;
+        self.visit_expr(ctx, left_expr_id)?;
+        self.visit_expr(ctx, right_expr_id)?;
         Ok(())
     }
 
     fn visit_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let unary_expr = &ctx.heap[id];
-        self.visit_expr(ctx, unary_expr.expression)?;
+        let expr_id = ctx.heap[id].expression;
+        self.visit_expr(ctx, expr_id)?;
         Ok(())
     }
 
     fn visit_indexing_expr(&mut self, ctx: &mut Ctx, id: IndexingExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         let indexing_expr = &ctx.heap[id];
-        self.visit_expr(ctx, indexing_expr.subject)?;
-        self.visit_expr(ctx, indexing_expr.index)?;
+        let subject_expr_id = indexing_expr.subject;
+        let index_expr_id = indexing_expr.index;
+        self.visit_expr(ctx, subject_expr_id)?;
+        self.visit_expr(ctx, index_expr_id)?;
         Ok(())
     }
 
@@ -660,9 +739,12 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         // TODO: Same as the select expression: slicing depends on the type of
         //  the thing that is being sliced.
         let slicing_expr = &ctx.heap[id];
-        self.visit_expr(ctx, slicing_expr.subject)?;
-        self.visit_expr(ctx, slicing_expr.from_index)?;
-        self.visit_expr(ctx, slicing_expr.to_index)?;
+        let subject_expr_id = slicing_expr.subject;
+        let from_expr_id = slicing_expr.from_index;
+        let to_expr_id = slicing_expr.to_index;
+        self.visit_expr(ctx, subject_expr_id)?;
+        self.visit_expr(ctx, from_expr_id)?;
+        self.visit_expr(ctx, to_expr_id)?;
         Ok(())
     }
 
@@ -673,8 +755,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         //  int i = some_call_that_returns_a_struct(5, 2).field_of_struct
         //  We could rule out some things (of which we're sure what the type is)
         //  but it seems better to do this later
-        let select_expr = &ctx.heap[id];
-        self.visit_expr(ctx, select_expr.subject)?;
+        let expr_id = ctx.heap[id].subject;
+        self.visit_expr(ctx, expr_id)?;
 
         Ok(())
     }
@@ -682,13 +764,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         let array_expr = &ctx.heap[id];
-        for field in &array_expr.elements {
-            self.visit_expr(ctx, *field)?;
+        for field_expr_id in array_expr.elements.clone() { // TODO: @performance
+            self.visit_expr(ctx, field_expr_id)?;
         }
         Ok(())
     }
 
-    fn visit_constant_expr(&mut self, ctx: &mut Ctx, id: ConstantExpressionId) -> VisitorResult {
+    fn visit_constant_expr(&mut self, _ctx: &mut Ctx, _id: ConstantExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         Ok(())
     }
@@ -760,6 +842,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         let var_expr = &ctx.heap[id];
+        println!("DEBUG: Finding variable {}", String::from_utf8_lossy(&var_expr.identifier.value));
         let variable_id = self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier)?;
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
@@ -774,8 +857,9 @@ impl ValidityAndLinkerVisitor {
     //--------------------------------------------------------------------------
 
     fn visit_stmt_with_hint(&mut self, ctx: &mut Ctx, id: StatementId, hint: Option<SynchronousStatementId>) -> VisitorResult {
-        if let Statement::Block(block) = &ctx.heap[id] {
-            self.visit_block_stmt_with_hint(ctx, block.this, hint)
+        if let Statement::Block(block_stmt) = &ctx.heap[id] {
+            let block_id = block_stmt.this;
+            self.visit_block_stmt_with_hint(ctx, block_id, hint)
         } else {
             self.visit_stmt(ctx, id)
         }
@@ -794,14 +878,12 @@ impl ValidityAndLinkerVisitor {
 
         // We may descend into children of this block. However, this is
         // where we first perform a breadth-first pass
+        // TODO: This is where crap goes wrong! If we are performing the first
+        //  breadth pass then we should take care of the scopes properly!
         self.performing_breadth_pass = true;
         let old_scope = self.cur_scope.replace(match hint {
-            Some(sync_id) => Scope{
-                variant: ScopeVariant::Synchronous((sync_id, id)),
-            },
-            None => Scope{
-                variant: ScopeVariant::Regular(id)
-            }
+            Some(sync_id) => Scope::Synchronous((sync_id, id)),
+            None => Scope::Regular(id),
         });
         let first_statement_index = self.statement_buffer.len();
 
@@ -848,7 +930,9 @@ impl ValidityAndLinkerVisitor {
     // Utilities
     //--------------------------------------------------------------------------
 
-    fn checked_local_add(&mut self, ctx: &mut Ctx, id: LocalId) -> Result<(), ParseError2> {
+    /// Adds a local variable to the current scope. It will also annotate the
+    /// `Local` in the AST with its relative position in the block.
+    fn checked_local_add(&mut self, ctx: &mut Ctx, relative_pos: u32, id: LocalId) -> Result<(), ParseError2> {
         debug_assert!(self.cur_scope.is_some());
 
         // Make sure we do not conflict with any global symbols
@@ -861,6 +945,9 @@ impl ValidityAndLinkerVisitor {
                 );
             }
         }
+
+        let local = &mut ctx.heap[id];
+        local.relative_pos_in_block = relative_pos;
 
         // Make sure we do not shadow any variables in any of the scopes. Note
         // that variables in parent scopes may be declared later
@@ -876,7 +963,7 @@ impl ValidityAndLinkerVisitor {
                 // Position check in case another variable with the same name
                 // is defined in a higher-level scope, but later than the scope
                 // in which the current variable resides.
-                if local_relative_pos >= other_local.relative_pos_in_block && local.identifier.value == other_local.identifier.pos {
+                if local_relative_pos > other_local.relative_pos_in_block && local.identifier.value == other_local.identifier.value {
                     // Collision within this scope
                     return Err(
                         ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
@@ -886,11 +973,11 @@ impl ValidityAndLinkerVisitor {
             }
 
             // Current scope is fine, move to parent scope if any
-            debug_assert!(scope.parent.is_some(), "block scope does not have a parent");
-            scope = scope.parent.as_ref().unwrap();
-            if let ScopeVariant::Definition(definition_id) = scope.variant {
+            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
+            scope = block.parent_scope.as_ref().unwrap();
+            if let Scope::Definition(definition_id) = scope {
                 // At outer scope, check parameters of function/component
-                for parameter_id in ctx.heap[definition_id].parameters() {
+                for parameter_id in ctx.heap[*definition_id].parameters() {
                     let parameter = &ctx.heap[*parameter_id];
                     if local.identifier.value == parameter.identifier.value {
                         return Err(
@@ -930,10 +1017,12 @@ impl ValidityAndLinkerVisitor {
         // No need to use iterator over namespaces if here
         let mut scope = self.cur_scope.as_ref().unwrap();
         loop {
+            println!("DEBUG: Looking at block {}...", scope.);
             debug_assert!(scope.is_block());
             let block = &ctx.heap[scope.to_block()];
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
+                println!("DEBUG: With local {}", String::from_utf8_lossy(&local.identifier.value));
                 if local.relative_pos_in_block < relative_pos && local.identifier.value == identifier.value {
                     return Ok(local_id.upcast());
                 }
@@ -943,9 +1032,9 @@ impl ValidityAndLinkerVisitor {
             scope = block.parent_scope.as_ref().unwrap();
             if !scope.is_block() {
                 // Definition scope, need to check arguments to definition
-                match scope.variant {
-                    ScopeVariant::Definition(definition_id) => {
-                        let definition = &ctx.heap[definition_id];
+                match scope {
+                    Scope::Definition(definition_id) => {
+                        let definition = &ctx.heap[*definition_id];
                         for parameter_id in definition.parameters() {
                             let parameter = &ctx.heap[*parameter_id];
                             if parameter.identifier.value == identifier.value {
@@ -1035,8 +1124,8 @@ impl ValidityAndLinkerVisitor {
                 }
             }
 
-            debug_assert!(scope.parent.is_some(), "block scope does not have a parent");
-            scope = scope.parent.as_ref().unwrap();
+            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
+            scope = block.parent_scope.as_ref().unwrap();
             if !scope.is_block() {
                 return Err(ParseError2::new_error(&ctx.module.source, identifier.position, "Could not find this label"));
             }
@@ -1057,8 +1146,9 @@ impl ValidityAndLinkerVisitor {
                 return true;
             }
 
-            debug_assert!(scope.parent.is_some(), "block scope does not have a parent");
-            scope = scope.parent.as_ref().unwrap();
+            let block = &ctx.heap[block];
+            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
+            scope = block.parent_scope.as_ref().unwrap();
             if !scope.is_block() {
                 return false;
             }
@@ -1078,7 +1168,7 @@ impl ValidityAndLinkerVisitor {
 
                 // Make sure break target is a while statement
                 let target = &ctx.heap[target_id];
-                if let Statement::While(target_stmt) = &target.body {
+                if let Statement::While(target_stmt) = &ctx.heap[target.body] {
                     // Even though we have a target while statement, the break might not be
                     // present underneath this particular labeled while statement
                     if !self.has_parent_while_scope(ctx, target_stmt.this) {

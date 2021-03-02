@@ -2,10 +2,10 @@ mod depth_visitor;
 mod symbol_table;
 mod type_table;
 mod visitor;
-mod functions;
 
 use depth_visitor::*;
 use symbol_table::SymbolTable;
+use visitor::{Visitor2, ValidityAndLinkerVisitor};
 use type_table::TypeTable;
 
 use crate::protocol::ast::*;
@@ -14,6 +14,7 @@ use crate::protocol::lexer::*;
 
 
 use std::collections::HashMap;
+use crate::protocol::parser::visitor::Ctx;
 
 // TODO: @fixme, pub qualifier
 pub(crate) struct LexedModule {
@@ -125,7 +126,7 @@ impl Parser {
         // Build module lookup
     }
 
-    fn resolve_symbols_and_types(&mut self) -> Result<(), ParseError2> {
+    fn resolve_symbols_and_types(&mut self) -> Result<(SymbolTable, TypeTable), ParseError2> {
         // Construct the symbol table to resolve any imports and/or definitions,
         // then use the symbol table to actually annotate all of the imports.
         // If the type table is constructed correctly then all imports MUST be
@@ -186,49 +187,38 @@ impl Parser {
         // to construct the type table.
         let type_table = TypeTable::new(&symbol_table, &self.heap, &self.modules)?;
 
-        // We should now be able to resolve all definitions and statements
-        // using those definitions.
-        // Temporary personal notes
-        //  memory declaration = Statement::Local(Local::Memory(...))
-        //      -> VariableId
-        //      -> TypeAnnotationId
-        //      -> PrimitiveType::Symbolic variant
-        //      -> Option<DefinitionId> field
-        //  method call = Expression::Call
-        //      -> Method::Symbolic field
-        //      -> Option<DefinitionId> field
-        // TODO: I might not actually want to do this here
-        module_index = 0;
-        let mut definition_index = 0;
-        let mut statement_index = 0;
-        loop {
-            if module_index >= self.modules.len() {
-                break;
-            }
-
-            let module_root_id = self.modules[module_index].root_id;
-            let statement_id = {
-                let root = &self.heap[module_root_id];
-                if statement_index >= root.
-            }
-        }
-
-        Ok(())
+        Ok((symbol_table, type_table))
     }
 
     // TODO: @fix, temporary impl to keep code compilable
     pub fn parse(&mut self) -> Result<RootId, ParseError2> {
         assert_eq!(self.modules.len(), 1, "Fix meeeee");
         let root_id = self.modules[0].root_id;
-        println!("DEBUG: With root id {:?}\nSource: {}", root_id, String::from_utf8_lossy(&self.modules[0].source.input));
+
+        let (mut symbol_table, mut type_table) = self.resolve_symbols_and_types()?;
+
+        // TODO: @cleanup
+        let mut ctx = visitor::Ctx{
+            heap: &mut self.heap,
+            module: &self.modules[0],
+            symbols: &mut symbol_table,
+            types: &mut type_table,
+        };
+        let mut visit = ValidityAndLinkerVisitor::new();
+        if let Err(err) = visit.visit_module(&mut ctx) {
+            println!("ERROR:\n{}", err);
+            return Err(err)
+        }
 
         if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
             return Err(ParseError2::new_error(&self.modules[0].source, position, &message))
         }
+
         Ok(root_id)
     }
 
     pub fn parse_inner(h: &mut Heap, pd: RootId) -> VisitorResult {
+        // TODO: @cleanup, slowly phasing out old compiler
         NestedSynchronousStatements::new().visit_protocol_description(h, pd)?;
         ChannelStatementOccurrences::new().visit_protocol_description(h, pd)?;
         FunctionStatementReturns::new().visit_protocol_description(h, pd)?;
@@ -239,8 +229,8 @@ impl Parser {
         BuildScope::new().visit_protocol_description(h, pd)?;
         ResolveVariables::new().visit_protocol_description(h, pd)?;
         LinkStatements::new().visit_protocol_description(h, pd)?;
-        BuildLabels::new().visit_protocol_description(h, pd)?;
-        ResolveLabels::new().visit_protocol_description(h, pd)?;
+        // BuildLabels::new().visit_protocol_description(h, pd)?;
+        // ResolveLabels::new().visit_protocol_description(h, pd)?;
         AssignableExpressions::new().visit_protocol_description(h, pd)?;
         IndexableExpressions::new().visit_protocol_description(h, pd)?;
         SelectableExpressions::new().visit_protocol_description(h, pd)?;
@@ -263,7 +253,7 @@ mod tests {
             let resource = resource.expect("read testdata filepath");
             // println!(" * running: {}", &resource);
             let path = Path::new(&resource);
-            let mut source = InputSource::from_file(&path).unwrap();
+            let source = InputSource::from_file(&path).unwrap();
             // println!("DEBUG -- input:\n{}", String::from_utf8_lossy(&source.input));
             let mut parser = Parser::new_with_source(source).expect("parse source");
             match parser.parse() {

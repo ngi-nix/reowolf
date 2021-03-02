@@ -204,18 +204,17 @@ impl TypeTable {
             breadcrumbs.push(Breadcrumb::Linear((module_index, definition_index)));
             'resolve_loop: while !breadcrumbs.is_empty() {
                 // Retrieve module, the module's root and the definition
-                let (module, root, definition_id) = match breadcrumbs.last().unwrap() {
+                let (module, definition_id) = match breadcrumbs.last().unwrap() {
                     Breadcrumb::Linear((module_index, definition_index)) => {
                         let module = &modules[*module_index];
                         let root = &heap[module.root_id];
                         let definition_id = root.definitions[*definition_index];
-                        (module, root, definition_id)
+                        (module, definition_id)
                     },
                     Breadcrumb::Jumping((root_id, definition_id)) => {
                         let module = &modules[root_id.0.index as usize];
                         debug_assert_eq!(module.root_id, *root_id);
-                        let root = &heap[*root_id];
-                        (module, root, *definition_id)
+                        (module, *definition_id)
                     }
                 };
 

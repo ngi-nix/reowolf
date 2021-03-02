@@ -16,15 +16,15 @@ pub struct InputSource {
 
 static STD_LIB_PDL: &'static [u8] = b"
 primitive forward(in i, out o) {
-    while(true) synchronous() put(o, get(i));
+    while(true) synchronous put(o, get(i));
 }
 primitive sync(in i, out o) {
-    while(true) synchronous() if(fires(i)) put(o, get(i));
+    while(true) synchronous if(fires(i)) put(o, get(i));
 }
 primitive alternator(in i, out l, out r) {
     while(true) {
-        synchronous() if(fires(i)) put(l, get(i));
-        synchronous() if(fires(i)) put(r, get(i));
+        synchronous if(fires(i)) put(l, get(i));
+        synchronous if(fires(i)) put(r, get(i));
     }
 }
 primitive replicator(in i, out l, out r) {

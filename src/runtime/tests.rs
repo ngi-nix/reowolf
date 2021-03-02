@@ -38,7 +38,7 @@ fn file_logged_configured_connector(
 }
 static MINIMAL_PDL: &'static [u8] = b"
 primitive together(in ia, in ib, out oa, out ob){
-  while(true) synchronous() {
+  while(true) synchronous {
     if(fires(ia)) {
       put(oa, get(ia));
       put(ob, get(ib));
@@ -1291,7 +1291,7 @@ fn for_msg_byte() {
         while(i<8) {
             msg m = create(1);
             m[0] = i;
-            synchronous() put(o, m);
+            synchronous put(o, m);
             i++;
         }
     }

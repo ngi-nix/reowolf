@@ -343,6 +343,8 @@ impl Lexer<'_> {
                 return Err(self.error_at_pos("Too many namespaces in identifier"));
             }
             let new_ident = self.consume_ident()?;
+            ns_ident.extend(b"::");
+            ns_ident.extend(new_ident);
             num_namespaces += 1;
         }
 
@@ -1173,8 +1175,7 @@ impl Lexer<'_> {
             this,
             position,
             method,
-            arguments,
-            declaration: None,
+            arguments
         }))
     }
     fn consume_variable_expression(
@@ -1300,6 +1301,7 @@ impl Lexer<'_> {
                 position,
                 statements,
                 parent_scope: None,
+                relative_pos_in_parent: 0,
                 locals: Vec::new(),
                 labels: Vec::new(),
             })
@@ -1334,18 +1336,21 @@ impl Lexer<'_> {
             position,
             type_annotation: from_annotation,
             identifier: from_identifier,
+            relative_pos_in_block: 0
         });
         let to = h.alloc_local(|this| Local {
             this,
             position,
             type_annotation: to_annotation,
             identifier: to_identifier,
+            relative_pos_in_block: 0
         });
         Ok(h.alloc_channel_statement(|this| ChannelStatement {
             this,
             position,
             from,
             to,
+            relative_pos_in_block: 0,
             next: None,
         }))
     }
@@ -1358,7 +1363,13 @@ impl Lexer<'_> {
         self.consume_string(b"=")?;
         self.consume_whitespace(false)?;
         let initial = self.consume_expression(h)?;
-        let variable = h.alloc_local(|this| Local { this, position, type_annotation, identifier });
+        let variable = h.alloc_local(|this| Local {
+            this,
+            position,
+            type_annotation,
+            identifier,
+            relative_pos_in_block: 0
+        });
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_memory_statement(|this| MemoryStatement {
@@ -1384,6 +1395,7 @@ impl Lexer<'_> {
             position,
             label,
             body,
+            relative_pos_in_block: 0,
             in_sync: None,
         }))
     }
@@ -1409,7 +1421,7 @@ impl Lexer<'_> {
         } else {
             h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }).upcast()
         };
-        Ok(h.alloc_if_statement(|this| IfStatement { this, position, test, true_body, false_body }))
+        Ok(h.alloc_if_statement(|this| IfStatement { this, position, test, true_body, false_body, end_if: None }))
     }
     fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError2> {
         let position = self.source.pos();
@@ -1423,7 +1435,7 @@ impl Lexer<'_> {
             position,
             test,
             body,
-            next: None,
+            end_while: None,
             in_sync: None,
         }))
     }
@@ -1483,6 +1495,7 @@ impl Lexer<'_> {
             this,
             position,
             body,
+            end_sync: None,
             parent_scope: None,
         }))
     }

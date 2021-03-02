@@ -83,7 +83,8 @@ impl FunctionId {
 pub struct StatementId(Id<Statement>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BlockStatementId(StatementId);
+// TODO: Remove pub
+pub struct BlockStatementId(pub StatementId);
 
 impl BlockStatementId {
     pub fn upcast(self) -> StatementId {
@@ -818,6 +819,12 @@ impl Index<LocalId> for Heap {
     }
 }
 
+impl IndexMut<LocalId> for Heap {
+    fn index_mut(&mut self, index: LocalId) -> &mut Self::Output {
+        self.variables[index.0.0].as_local_mut()
+    }
+}
+
 impl Index<DefinitionId> for Heap {
     type Output = Definition;
     fn index(&self, index: DefinitionId) -> &Self::Output {
@@ -910,6 +917,12 @@ impl Index<IfStatementId> for Heap {
     type Output = IfStatement;
     fn index(&self, index: IfStatementId) -> &Self::Output {
         &self.statements[(index.0).0].as_if()
+    }
+}
+
+impl IndexMut<IfStatementId> for Heap {
+    fn index_mut(&mut self, index: IfStatementId) -> &mut Self::Output {
+        self.statements[(index.0).0].as_if_mut()
     }
 }
 
@@ -1527,30 +1540,24 @@ impl Field {
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub enum ScopeVariant {
+pub enum Scope {
     Definition(DefinitionId),
     Regular(BlockStatementId),
     Synchronous((SynchronousStatementId, BlockStatementId)),
 }
 
-// TODO: Cleanup
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Scope {
-    pub variant: ScopeVariant
-}
-
 impl Scope {
     pub fn is_block(&self) -> bool {
-        match &self.variant {
-            ScopeVariant::Definition(_) => false,
-            ScopeVariant::Regular(_) => true,
-            ScopeVariant::Synchronous(_) => true,
+        match &self {
+            Scope::Definition(_) => false,
+            Scope::Regular(_) => true,
+            Scope::Synchronous(_) => true,
         }
     }
     pub fn to_block(&self) -> BlockStatementId {
-        match &self.variant {
-            ScopeVariant::Regular(id) => *id,
-            ScopeVariant::Synchronous((_, id)) => *id,
+        match &self {
+            Scope::Regular(id) => *id,
+            Scope::Synchronous((_, id)) => *id,
             _ => panic!("unable to get BlockStatement from Scope")
         }
     }
@@ -1565,15 +1572,15 @@ impl VariableScope for Scope {
     fn parent_scope(&self, h: &Heap) -> Option<Scope> {
         match self {
             Scope::Definition(def) => h[*def].parent_scope(h),
-            Scope::Block(stmt) => h[*stmt].parent_scope(h),
-            Scope::Synchronous(stmt) => h[*stmt].parent_scope(h),
+            Scope::Regular(stmt) => h[*stmt].parent_scope(h),
+            Scope::Synchronous((stmt, _)) => h[*stmt].parent_scope(h),
         }
     }
     fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         match self {
             Scope::Definition(def) => h[*def].get_variable(h, id),
-            Scope::Block(stmt) => h[*stmt].get_variable(h, id),
-            Scope::Synchronous(stmt) => h[*stmt].get_variable(h, id),
+            Scope::Regular(stmt) => h[*stmt].get_variable(h, id),
+            Scope::Synchronous((stmt, _)) => h[*stmt].get_variable(h, id),
         }
     }
 }
@@ -1607,6 +1614,12 @@ impl Variable {
         match self {
             Variable::Local(result) => result,
             _ => panic!("Unable to cast `Variable` to `Local`"),
+        }
+    }
+    pub fn as_local_mut(&mut self) -> &mut Local {
+        match self {
+            Variable::Local(result) => result,
+            _ => panic!("Unable to cast 'Variable' to 'Local'"),
         }
     }
     pub fn the_type<'b>(&self, h: &'b Heap) -> &'b Type {
@@ -2019,6 +2032,12 @@ impl Statement {
             _ => panic!("Unable to cast `Statement` to `IfStatement`"),
         }
     }
+    pub fn as_if_mut(&mut self) -> &mut IfStatement {
+        match self {
+            Statement::If(result) => result,
+            _ => panic!("Unable to cast 'Statement' to 'IfStatement'"),
+        }
+    }
     pub fn as_end_if(&self) -> &EndIfStatement {
         match self {
             Statement::EndIf(result) => result,
@@ -2207,7 +2226,7 @@ impl BlockStatement {
                 // parent block.
                 None
             }
-            Scope::Synchronous(parent) => {
+            Scope::Synchronous((parent, _)) => {
                 // It is always the case that when this function is called,
                 // the parent of a synchronous statement is a block statement:
                 // nested synchronous statements are flagged illegal,
@@ -2215,7 +2234,7 @@ impl BlockStatement {
                 // creates the parent_scope references in the first place.
                 Some(h[parent].parent_scope(h).unwrap().to_block())
             }
-            Scope::Block(parent) => {
+            Scope::Regular(parent) => {
                 // A variable scope is either a definition, sync, or block.
                 Some(parent)
             }
@@ -2413,7 +2432,7 @@ impl SyntaxElement for WhileStatement {
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
     // Phase 2: linker
-    pub start_while: Option<WhileStatementId>,
+    pub start_while: WhileStatementId,
     pub position: InputPosition, // of corresponding while
     pub next: Option<StatementId>,
 }
@@ -2478,13 +2497,14 @@ impl VariableScope for SynchronousStatement {
     fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
         self.parent_scope.clone()
     }
-    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
-        for parameter_id in self.parameters.iter() {
-            let parameter = &h[*parameter_id];
-            if parameter.identifier.value == id.value {
-                return Some(parameter_id.0);
-            }
-        }
+    fn get_variable(&self, _h: &Heap, _id: &Identifier) -> Option<VariableId> {
+        // TODO: Another case of "where was this used for?"
+        // for parameter_id in self.parameters.iter() {
+        //     let parameter = &h[*parameter_id];
+        //     if parameter.identifier.value == id.value {
+        //         return Some(parameter_id.0);
+        //     }
+        // }
         None
     }
 }

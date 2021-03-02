@@ -5,7 +5,6 @@ pub(crate) mod inputsource;
 // mod lexer;
 mod library;
 mod parser;
-mod containers;
 
 // TODO: Remove when not benchmarking
 pub(crate) mod ast;
@@ -143,11 +142,10 @@ impl ComponentState {
                     EvalContinuation::SyncBlockStart => return NonsyncBlocker::SyncBlockStart,
                     // Not possible to end sync block if never entered one
                     EvalContinuation::SyncBlockEnd => unreachable!(),
-                    EvalContinuation::NewComponent(decl, args) => {
+                    EvalContinuation::NewComponent(definition_id, args) => {
                         // Look up definition (TODO for now, assume it is a definition)
                         let h = &pd.heap;
-                        let def = h[decl].as_defined().definition;
-                        let init_state = ComponentState { prompt: Prompt::new(h, def, &args) };
+                        let init_state = ComponentState { prompt: Prompt::new(h, definition_id, &args) };
                         context.new_component(&args, init_state);
                         // Continue stepping
                         continue;

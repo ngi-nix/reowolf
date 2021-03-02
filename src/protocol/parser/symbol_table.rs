@@ -114,10 +114,14 @@ impl SymbolTable {
                                     );
                                 }
                             }
+                        } else {
+                            lookup_reserve_size += import.symbols.len();
                         }
                     }
                 }
             }
+
+            lookup_reserve_size += module_root.definitions.len();
         }
 
         let mut table = Self{
@@ -265,6 +269,33 @@ impl SymbolTable {
                     }
                 }
             }
+        }
+        fn find_name(heap: &Heap, root_id: RootId) -> String {
+            let root = &heap[root_id];
+            for pragma_id in &root.pragmas {
+                match &heap[*pragma_id] {
+                    Pragma::Module(module) => {
+                        return String::from_utf8_lossy(&module.value).to_string()
+                    },
+                    _ => {},
+                }
+            }
+
+            return String::from("Unknown")
+        }
+
+        for (k, v) in table.symbol_lookup.iter() {
+            let key = String::from_utf8_lossy(&k.symbol_name).to_string();
+            let value = match v.symbol {
+                Symbol::Definition((a, b)) => {
+                    let utf8 = String::from_utf8_lossy(&heap[b].identifier().value);
+                    format!("Definition({}) in Root({})", utf8, find_name(heap, a))
+                },
+                Symbol::Namespace(a) => {
+                    format!("Root({})", find_name(heap, a))
+                }
+            };
+            println!("{} => {}", key, value);
         }
 
         debug_assert_eq!(

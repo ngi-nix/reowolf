@@ -1605,7 +1605,7 @@ pub enum EvalContinuation {
     Terminal,
     SyncBlockStart,
     SyncBlockEnd,
-    NewComponent(DeclarationId, Vec<Value>),
+    NewComponent(DefinitionId, Vec<Value>),
     BlockFires(Value),
     BlockGet(Value),
     Put(Value, Value),
@@ -1699,7 +1699,7 @@ impl Prompt {
                 if value.as_boolean().0 {
                     self.position = Some(stmt.body);
                 } else {
-                    self.position = stmt.next.map(|x| x.upcast());
+                    self.position = stmt.end_while.map(|x| x.upcast());
                 }
                 Err(EvalContinuation::Stepping)
             }
@@ -1759,7 +1759,12 @@ impl Prompt {
                     args.push(value);
                 }
                 self.position = stmt.next;
-                Err(EvalContinuation::NewComponent(expr.declaration.unwrap(), args))
+                match &expr.method {
+                    Method::Symbolic(symbolic) => {
+                         Err(EvalContinuation::NewComponent(symbolic.definition.unwrap(), args))
+                    },
+                    _ => unreachable!("not a symbolic call expression")
+                }
             }
             Statement::Put(stmt) => {
                 // Evaluate port and message

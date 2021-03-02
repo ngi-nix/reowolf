@@ -21,10 +21,10 @@ pub(crate) trait Visitor: Sized {
     fn visit_symbol_definition(&mut self, h: &mut Heap, def: DefinitionId) -> VisitorResult {
         recursive_symbol_definition(self, h, def)
     }
-    fn visit_struct_definition(&mut self, h: &mut Heap, def: StructId) -> VisitorResult {
+    fn visit_struct_definition(&mut self, _h: &mut Heap, _def: StructId) -> VisitorResult {
         Ok(())
     }
-    fn visit_enum_definition(&mut self, h: &mut Heap, def: EnumId) -> VisitorResult {
+    fn visit_enum_definition(&mut self, _h: &mut Heap, _def: EnumId) -> VisitorResult {
         Ok(())
     }
     fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
@@ -385,9 +385,10 @@ fn recursive_synchronous_statement<T: Visitor>(
     h: &mut Heap,
     stmt: SynchronousStatementId,
 ) -> VisitorResult {
-    for &param in h[stmt].parameters.clone().iter() {
-        recursive_parameter_as_variable(this, h, param)?;
-    }
+    // TODO: Check where this was used for
+    // for &param in h[stmt].parameters.clone().iter() {
+    //     recursive_parameter_as_variable(this, h, param)?;
+    // }
     this.visit_statement(h, h[stmt].body)
 }
 
@@ -894,7 +895,8 @@ impl Visitor for LinkCallExpressions {
                 return Err((id.identifier.position, "Illegal call expression".to_string()));
             }
             // Set the corresponding declaration of the call
-            h[expr].declaration = Some(decl);
+            // TODO: This should not be necessary anymore once parser is rewritten
+            // h[expr]. = Some(decl);
         }
         // A new statement's call expression may have as arguments function calls
         let old = self.new_statement;
@@ -929,7 +931,7 @@ impl Visitor for BuildScope {
         // First store the current scope
         h[stmt].parent_scope = self.scope;
         // Then move scope down to current block
-        self.scope = Some(Scope::Block(stmt));
+        self.scope = Some(Scope::Regular(stmt));
         recursive_block_statement(self, h, stmt)?;
         // Move scope back up
         self.scope = old;
@@ -945,7 +947,8 @@ impl Visitor for BuildScope {
         // First store the current scope
         h[stmt].parent_scope = self.scope;
         // Then move scope down to current sync
-        self.scope = Some(Scope::Synchronous(stmt));
+        // TODO: Should be legal-ish, but very wrong
+        self.scope = Some(Scope::Synchronous((stmt, BlockStatementId(stmt.upcast()))));
         recursive_synchronous_statement(self, h, stmt)?;
         // Move scope back up
         self.scope = old;
@@ -1066,7 +1069,7 @@ impl Visitor for ResolveVariables {
     fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
         assert!(!self.scope.is_none());
         let old = self.scope;
-        self.scope = Some(Scope::Block(stmt));
+        self.scope = Some(Scope::Regular(stmt));
         recursive_block_statement(self, h, stmt)?;
         self.scope = old;
         Ok(())
@@ -1078,7 +1081,7 @@ impl Visitor for ResolveVariables {
     ) -> VisitorResult {
         assert!(!self.scope.is_none());
         let old = self.scope;
-        self.scope = Some(Scope::Synchronous(stmt));
+        self.scope = Some(Scope::Synchronous((stmt, BlockStatementId(stmt.upcast())))); // TODO: WRONG!
         recursive_synchronous_statement(self, h, stmt)?;
         self.scope = old;
         Ok(())
@@ -1088,7 +1091,8 @@ impl Visitor for ResolveVariables {
         h: &mut Heap,
         expr: VariableExpressionId,
     ) -> VisitorResult {
-        let var = self.get_variable(h, &h[expr].identifier)?;
+        let ident = Identifier{ position: Default::default(), value: h[expr].identifier.value.clone() };
+        let var = self.get_variable(h, &ident)?;
         h[expr].declaration = Some(var);
         Ok(())
     }
@@ -1135,7 +1139,7 @@ impl Visitor for LinkStatements {
         // We allocate a pseudo-statement, which combines both branches into one next statement
         let position = h[stmt].position;
         let pseudo =
-            h.alloc_end_if_statement(|this| EndIfStatement { this, position, next: None }).upcast();
+            h.alloc_end_if_statement(|this| EndIfStatement { this, start_if: stmt, position, next: None }).upcast();
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].true_body)?;
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
@@ -1154,9 +1158,9 @@ impl Visitor for LinkStatements {
         // We allocate a pseudo-statement, to which the break statement finds its target
         let position = h[stmt].position;
         let pseudo =
-            h.alloc_end_while_statement(|this| EndWhileStatement { this, position, next: None });
+            h.alloc_end_while_statement(|this| EndWhileStatement { this, start_while: stmt, position, next: None });
         // Update the while's next statement to point to the pseudo-statement
-        h[stmt].next = Some(pseudo);
+        h[stmt].end_while = Some(pseudo);
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].body)?;
         // The body's next statement loops back to the while statement itself
@@ -1190,6 +1194,7 @@ impl Visitor for LinkStatements {
         let pseudo = h
             .alloc_end_synchronous_statement(|this| EndSynchronousStatement {
                 this,
+                start_sync: stmt,
                 position,
                 next: None,
             })
@@ -1400,7 +1405,7 @@ impl Visitor for ResolveLabels {
                 "Illegal break: synchronous statement escape".to_string(),
             ));
         }
-        h[stmt].target = the_while.next;
+        h[stmt].target = the_while.end_while;
         Ok(())
     }
     fn visit_continue_statement(
