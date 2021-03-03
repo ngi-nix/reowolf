@@ -867,14 +867,14 @@ impl ValidityAndLinkerVisitor {
 
     fn visit_block_stmt_with_hint(&mut self, ctx: &mut Ctx, id: BlockStatementId, hint: Option<SynchronousStatementId>) -> VisitorResult {
         if self.performing_breadth_pass {
-            // Our parent is performing a breadth-pass. We do this simple stuff
-            // here
-            let body = &mut ctx.heap[id];
-            body.parent_scope = self.cur_scope.clone();
-            body.relative_pos_in_parent = self.relative_pos_in_block;
-
+            // Performing a breadth pass, so don't traverse into the statements
+            // of the block.
             return Ok(())
         }
+
+        let body = &mut ctx.heap[id];
+        body.parent_scope = self.cur_scope.clone();
+        body.relative_pos_in_parent = self.relative_pos_in_block;
 
         // We may descend into children of this block. However, this is
         // where we first perform a breadth-first pass
@@ -963,7 +963,9 @@ impl ValidityAndLinkerVisitor {
                 // Position check in case another variable with the same name
                 // is defined in a higher-level scope, but later than the scope
                 // in which the current variable resides.
-                if local_relative_pos > other_local.relative_pos_in_block && local.identifier.value == other_local.identifier.value {
+                if local.this != *other_local_id &&
+                    local_relative_pos >= other_local.relative_pos_in_block &&
+                    local.identifier.value == other_local.identifier.value {
                     // Collision within this scope
                     return Err(
                         ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
@@ -1017,12 +1019,10 @@ impl ValidityAndLinkerVisitor {
         // No need to use iterator over namespaces if here
         let mut scope = self.cur_scope.as_ref().unwrap();
         loop {
-            println!("DEBUG: Looking at block {}...", scope.);
             debug_assert!(scope.is_block());
             let block = &ctx.heap[scope.to_block()];
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
-                println!("DEBUG: With local {}", String::from_utf8_lossy(&local.identifier.value));
                 if local.relative_pos_in_block < relative_pos && local.identifier.value == identifier.value {
                     return Ok(local_id.upcast());
                 }

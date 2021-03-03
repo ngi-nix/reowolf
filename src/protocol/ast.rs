@@ -5,25 +5,26 @@ use std::ops::{Index, IndexMut};
 use super::arena::{Arena, Id};
 // use super::containers::StringAllocator;
 
+// TODO: @cleanup, transform wrapping types into type aliases where possible
 use crate::protocol::inputsource::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RootId(pub(crate) Id<Root>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PragmaId(Id<Pragma>);
+pub struct PragmaId(pub(crate) Id<Pragma>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ImportId(Id<Import>);
+pub struct ImportId(pub(crate) Id<Import>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct TypeAnnotationId(Id<TypeAnnotation>);
+pub struct TypeAnnotationId(pub(crate) Id<TypeAnnotation>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct VariableId(Id<Variable>);
+pub struct VariableId(pub(crate) Id<Variable>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ParameterId(VariableId);
+pub struct ParameterId(pub(crate) VariableId);
 
 impl ParameterId {
     pub fn upcast(self) -> VariableId {
@@ -32,7 +33,7 @@ impl ParameterId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct LocalId(VariableId);
+pub struct LocalId(pub(crate) VariableId);
 
 impl LocalId {
     pub fn upcast(self) -> VariableId {
@@ -41,10 +42,10 @@ impl LocalId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct DefinitionId(Id<Definition>);
+pub struct DefinitionId(pub(crate) Id<Definition>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct StructId(DefinitionId);
+pub struct StructId(pub(crate) DefinitionId);
 
 impl StructId {
     pub fn upcast(self) -> DefinitionId{
@@ -53,7 +54,7 @@ impl StructId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EnumId(DefinitionId);
+pub struct EnumId(pub(crate) DefinitionId);
 
 impl EnumId {
     pub fn upcast(self) -> DefinitionId{
@@ -62,7 +63,7 @@ impl EnumId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ComponentId(DefinitionId);
+pub struct ComponentId(pub(crate) DefinitionId);
 
 impl ComponentId {
     pub fn upcast(self) -> DefinitionId {
@@ -71,7 +72,7 @@ impl ComponentId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct FunctionId(DefinitionId);
+pub struct FunctionId(pub(crate) DefinitionId);
 
 impl FunctionId {
     pub fn upcast(self) -> DefinitionId {
@@ -80,7 +81,7 @@ impl FunctionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct StatementId(Id<Statement>);
+pub struct StatementId(pub(crate) Id<Statement>);
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 // TODO: Remove pub
@@ -93,7 +94,7 @@ impl BlockStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct LocalStatementId(StatementId);
+pub struct LocalStatementId(pub(crate) StatementId);
 
 impl LocalStatementId {
     pub fn upcast(self) -> StatementId {
@@ -102,7 +103,7 @@ impl LocalStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MemoryStatementId(LocalStatementId);
+pub struct MemoryStatementId(pub(crate) LocalStatementId);
 
 impl MemoryStatementId {
     pub fn upcast(self) -> LocalStatementId {
@@ -111,7 +112,7 @@ impl MemoryStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ChannelStatementId(LocalStatementId);
+pub struct ChannelStatementId(pub(crate) LocalStatementId);
 
 impl ChannelStatementId {
     pub fn upcast(self) -> LocalStatementId {
@@ -120,7 +121,7 @@ impl ChannelStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SkipStatementId(StatementId);
+pub struct SkipStatementId(pub(crate) StatementId);
 
 impl SkipStatementId {
     pub fn upcast(self) -> StatementId {
@@ -129,7 +130,7 @@ impl SkipStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct LabeledStatementId(StatementId);
+pub struct LabeledStatementId(pub(crate) StatementId);
 
 impl LabeledStatementId {
     pub fn upcast(self) -> StatementId {
@@ -138,7 +139,7 @@ impl LabeledStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct IfStatementId(StatementId);
+pub struct IfStatementId(pub(crate) StatementId);
 
 impl IfStatementId {
     pub fn upcast(self) -> StatementId {
@@ -147,7 +148,7 @@ impl IfStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndIfStatementId(StatementId);
+pub struct EndIfStatementId(pub(crate) StatementId);
 
 impl EndIfStatementId {
     pub fn upcast(self) -> StatementId {
@@ -156,7 +157,7 @@ impl EndIfStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct WhileStatementId(StatementId);
+pub struct WhileStatementId(pub(crate) StatementId);
 
 impl WhileStatementId {
     pub fn upcast(self) -> StatementId {
@@ -165,7 +166,7 @@ impl WhileStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndWhileStatementId(StatementId);
+pub struct EndWhileStatementId(pub(crate) StatementId);
 
 impl EndWhileStatementId {
     pub fn upcast(self) -> StatementId {
@@ -174,7 +175,7 @@ impl EndWhileStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BreakStatementId(StatementId);
+pub struct BreakStatementId(pub(crate) StatementId);
 
 impl BreakStatementId {
     pub fn upcast(self) -> StatementId {
@@ -183,7 +184,7 @@ impl BreakStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ContinueStatementId(StatementId);
+pub struct ContinueStatementId(pub(crate) StatementId);
 
 impl ContinueStatementId {
     pub fn upcast(self) -> StatementId {
@@ -192,7 +193,7 @@ impl ContinueStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SynchronousStatementId(StatementId);
+pub struct SynchronousStatementId(pub(crate) StatementId);
 
 impl SynchronousStatementId {
     pub fn upcast(self) -> StatementId {
@@ -386,13 +387,14 @@ impl ImportedDeclarationId {
     }
 }
 
+// TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
     // Allocators
     // #[serde(skip)] string_alloc: StringAllocator,
     // Root arena, contains the entry point for different modules. Each root
     // contains lists of IDs that correspond to the other arenas.
-    protocol_descriptions: Arena<Root>,
+    pub(crate) protocol_descriptions: Arena<Root>,
     // Contents of a file, these are the elements the `Root` elements refer to
     pragmas: Arena<Pragma>,
     pub(crate) imports: Arena<Import>,

@@ -212,8 +212,6 @@ pub struct ParseErrorStatement {
 impl ParseErrorStatement {
     fn from_source(error_type: ParseErrorType, source: &InputSource, position: InputPosition, msg: &str) -> Self {
         // Seek line start and end
-        println!("DEBUG[1]:\nPos {}, msg: {},\nDEBUG[2]: In source:\n{}",
-            position, msg, String::from_utf8_lossy(&source.input));
         debug_assert!(position.column < position.offset);
         let line_start = position.offset - (position.column - 1);
         let mut line_end = position.offset;

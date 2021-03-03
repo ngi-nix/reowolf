@@ -315,7 +315,8 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
         Statement::Put(stmt) => this.visit_put_statement(h, stmt.this),
         Statement::Expression(stmt) => this.visit_expression_statement(h, stmt.this),
         Statement::EndSynchronous(_) | Statement::EndWhile(_) | Statement::EndIf(_) => {
-            unreachable!() // pseudo-statement
+            // unreachable!() // pseudo-statement
+            Ok(())
         }
     }
 }

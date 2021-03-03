@@ -15,6 +15,7 @@ use crate::protocol::lexer::*;
 
 use std::collections::HashMap;
 use crate::protocol::parser::visitor::Ctx;
+use crate::protocol::ast_printer::ASTWriter;
 
 // TODO: @fixme, pub qualifier
 pub(crate) struct LexedModule {
@@ -210,6 +211,10 @@ impl Parser {
             return Err(err)
         }
 
+        let mut writer = ASTWriter::new();
+        let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
+        writer.write_ast(&mut file, &self.heap);
+
         if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
             return Err(ParseError2::new_error(&self.modules[0].source, position, &message))
         }
@@ -219,15 +224,15 @@ impl Parser {
 
     pub fn parse_inner(h: &mut Heap, pd: RootId) -> VisitorResult {
         // TODO: @cleanup, slowly phasing out old compiler
-        NestedSynchronousStatements::new().visit_protocol_description(h, pd)?;
-        ChannelStatementOccurrences::new().visit_protocol_description(h, pd)?;
-        FunctionStatementReturns::new().visit_protocol_description(h, pd)?;
-        ComponentStatementReturnNew::new().visit_protocol_description(h, pd)?;
-        CheckBuiltinOccurrences::new().visit_protocol_description(h, pd)?;
-        BuildSymbolDeclarations::new().visit_protocol_description(h, pd)?;
+        // NestedSynchronousStatements::new().visit_protocol_description(h, pd)?;
+        // ChannelStatementOccurrences::new().visit_protocol_description(h, pd)?;
+        // FunctionStatementReturns::new().visit_protocol_description(h, pd)?;
+        // ComponentStatementReturnNew::new().visit_protocol_description(h, pd)?;
+        // CheckBuiltinOccurrences::new().visit_protocol_description(h, pd)?;
+        // BuildSymbolDeclarations::new().visit_protocol_description(h, pd)?;
         LinkCallExpressions::new().visit_protocol_description(h, pd)?;
-        BuildScope::new().visit_protocol_description(h, pd)?;
-        ResolveVariables::new().visit_protocol_description(h, pd)?;
+        // BuildScope::new().visit_protocol_description(h, pd)?;
+        // ResolveVariables::new().visit_protocol_description(h, pd)?;
         LinkStatements::new().visit_protocol_description(h, pd)?;
         // BuildLabels::new().visit_protocol_description(h, pd)?;
         // ResolveLabels::new().visit_protocol_description(h, pd)?;

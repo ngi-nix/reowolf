@@ -8,6 +8,7 @@ mod parser;
 
 // TODO: Remove when not benchmarking
 pub(crate) mod ast;
+pub(crate) mod ast_printer;
 pub(crate) mod lexer;
 
 lazy_static::lazy_static! {
@@ -61,6 +62,7 @@ impl ProtocolDescription {
                 return Ok(ProtocolDescription { heap: parser.heap, source: parser.modules[0].source.clone(), root });
             }
             Err(err) => {
+                println!("ERROR:\n{}", err);
                 Err(format!("{}", err))
             }
         }
