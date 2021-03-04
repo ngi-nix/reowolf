@@ -78,8 +78,14 @@ pub(crate) trait Visitor: Sized {
     fn visit_if_statement(&mut self, h: &mut Heap, stmt: IfStatementId) -> VisitorResult {
         recursive_if_statement(self, h, stmt)
     }
+    fn visit_end_if_statement(&mut self, _h: &mut Heap, _stmt: EndIfStatementId) -> VisitorResult {
+        Ok(())
+    }
     fn visit_while_statement(&mut self, h: &mut Heap, stmt: WhileStatementId) -> VisitorResult {
         recursive_while_statement(self, h, stmt)
+    }
+    fn visit_end_while_statement(&mut self, _h: &mut Heap, _stmt: EndWhileStatementId) -> VisitorResult {
+        Ok(())
     }
     fn visit_break_statement(&mut self, _h: &mut Heap, _stmt: BreakStatementId) -> VisitorResult {
         Ok(())
@@ -97,6 +103,9 @@ pub(crate) trait Visitor: Sized {
         stmt: SynchronousStatementId,
     ) -> VisitorResult {
         recursive_synchronous_statement(self, h, stmt)
+    }
+    fn visit_end_synchronous_statement(&mut self, _h: &mut Heap, _stmt: EndSynchronousStatementId) -> VisitorResult {
+        Ok(())
     }
     fn visit_return_statement(&mut self, h: &mut Heap, stmt: ReturnStatementId) -> VisitorResult {
         recursive_return_statement(self, h, stmt)
@@ -314,10 +323,9 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
         Statement::New(stmt) => this.visit_new_statement(h, stmt.this),
         Statement::Put(stmt) => this.visit_put_statement(h, stmt.this),
         Statement::Expression(stmt) => this.visit_expression_statement(h, stmt.this),
-        Statement::EndSynchronous(_) | Statement::EndWhile(_) | Statement::EndIf(_) => {
-            // unreachable!() // pseudo-statement
-            Ok(())
-        }
+        Statement::EndSynchronous(stmt) => this.visit_end_synchronous_statement(h, stmt.this),
+        Statement::EndWhile(stmt) => this.visit_end_while_statement(h, stmt.this),
+        Statement::EndIf(stmt) => this.visit_end_if_statement(h, stmt.this),
     }
 }
 
@@ -1137,40 +1145,53 @@ impl Visitor for LinkStatements {
         Ok(())
     }
     fn visit_if_statement(&mut self, h: &mut Heap, stmt: IfStatementId) -> VisitorResult {
-        // We allocate a pseudo-statement, which combines both branches into one next statement
-        let position = h[stmt].position;
-        let pseudo =
-            h.alloc_end_if_statement(|this| EndIfStatement { this, start_if: stmt, position, next: None }).upcast();
+        // Link the two branches to the corresponding EndIf pseudo-statement
+        let end_if_id = h[stmt].end_if;
+        assert!(end_if_id.is_some());
+        let end_if_id = end_if_id.unwrap();
+
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].true_body)?;
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
-            h[prev].link_next(pseudo);
+            h[prev].link_next(end_if_id.upcast());
         }
+
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].false_body)?;
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
-            h[prev].link_next(pseudo);
+            h[prev].link_next(end_if_id.upcast());
         }
+
         // Use the pseudo-statement as the statement where to update the next pointer
-        self.prev = Some(UniqueStatementId(pseudo));
+        // self.prev = Some(UniqueStatementId(end_if_id.upcast()));
+        Ok(())
+    }
+    fn visit_end_if_statement(&mut self, _h: &mut Heap, stmt: EndIfStatementId) -> VisitorResult {
+        assert!(self.prev.is_none());
+        self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
     fn visit_while_statement(&mut self, h: &mut Heap, stmt: WhileStatementId) -> VisitorResult {
         // We allocate a pseudo-statement, to which the break statement finds its target
-        let position = h[stmt].position;
-        let pseudo =
-            h.alloc_end_while_statement(|this| EndWhileStatement { this, start_while: stmt, position, next: None });
         // Update the while's next statement to point to the pseudo-statement
-        h[stmt].end_while = Some(pseudo);
+        let end_while_id = h[stmt].end_while;
+        assert!(end_while_id.is_some());
+        let end_while_id = end_while_id.unwrap();
+
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].body)?;
         // The body's next statement loops back to the while statement itself
         // Note: continue statements also loop back to the while statement itself
-        if let Some(UniqueStatementId(prev)) = std::mem::replace(&mut self.prev, None) {
+        if let Some(UniqueStatementId(prev)) = self.prev.take() {
             h[prev].link_next(stmt.upcast());
         }
         // Use the while statement as the statement where the next pointer is updated
-        self.prev = Some(UniqueStatementId(pseudo.upcast()));
+        // self.prev = Some(UniqueStatementId(end_while_id.upcast()));
+        Ok(())
+    }
+    fn visit_end_while_statement(&mut self, _h: &mut Heap, stmt: EndWhileStatementId) -> VisitorResult {
+        assert!(self.prev.is_none());
+        self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
     fn visit_break_statement(&mut self, _h: &mut Heap, _stmt: BreakStatementId) -> VisitorResult {
@@ -1191,23 +1212,23 @@ impl Visitor for LinkStatements {
         // Allocate a pseudo-statement, that is added for helping the evaluator to issue a command
         // that marks the end of the synchronous block. Every evaluation has to pause at this
         // point, only to resume later when the thread is selected as unique thread to continue.
-        let position = h[stmt].position;
-        let pseudo = h
-            .alloc_end_synchronous_statement(|this| EndSynchronousStatement {
-                this,
-                start_sync: stmt,
-                position,
-                next: None,
-            })
-            .upcast();
+        let end_sync_id = h[stmt].end_sync;
+        assert!(end_sync_id.is_some());
+        let end_sync_id = end_sync_id.unwrap();
+
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].body)?;
         // The body's next statement points to the pseudo element
-        if let Some(UniqueStatementId(prev)) = std::mem::replace(&mut self.prev, None) {
-            h[prev].link_next(pseudo);
+        if let Some(UniqueStatementId(prev)) = self.prev.take() {
+            h[prev].link_next(end_sync_id.upcast());
         }
         // Use the pseudo-statement as the statement where the next pointer is updated
-        self.prev = Some(UniqueStatementId(pseudo));
+        // self.prev = Some(UniqueStatementId(end_sync_id.upcast()));
+        Ok(())
+    }
+    fn visit_end_synchronous_statement(&mut self, _h: &mut Heap, stmt: EndSynchronousStatementId) -> VisitorResult {
+        assert!(self.prev.is_none());
+        self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }
     fn visit_return_statement(&mut self, _h: &mut Heap, _stmt: ReturnStatementId) -> VisitorResult {

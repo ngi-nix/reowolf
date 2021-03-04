@@ -202,7 +202,7 @@ impl SynchronousStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndSynchronousStatementId(StatementId);
+pub struct EndSynchronousStatementId(pub(crate) StatementId);
 
 impl EndSynchronousStatementId {
     pub fn upcast(self) -> StatementId {
@@ -211,7 +211,7 @@ impl EndSynchronousStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ReturnStatementId(StatementId);
+pub struct ReturnStatementId(pub(crate) StatementId);
 
 impl ReturnStatementId {
     pub fn upcast(self) -> StatementId {
@@ -220,7 +220,7 @@ impl ReturnStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AssertStatementId(StatementId);
+pub struct AssertStatementId(pub(crate) StatementId);
 
 impl AssertStatementId {
     pub fn upcast(self) -> StatementId {
@@ -229,7 +229,7 @@ impl AssertStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct GotoStatementId(StatementId);
+pub struct GotoStatementId(pub(crate) StatementId);
 
 impl GotoStatementId {
     pub fn upcast(self) -> StatementId {
@@ -238,7 +238,7 @@ impl GotoStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct NewStatementId(StatementId);
+pub struct NewStatementId(pub(crate) StatementId);
 
 impl NewStatementId {
     pub fn upcast(self) -> StatementId {
@@ -247,7 +247,7 @@ impl NewStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PutStatementId(StatementId);
+pub struct PutStatementId(pub(crate) StatementId);
 
 impl PutStatementId {
     pub fn upcast(self) -> StatementId {
@@ -256,7 +256,7 @@ impl PutStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ExpressionStatementId(StatementId);
+pub struct ExpressionStatementId(pub(crate) StatementId);
 
 impl ExpressionStatementId {
     pub fn upcast(self) -> StatementId {
@@ -265,10 +265,10 @@ impl ExpressionStatementId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ExpressionId(Id<Expression>);
+pub struct ExpressionId(pub(crate) Id<Expression>);
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct AssignmentExpressionId(ExpressionId);
+pub struct AssignmentExpressionId(pub(crate) ExpressionId);
 
 impl AssignmentExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -277,7 +277,7 @@ impl AssignmentExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConditionalExpressionId(ExpressionId);
+pub struct ConditionalExpressionId(pub(crate) ExpressionId);
 
 impl ConditionalExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -286,7 +286,7 @@ impl ConditionalExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BinaryExpressionId(ExpressionId);
+pub struct BinaryExpressionId(pub(crate) ExpressionId);
 
 impl BinaryExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -295,7 +295,7 @@ impl BinaryExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct UnaryExpressionId(ExpressionId);
+pub struct UnaryExpressionId(pub(crate) ExpressionId);
 
 impl UnaryExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -304,7 +304,7 @@ impl UnaryExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct IndexingExpressionId(ExpressionId);
+pub struct IndexingExpressionId(pub(crate) ExpressionId);
 
 impl IndexingExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -313,7 +313,7 @@ impl IndexingExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SlicingExpressionId(ExpressionId);
+pub struct SlicingExpressionId(pub(crate) ExpressionId);
 
 impl SlicingExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -322,7 +322,7 @@ impl SlicingExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SelectExpressionId(ExpressionId);
+pub struct SelectExpressionId(pub(crate) ExpressionId);
 
 impl SelectExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -331,7 +331,7 @@ impl SelectExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ArrayExpressionId(ExpressionId);
+pub struct ArrayExpressionId(pub(crate) ExpressionId);
 
 impl ArrayExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -340,7 +340,7 @@ impl ArrayExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConstantExpressionId(ExpressionId);
+pub struct ConstantExpressionId(pub(crate) ExpressionId);
 
 impl ConstantExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -349,7 +349,7 @@ impl ConstantExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CallExpressionId(ExpressionId);
+pub struct CallExpressionId(pub(crate) ExpressionId);
 
 impl CallExpressionId {
     pub fn upcast(self) -> ExpressionId {
@@ -358,7 +358,7 @@ impl CallExpressionId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct VariableExpressionId(ExpressionId);
+pub struct VariableExpressionId(pub(crate) ExpressionId);
 
 impl VariableExpressionId {
     pub fn upcast(self) -> ExpressionId {

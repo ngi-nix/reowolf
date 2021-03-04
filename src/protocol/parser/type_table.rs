@@ -5,7 +5,34 @@ use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
 use std::collections::HashMap;
+use crate::common::Formatter;
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum TypeClass {
+    Enum,
+    Union,
+    Struct,
+    Function,
+    Component
+}
+
+impl TypeClass {
+    pub(crate) fn display_name(&self) -> &'static str {
+        match self {
+            TypeClass::Enum => "enum",
+            TypeClass::Union => "enum",
+            TypeClass::Struct => "struct",
+            TypeClass::Function => "function",
+            TypeClass::Component => "component",
+        }
+    }
+}
+
+impl std::fmt::Display for TypeClass {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
 
 pub enum DefinedType {
     Enum(EnumType),
@@ -13,6 +40,18 @@ pub enum DefinedType {
     Struct(StructType),
     Function(FunctionType),
     Component(ComponentType)
+}
+
+impl DefinedType {
+    pub(crate) fn type_class(&self) -> TypeClass {
+        match self {
+            DefinedType::Enum(_) => TypeClass::Enum,
+            DefinedType::Union(_) => TypeClass::Union,
+            DefinedType::Struct(_) => TypeClass::Struct,
+            DefinedType::Function(_) => TypeClass::Function,
+            DefinedType::Component(_) => TypeClass::Component
+        }
+    }
 }
 
 // TODO: Also support maximum u64 value

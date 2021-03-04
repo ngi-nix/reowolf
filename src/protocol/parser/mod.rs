@@ -206,18 +206,15 @@ impl Parser {
             types: &mut type_table,
         };
         let mut visit = ValidityAndLinkerVisitor::new();
-        if let Err(err) = visit.visit_module(&mut ctx) {
-            println!("ERROR:\n{}", err);
-            return Err(err)
-        }
-
-        let mut writer = ASTWriter::new();
-        let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
-        writer.write_ast(&mut file, &self.heap);
+        visit.visit_module(&mut ctx)?;
 
         if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
             return Err(ParseError2::new_error(&self.modules[0].source, position, &message))
         }
+
+        // let mut writer = ASTWriter::new();
+        // let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
+        // writer.write_ast(&mut file, &self.heap);
 
         Ok(root_id)
     }
@@ -230,7 +227,7 @@ impl Parser {
         // ComponentStatementReturnNew::new().visit_protocol_description(h, pd)?;
         // CheckBuiltinOccurrences::new().visit_protocol_description(h, pd)?;
         // BuildSymbolDeclarations::new().visit_protocol_description(h, pd)?;
-        LinkCallExpressions::new().visit_protocol_description(h, pd)?;
+        // LinkCallExpressions::new().visit_protocol_description(h, pd)?;
         // BuildScope::new().visit_protocol_description(h, pd)?;
         // ResolveVariables::new().visit_protocol_description(h, pd)?;
         LinkStatements::new().visit_protocol_description(h, pd)?;

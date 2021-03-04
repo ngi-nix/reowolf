@@ -382,6 +382,7 @@ impl Lexer<'_> {
             self.consume_keyword(b"long")?;
             Ok(PrimitiveType::Long)
         } else if self.has_keyword(b"let") {
+            // TODO: @types
             return Err(self.error_at_pos("inferred types using 'let' are reserved, but not yet implemented"));
         } else {
             let identifier = self.consume_namespaced_identifier()?;
@@ -1196,12 +1197,20 @@ impl Lexer<'_> {
     // Statements
     // ====================
 
-    fn consume_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
+    /// Consumes any kind of statement from the source and will error if it
+    /// did not encounter a statement. Will also return an error if the
+    /// statement is nested too deeply.
+    ///
+    /// `wrap_in_block` may be set to true to ensure that the parsed statement
+    /// will be wrapped in a block statement if it is not already a block
+    /// statement. This is used to ensure that all `if`, `while` and `sync`
+    /// statements have a block statement as body.
+    fn consume_statement(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError2> {
         if self.level >= MAX_LEVEL {
             return Err(self.error_at_pos("Too deeply nested statement"));
         }
         self.level += 1;
-        let result = self.consume_statement_impl(h);
+        let result = self.consume_statement_impl(h, wrap_in_block);
         self.level -= 1;
         result
     }
@@ -1223,36 +1232,58 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_statement_impl(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
-        if self.has_string(b"{") {
-            Ok(self.consume_block_statement(h)?)
+    fn consume_statement_impl(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError2> {
+        // Parse and allocate statement
+        let mut must_wrap = true;
+        let mut stmt_id = if self.has_string(b"{") {
+            must_wrap = false;
+            self.consume_block_statement(h)?
         } else if self.has_keyword(b"skip") {
-            Ok(self.consume_skip_statement(h)?.upcast())
+            must_wrap = false;
+            self.consume_skip_statement(h)?.upcast()
         } else if self.has_keyword(b"if") {
-            Ok(self.consume_if_statement(h)?.upcast())
+            self.consume_if_statement(h)?.upcast()
         } else if self.has_keyword(b"while") {
-            Ok(self.consume_while_statement(h)?.upcast())
+            self.consume_while_statement(h)?.upcast()
         } else if self.has_keyword(b"break") {
-            Ok(self.consume_break_statement(h)?.upcast())
+            self.consume_break_statement(h)?.upcast()
         } else if self.has_keyword(b"continue") {
-            Ok(self.consume_continue_statement(h)?.upcast())
+            self.consume_continue_statement(h)?.upcast()
         } else if self.has_keyword(b"synchronous") {
-            Ok(self.consume_synchronous_statement(h)?.upcast())
+            self.consume_synchronous_statement(h)?.upcast()
         } else if self.has_keyword(b"return") {
-            Ok(self.consume_return_statement(h)?.upcast())
+            self.consume_return_statement(h)?.upcast()
         } else if self.has_keyword(b"assert") {
-            Ok(self.consume_assert_statement(h)?.upcast())
+            self.consume_assert_statement(h)?.upcast()
         } else if self.has_keyword(b"goto") {
-            Ok(self.consume_goto_statement(h)?.upcast())
+            self.consume_goto_statement(h)?.upcast()
         } else if self.has_keyword(b"new") {
-            Ok(self.consume_new_statement(h)?.upcast())
+            self.consume_new_statement(h)?.upcast()
         } else if self.has_keyword(b"put") {
-            Ok(self.consume_put_statement(h)?.upcast())
+            self.consume_put_statement(h)?.upcast()
         } else if self.has_label() {
-            Ok(self.consume_labeled_statement(h)?.upcast())
+            self.consume_labeled_statement(h)?.upcast()
         } else {
-            Ok(self.consume_expression_statement(h)?.upcast())
+            self.consume_expression_statement(h)?.upcast()
+        };
+
+        // Wrap if desired and if needed
+        if must_wrap && wrap_in_block {
+            let position = h[stmt_id].position();
+            let block_wrapper = h.alloc_block_statement(|this| BlockStatement{
+                this,
+                position,
+                statements: vec![stmt_id],
+                parent_scope: None,
+                relative_pos_in_parent: 0,
+                locals: Vec::new(),
+                labels: Vec::new()
+            });
+
+            stmt_id = block_wrapper.upcast();
         }
+
+        Ok(stmt_id)
     }
     fn has_local_statement(&mut self) -> bool {
         /* To avoid ambiguity, we look ahead to find either the
@@ -1289,7 +1320,7 @@ impl Lexer<'_> {
             self.consume_whitespace(false)?;
         }
         while !self.has_string(b"}") {
-            statements.push(self.consume_statement(h)?);
+            statements.push(self.consume_statement(h, false)?);
             self.consume_whitespace(false)?;
         }
         self.consume_string(b"}")?;
@@ -1389,7 +1420,7 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         self.consume_string(b":")?;
         self.consume_whitespace(false)?;
-        let body = self.consume_statement(h)?;
+        let body = self.consume_statement(h, false)?;
         Ok(h.alloc_labeled_statement(|this| LabeledStatement {
             this,
             position,
@@ -1412,12 +1443,12 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         let test = self.consume_paren_expression(h)?;
         self.consume_whitespace(false)?;
-        let true_body = self.consume_statement(h)?;
+        let true_body = self.consume_statement(h, true)?;
         self.consume_whitespace(false)?;
         let false_body = if self.has_keyword(b"else") {
             self.consume_keyword(b"else")?;
             self.consume_whitespace(false)?;
-            self.consume_statement(h)?
+            self.consume_statement(h, true)?
         } else {
             h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }).upcast()
         };
@@ -1429,7 +1460,7 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         let test = self.consume_paren_expression(h)?;
         self.consume_whitespace(false)?;
-        let body = self.consume_statement(h)?;
+        let body = self.consume_statement(h, true)?;
         Ok(h.alloc_while_statement(|this| WhileStatement {
             this,
             position,
@@ -1490,7 +1521,7 @@ impl Lexer<'_> {
         // } else if !self.has_keyword(b"skip") && !self.has_string(b"{") {
         //     return Err(self.error_at_pos("Expected block statement"));
         // }
-        let body = self.consume_statement(h)?;
+        let body = self.consume_statement(h, true)?;
         Ok(h.alloc_synchronous_statement(|this| SynchronousStatement {
             this,
             position,

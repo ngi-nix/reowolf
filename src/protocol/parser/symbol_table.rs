@@ -284,20 +284,6 @@ impl SymbolTable {
             return String::from("Unknown")
         }
 
-        for (k, v) in table.symbol_lookup.iter() {
-            let key = String::from_utf8_lossy(&k.symbol_name).to_string();
-            let value = match v.symbol {
-                Symbol::Definition((a, b)) => {
-                    let utf8 = String::from_utf8_lossy(&heap[b].identifier().value);
-                    format!("Definition({}) in Root({})", utf8, find_name(heap, a))
-                },
-                Symbol::Namespace(a) => {
-                    format!("Root({})", find_name(heap, a))
-                }
-            };
-            println!("{} => {}", key, value);
-        }
-
         debug_assert_eq!(
             table.symbol_lookup.len(), lookup_reserve_size,
             "miscalculated reserved size for symbol lookup table"

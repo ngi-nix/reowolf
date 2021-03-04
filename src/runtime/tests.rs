@@ -1397,6 +1397,20 @@ fn eq_no_causality() {
             }
         }
     }
+    primitive quick_test(in a, in b) {
+        msg ma = null;
+        while(true) synchronous {
+            if (fires(a)) {
+                ma = get(a);
+            }
+            if (fires(b)) {
+                ma = get(b);
+            }
+            if (fires(a) && fires(b)) {
+                ma = get(a) + get(b);
+            }
+        }
+    }
     ";
     let pd = reowolf::ProtocolDescription::parse(pdl).unwrap();
     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));

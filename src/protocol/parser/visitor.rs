@@ -275,9 +275,12 @@ pub(crate) struct ValidityAndLinkerVisitor {
     // inserted after the breadth-pass
     relative_pos_in_block: u32,
     // Single buffer of statement IDs that we want to traverse in a block.
-    // Required to work around Rust borrowing rules
-    // TODO: Maybe remove this in the future
+    // Required to work around Rust borrowing rules and to prevent constant
+    // cloning of vectors.
     statement_buffer: Vec<StatementId>,
+    // Another buffer, now with expression IDs, to prevent constant cloning of
+    // vectors while working around rust's borrowing rules
+    expression_buffer: Vec<ExpressionId>,
     // Statements to insert after the breadth pass in a single block
     insert_buffer: Vec<(u32, StatementId)>,
 }
@@ -292,6 +295,7 @@ impl ValidityAndLinkerVisitor {
             performing_breadth_pass: false,
             relative_pos_in_block: 0,
             statement_buffer: Vec::with_capacity(256),
+            expression_buffer: Vec::with_capacity(256),
             insert_buffer: Vec::with_capacity(32),
         }
     }
@@ -595,6 +599,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     }
 
     fn visit_new_stmt(&mut self, ctx: &mut Ctx, id: NewStatementId) -> VisitorResult {
+        // Link the call expression following the new statement
         if self.performing_breadth_pass {
             // TODO: Cleanup error messages, can be done cleaner
             // Make sure new statement occurs within a composite component
@@ -610,30 +615,24 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let definition_id = {
                 let call_expr = &ctx.heap[call_expr_id];
                 if let Method::Symbolic(symbolic) = &call_expr.method {
-                    // Resolve method
-                    let maybe_symbol = ctx.symbols.resolve_namespaced_symbol(ctx.module.root_id, &symbolic.identifier);
-                    if maybe_symbol.is_none() {
-                        return Err(ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component"));
-                    }
-                    let (symbol, iter) = maybe_symbol.unwrap();
-                    if iter.num_remaining() != 0 {
-                        return Err(
-                            ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
-                        )
-                    }
+                    let found_symbol = self.find_symbol_of_type(
+                        ctx.module.root_id, &ctx.symbols, &ctx.types,
+                        &symbolic.identifier, TypeClass::Component
+                    );
 
-                    match symbol.symbol {
-                        Symbol::Namespace(_) => return Err(
-                            ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Unknown component")
-                                .with_postfixed_info(&ctx.module.source, symbol.position, "The identifier points to this import")
-                        ),
-                        Symbol::Definition((_target_root_id, target_definition_id)) => {
-                            match &ctx.heap[target_definition_id] {
-                                Definition::Component(_) => target_definition_id,
-                                _ => return Err(
-                                    ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Must instantiate a component")
-                                )
-                            }
+                    match found_symbol {
+                        FindOfTypeResult::Found(definition_id) => definition_id,
+                        FindOfTypeResult::TypeMismatch(got_type_class) => {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                &format!("New must instantiate a component, this identifier points to a {}", got_type_class)
+                            ))
+                        },
+                        FindOfTypeResult::NotFound => {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                "Could not find a defined component with this name"
+                            ))
                         }
                     }
                 } else {
@@ -650,6 +649,23 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 Method::Symbolic(method) => method.definition = Some(definition_id),
                 _ => unreachable!()
             }
+        } else {
+            // Performing depth pass. The function definition should have been
+            // resolved in the breadth pass, now we recurse to evaluate the
+            // arguments
+            let call_expr_id = ctx.heap[id].expression;
+            let call_expr = &ctx.heap[call_expr_id];
+
+            let old_num_exprs = self.expression_buffer.len();
+            self.expression_buffer.extend(&call_expr.arguments);
+            let new_num_exprs = self.expression_buffer.len();
+
+            for arg_expr_idx in old_num_exprs..new_num_exprs {
+                let arg_expr_id = self.expression_buffer[arg_expr_idx];
+                self.visit_expr(ctx, arg_expr_id)?;
+            }
+
+            self.expression_buffer.truncate(old_num_exprs);
         }
 
         Ok(())
@@ -692,6 +708,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
+        let assignment_expr = &ctx.heap[id];
+        let left_expr_id = assignment_expr.left;
+        let right_expr_id = assignment_expr.right;
+        self.visit_expr(ctx, left_expr_id)?;
+        self.visit_expr(ctx, right_expr_id)?;
         Ok(())
     }
 
@@ -750,11 +771,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        // TODO: Is it true that this always depends on the return value? I
-        //  mean: the following should be a valid expression:
-        //  int i = some_call_that_returns_a_struct(5, 2).field_of_struct
-        //  We could rule out some things (of which we're sure what the type is)
-        //  but it seems better to do this later
         let expr_id = ctx.heap[id].subject;
         self.visit_expr(ctx, expr_id)?;
 
@@ -764,9 +780,18 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
         let array_expr = &ctx.heap[id];
-        for field_expr_id in array_expr.elements.clone() { // TODO: @performance
+
+        let old_num_exprs = self.expression_buffer.len();
+        self.expression_buffer.extend(&array_expr.elements);
+        let new_num_exprs = self.expression_buffer.len();
+
+        for field_expr_idx in old_num_exprs..new_num_exprs {
+            let field_expr_id = self.expression_buffer[field_expr_idx];
             self.visit_expr(ctx, field_expr_id)?;
         }
+
+        self.expression_buffer.truncate(old_num_exprs);
+
         Ok(())
     }
 
@@ -779,6 +804,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         let call_expr = &mut ctx.heap[id];
+
+        // Resolve the method to the appropriate definition and check the
+        // legality of the particular method call.
         match &mut call_expr.method {
             Method::Create => {},
             Method::Fires => {
@@ -799,41 +827,42 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             },
             Method::Symbolic(symbolic) => {
                 // Find symbolic method
-                let symbol = ctx.symbols.resolve_namespaced_symbol(ctx.module.root_id, &symbolic.identifier);
-                if symbol.is_none() {
-                    return Err(ParseError2::new_error(
-                        &ctx.module.source, symbolic.identifier.position,
-                        "Could not find definition of function call"
-                    ));
-                }
-                let (symbol, iter) = symbol.unwrap();
-                if iter.num_remaining() != 0 {
-                    return Err(
-                        ParseError2::new_error(&ctx.module.source, symbolic.identifier.position,"Could not find definition of function call")
-                            .with_postfixed_info(&ctx.module.source, symbol.position, "Could resolve part of the identifier to this symbol")
-                    );
-                }
-                let definition_id = match &symbol.symbol {
-                    Symbol::Definition((_, definition_id)) => {
-                        let definition = ctx.types.get_definition(definition_id);
-                        debug_assert!(definition.is_some(), "Symbol resolved to definition, but not present in type table");
-                        let definition = definition.unwrap();
-                        match definition {
-                            DefinedType::Function(_) => Some(*definition_id),
-                            _ => None,
-                        }
+                let found_symbol = self.find_symbol_of_type(
+                    ctx.module.root_id, &ctx.symbols, &ctx.types,
+                    &symbolic.identifier, TypeClass::Function
+                );
+                let definition_id = match found_symbol {
+                    FindOfTypeResult::Found(definition_id) => definition_id,
+                    FindOfTypeResult::TypeMismatch(got_type_class) => {
+                        return Err(ParseError2::new_error(
+                            &ctx.module.source, symbolic.identifier.position,
+                            &format!("Only functions can be called, this identifier points to a {}", got_type_class)
+                        ))
                     },
-                    Symbol::Namespace(_) => None,
+                    FindOfTypeResult::NotFound => {
+                        return Err(ParseError2::new_error(
+                            &ctx.module.source, symbolic.identifier.position,
+                            &format!("Could not find a function with this name")
+                        ))
+                    }
                 };
-                if definition_id.is_none() {
-                    return Err(
-                        ParseError2::new_error(&ctx.module.source, symbolic.identifier.position, "Could not find definition of function call")
-                    );
-                }
 
-                symbolic.definition = Some(definition_id.unwrap());
+                symbolic.definition = Some(definition_id);
             }
         }
+
+        // Parse all the arguments in the depth pass as well
+        let call_expr = &mut ctx.heap[id];
+        let old_num_exprs = self.expression_buffer.len();
+        self.expression_buffer.extend(&call_expr.arguments);
+        let new_num_exprs = self.expression_buffer.len();
+
+        for arg_expr_idx in old_num_exprs..new_num_exprs {
+            let arg_expr_id = self.expression_buffer[arg_expr_idx];
+            self.visit_expr(ctx, arg_expr_id)?;
+        }
+
+        self.expression_buffer.truncate(old_num_exprs);
 
         Ok(())
     }
@@ -842,7 +871,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         let var_expr = &ctx.heap[id];
-        println!("DEBUG: Finding variable {}", String::from_utf8_lossy(&var_expr.identifier.value));
         let variable_id = self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier)?;
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
@@ -851,11 +879,23 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     }
 }
 
+enum FindOfTypeResult {
+    // Identifier was exactly matched, type matched as well
+    Found(DefinitionId),
+    // Identifier was matched, but the type differs from the expected one
+    TypeMismatch(&'static str),
+    // Identifier could not be found
+    NotFound,
+}
+
 impl ValidityAndLinkerVisitor {
     //--------------------------------------------------------------------------
     // Special traversal
     //--------------------------------------------------------------------------
 
+    /// Will visit a statement with a hint about its wrapping statement. This is
+    /// used to distinguish block statements with a wrapping synchronous
+    /// statement from normal block statements.
     fn visit_stmt_with_hint(&mut self, ctx: &mut Ctx, id: StatementId, hint: Option<SynchronousStatementId>) -> VisitorResult {
         if let Statement::Block(block_stmt) = &ctx.heap[id] {
             let block_id = block_stmt.this;
@@ -872,37 +912,41 @@ impl ValidityAndLinkerVisitor {
             return Ok(())
         }
 
+        // Set parent scope and relative position in the parent scope. Remember
+        // these values to set them back to the old values when we're done with
+        // the traversal of the block's statements.
         let body = &mut ctx.heap[id];
         body.parent_scope = self.cur_scope.clone();
+        println!("DEBUG: Assigning relative {} to block {}", self.relative_pos_in_block, id.0.0.index);
         body.relative_pos_in_parent = self.relative_pos_in_block;
 
-        // We may descend into children of this block. However, this is
-        // where we first perform a breadth-first pass
-        // TODO: This is where crap goes wrong! If we are performing the first
-        //  breadth pass then we should take care of the scopes properly!
-        self.performing_breadth_pass = true;
         let old_scope = self.cur_scope.replace(match hint {
             Some(sync_id) => Scope::Synchronous((sync_id, id)),
             None => Scope::Regular(id),
         });
-        let first_statement_index = self.statement_buffer.len();
+        let old_relative_pos = self.relative_pos_in_block;
 
+        // Copy statement IDs into buffer
+        let old_num_stmts = self.statement_buffer.len();
         {
             let body = &ctx.heap[id];
             self.statement_buffer.extend_from_slice(&body.statements);
         }
+        let new_num_stmts = self.statement_buffer.len();
 
-        let mut stmt_index = first_statement_index;
-        while stmt_index < self.statement_buffer.len() {
-            self.relative_pos_in_block = (stmt_index - first_statement_index) as u32;
-            self.visit_stmt(ctx, self.statement_buffer[stmt_index])?;
-            stmt_index += 1;
+        // Perform the breadth-first pass. Its main purpose is to find labeled
+        // statements such that we can find the `goto`-targets immediately when
+        // performing the depth pass
+        self.performing_breadth_pass = true;
+        for stmt_idx in old_num_stmts..new_num_stmts {
+            self.relative_pos_in_block = (stmt_idx - old_num_stmts) as u32;
+            self.visit_stmt(ctx, self.statement_buffer[stmt_idx])?;
         }
 
         if !self.insert_buffer.is_empty() {
             let body = &mut ctx.heap[id];
-            for (pos, stmt) in self.insert_buffer.drain(..) {
-                body.statements.insert(pos as usize, stmt);
+            for (insert_idx, (pos, stmt)) in self.insert_buffer.drain(..).enumerate() {
+                body.statements.insert(pos as usize + insert_idx, stmt);
             }
         }
 
@@ -910,18 +954,17 @@ impl ValidityAndLinkerVisitor {
         // nodes because we're using the statement buffer, we may safely use the
         // relative_pos_in_block counter.
         self.performing_breadth_pass = false;
-        stmt_index = first_statement_index;
-        while stmt_index < self.statement_buffer.len() {
-            self.relative_pos_in_block = (stmt_index - first_statement_index) as u32;
-            self.visit_stmt(ctx, self.statement_buffer[stmt_index])?;
-            stmt_index += 1;
+        for stmt_idx in old_num_stmts..new_num_stmts {
+            self.relative_pos_in_block = (stmt_idx - old_num_stmts) as u32;
+            self.visit_stmt(ctx, self.statement_buffer[stmt_idx])?;
         }
 
         self.cur_scope = old_scope;
+        self.relative_pos_in_block = old_relative_pos;
 
         // Pop statement buffer
         debug_assert!(self.insert_buffer.is_empty(), "insert buffer not empty after depth pass");
-        self.statement_buffer.truncate(first_statement_index);
+        self.statement_buffer.truncate(old_num_stmts);
 
         Ok(())
     }
@@ -1018,11 +1061,15 @@ impl ValidityAndLinkerVisitor {
         //  identifier in the namespace.
         // No need to use iterator over namespaces if here
         let mut scope = self.cur_scope.as_ref().unwrap();
+        println!(" *** DEBUG: Looking for {}, depth = {}", String::from_utf8_lossy(&identifier.value), self.performing_breadth_pass);
         loop {
             debug_assert!(scope.is_block());
             let block = &ctx.heap[scope.to_block()];
+            println!("DEBUG: Looking in block {} with relative pos {}", block.this.0.0.index, relative_pos);
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
+                println!("DEBUG: Comparing against '{}' with relative pos {}",
+                    String::from_utf8_lossy(&local.identifier.value), local.relative_pos_in_block);
                 if local.relative_pos_in_block < relative_pos && local.identifier.value == identifier.value {
                     return Ok(local_id.upcast());
                 }
@@ -1032,6 +1079,7 @@ impl ValidityAndLinkerVisitor {
             scope = block.parent_scope.as_ref().unwrap();
             if !scope.is_block() {
                 // Definition scope, need to check arguments to definition
+                println!("DEBUG: Looking in definition scope now...");
                 match scope {
                     Scope::Definition(definition_id) => {
                         let definition = &ctx.heap[*definition_id];
@@ -1055,6 +1103,8 @@ impl ValidityAndLinkerVisitor {
         }
     }
 
+    /// Adds a particular label to the current scope. Will return an error if
+    /// there is another label with the same name visible in the current scope.
     fn checked_label_add(&mut self, ctx: &mut Ctx, id: LabeledStatementId) -> Result<(), ParseError2> {
         debug_assert!(self.cur_scope.is_some());
 
@@ -1130,6 +1180,38 @@ impl ValidityAndLinkerVisitor {
                 return Err(ParseError2::new_error(&ctx.module.source, identifier.position, "Could not find this label"));
             }
 
+        }
+    }
+
+    /// Finds a particular symbol in the symbol table which must correspond to
+    /// a definition of a particular type.
+    // Note: root_id, symbols and types passed in explicitly to prevent
+    //  borrowing errors
+    fn find_symbol_of_type(
+        &self, root_id: RootId, symbols: &SymbolTable, types: &TypeTable,
+        identifier: &NamespacedIdentifier, expected_type_class: TypeClass
+    ) -> FindOfTypeResult {
+        // Find symbol associated with identifier
+        let symbol = symbols.resolve_namespaced_symbol(root_id, &identifier);
+        if symbol.is_none() { return FindOfTypeResult::NotFound; }
+
+        let (symbol, iter) = symbol.unwrap();
+        if iter.num_remaining() != 0 { return FindOfTypeResult::NotFound; }
+
+        match &symbol.symbol {
+            Symbol::Definition((_, definition_id)) => {
+                // Make sure definition is of the expected type
+                let definition_type = types.get_definition(definition_id);
+                debug_assert!(definition_type.is_some(), "Found symbol '{}' in symbol table, but not in type table", String::from_utf8_lossy(&identifier.value));
+                let definition_type_class = definition_type.unwrap().type_class();
+
+                if definition_type_class != expected_type_class {
+                    FindOfTypeResult::TypeMismatch(definition_type_class.display_name())
+                } else {
+                    FindOfTypeResult::Found(*definition_id)
+                }
+            },
+            Symbol::Namespace(_) => FindOfTypeResult::TypeMismatch("namespace"),
         }
     }
 

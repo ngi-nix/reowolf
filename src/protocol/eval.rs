@@ -1640,6 +1640,7 @@ impl Prompt {
         if self.position.is_none() {
             return Err(EvalContinuation::Terminal);
         }
+
         let stmt = &h[self.position.unwrap()];
         match stmt {
             Statement::Block(stmt) => {
