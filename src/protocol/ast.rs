@@ -8,384 +8,78 @@ use super::arena::{Arena, Id};
 // TODO: @cleanup, transform wrapping types into type aliases where possible
 use crate::protocol::inputsource::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct RootId(pub(crate) Id<Root>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PragmaId(pub(crate) Id<Pragma>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ImportId(pub(crate) Id<Import>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct TypeAnnotationId(pub(crate) Id<TypeAnnotation>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct VariableId(pub(crate) Id<Variable>);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct ParameterId(pub(crate) VariableId);
-
-impl ParameterId {
-    pub fn upcast(self) -> VariableId {
-        self.0
+macro_rules! define_aliased_ast_id {
+    ($name:ident, $parent:ty) => {
+        type $name = $parent;
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct LocalId(pub(crate) VariableId);
+macro_rules! define_new_ast_id {
+    ($name:ident, $parent:ty) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        pub struct $name (pub(crate) $parent);
 
-impl LocalId {
-    pub fn upcast(self) -> VariableId {
-        self.0
-    }
+        impl $name {
+            pub fn upcast(self) -> $parent {
+                self.0
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct DefinitionId(pub(crate) Id<Definition>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct StructId(pub(crate) DefinitionId);
-
-impl StructId {
-    pub fn upcast(self) -> DefinitionId{
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EnumId(pub(crate) DefinitionId);
-
-impl EnumId {
-    pub fn upcast(self) -> DefinitionId{
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ComponentId(pub(crate) DefinitionId);
-
-impl ComponentId {
-    pub fn upcast(self) -> DefinitionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct FunctionId(pub(crate) DefinitionId);
-
-impl FunctionId {
-    pub fn upcast(self) -> DefinitionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct StatementId(pub(crate) Id<Statement>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-// TODO: Remove pub
-pub struct BlockStatementId(pub StatementId);
-
-impl BlockStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct LocalStatementId(pub(crate) StatementId);
-
-impl LocalStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MemoryStatementId(pub(crate) LocalStatementId);
-
-impl MemoryStatementId {
-    pub fn upcast(self) -> LocalStatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ChannelStatementId(pub(crate) LocalStatementId);
-
-impl ChannelStatementId {
-    pub fn upcast(self) -> LocalStatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SkipStatementId(pub(crate) StatementId);
-
-impl SkipStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct LabeledStatementId(pub(crate) StatementId);
-
-impl LabeledStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct IfStatementId(pub(crate) StatementId);
-
-impl IfStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndIfStatementId(pub(crate) StatementId);
-
-impl EndIfStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct WhileStatementId(pub(crate) StatementId);
-
-impl WhileStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndWhileStatementId(pub(crate) StatementId);
-
-impl EndWhileStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BreakStatementId(pub(crate) StatementId);
-
-impl BreakStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ContinueStatementId(pub(crate) StatementId);
-
-impl ContinueStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SynchronousStatementId(pub(crate) StatementId);
-
-impl SynchronousStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EndSynchronousStatementId(pub(crate) StatementId);
-
-impl EndSynchronousStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ReturnStatementId(pub(crate) StatementId);
-
-impl ReturnStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AssertStatementId(pub(crate) StatementId);
-
-impl AssertStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct GotoStatementId(pub(crate) StatementId);
-
-impl GotoStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct NewStatementId(pub(crate) StatementId);
-
-impl NewStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct PutStatementId(pub(crate) StatementId);
-
-impl PutStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ExpressionStatementId(pub(crate) StatementId);
-
-impl ExpressionStatementId {
-    pub fn upcast(self) -> StatementId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ExpressionId(pub(crate) Id<Expression>);
-
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct AssignmentExpressionId(pub(crate) ExpressionId);
-
-impl AssignmentExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConditionalExpressionId(pub(crate) ExpressionId);
-
-impl ConditionalExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BinaryExpressionId(pub(crate) ExpressionId);
-
-impl BinaryExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct UnaryExpressionId(pub(crate) ExpressionId);
-
-impl UnaryExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct IndexingExpressionId(pub(crate) ExpressionId);
-
-impl IndexingExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SlicingExpressionId(pub(crate) ExpressionId);
-
-impl SlicingExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SelectExpressionId(pub(crate) ExpressionId);
-
-impl SelectExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ArrayExpressionId(pub(crate) ExpressionId);
-
-impl ArrayExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConstantExpressionId(pub(crate) ExpressionId);
-
-impl ConstantExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CallExpressionId(pub(crate) ExpressionId);
-
-impl CallExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct VariableExpressionId(pub(crate) ExpressionId);
-
-impl VariableExpressionId {
-    pub fn upcast(self) -> ExpressionId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct DeclarationId(Id<Declaration>);
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct DefinedDeclarationId(DeclarationId);
-
-impl DefinedDeclarationId {
-    pub fn upcast(self) -> DeclarationId {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ImportedDeclarationId(DeclarationId);
-
-impl ImportedDeclarationId {
-    pub fn upcast(self) -> DeclarationId {
-        self.0
-    }
-}
+define_aliased_ast_id!(RootId, Id<Root>);
+define_aliased_ast_id!(PragmaId, Id<Pragma>);
+define_aliased_ast_id!(ImportId, Id<Import>);
+define_aliased_ast_id!(TypeAnnotationId, Id<TypeAnnotation>);
+
+define_aliased_ast_id!(VariableId, Id<Variable>);
+define_new_ast_id!(ParameterId, VariableId);
+define_new_ast_id!(LocalId, VariableId);
+
+define_aliased_ast_id!(DefinitionId, Id<Definition>);
+define_new_ast_id!(StructId, DefinitionId);
+define_new_ast_id!(EnumId, DefinitionId);
+define_new_ast_id!(ComponentId, DefinitionId);
+define_new_ast_id!(FunctionId, DefinitionId);
+
+define_aliased_ast_id!(StatementId, Id<Statement>);
+define_new_ast_id!(BlockStatementId, StatementId);
+define_new_ast_id!(LocalStatementId, StatementId);
+define_new_ast_id!(MemoryStatementId, LocalStatementId);
+define_new_ast_id!(ChannelStatementId, LocalStatementId);
+define_new_ast_id!(SkipStatementId, StatementId);
+define_new_ast_id!(LabeledStatementId, StatementId);
+define_new_ast_id!(IfStatementId, StatementId);
+define_new_ast_id!(EndIfStatementId, StatementId);
+define_new_ast_id!(WhileStatementId, StatementId);
+define_new_ast_id!(EndWhileStatementId, StatementId);
+define_new_ast_id!(BreakStatementId, StatementId);
+define_new_ast_id!(ContinueStatementId, StatementId);
+define_new_ast_id!(SynchronousStatementId, StatementId);
+define_new_ast_id!(EndSynchronousStatementId, StatementId);
+define_new_ast_id!(ReturnStatementId, StatementId);
+define_new_ast_id!(AssertStatementId, StatementId);
+define_new_ast_id!(GotoStatementId, StatementId);
+define_new_ast_id!(NewStatementId, StatementId);
+define_new_ast_id!(PutStatementId, StatementId);
+define_new_ast_id!(ExpressionStatementId, StatementId);
+
+define_aliased_ast_id!(ExpressionId, Id<Expression>);
+define_new_ast_id!(AssignmentExpressionId, ExpressionId);
+define_new_ast_id!(ConditionalExpressionId, ExpressionId);
+define_new_ast_id!(BinaryExpressionId, ExpressionId);
+define_new_ast_id!(UnaryExpressionId, ExpressionId);
+define_new_ast_id!(IndexingExpressionId, ExpressionId);
+define_new_ast_id!(SlicingExpressionId, ExpressionId);
+define_new_ast_id!(SelectExpressionId, ExpressionId);
+define_new_ast_id!(ArrayExpressionId, ExpressionId);
+define_new_ast_id!(ConstantExpressionId, ExpressionId);
+define_new_ast_id!(CallExpressionId, ExpressionId);
+define_new_ast_id!(VariableExpressionId, ExpressionId);
+
+define_new_ast_id!(DeclarationId, ExpressionId); // TODO: @cleanup
+define_new_ast_id!(DefinedDeclarationId, DeclarationId);
+define_new_ast_id!(ImportedDeclarationId, DeclarationId);
 
 // TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -427,208 +121,212 @@ impl Heap {
         &mut self,
         f: impl FnOnce(TypeAnnotationId) -> TypeAnnotation,
     ) -> TypeAnnotationId {
-        TypeAnnotationId(self.type_annotations.alloc_with_id(|id| f(TypeAnnotationId(id))))
+        self.type_annotations.alloc_with_id(|id| f(id))
     }
     pub fn alloc_parameter(&mut self, f: impl FnOnce(ParameterId) -> Parameter) -> ParameterId {
-        ParameterId(VariableId(
-            self.variables.alloc_with_id(|id| Variable::Parameter(f(ParameterId(VariableId(id))))),
-        ))
+        ParameterId(
+            self.variables.alloc_with_id(|id| Variable::Parameter(f(ParameterId(id)))),
+        )
     }
     pub fn alloc_local(&mut self, f: impl FnOnce(LocalId) -> Local) -> LocalId {
-        LocalId(VariableId(
-            self.variables.alloc_with_id(|id| Variable::Local(f(LocalId(VariableId(id))))),
-        ))
+        LocalId(
+            self.variables.alloc_with_id(|id| Variable::Local(f(LocalId(id)))),
+        )
     }
     pub fn alloc_assignment_expression(
         &mut self,
         f: impl FnOnce(AssignmentExpressionId) -> AssignmentExpression,
     ) -> AssignmentExpressionId {
-        AssignmentExpressionId(ExpressionId(self.expressions.alloc_with_id(|id| {
-            Expression::Assignment(f(AssignmentExpressionId(ExpressionId(id))))
-        })))
+        AssignmentExpressionId(
+            self.expressions.alloc_with_id(|id| {
+                Expression::Assignment(f(AssignmentExpressionId(id)))
+            })
+        )
     }
     pub fn alloc_conditional_expression(
         &mut self,
         f: impl FnOnce(ConditionalExpressionId) -> ConditionalExpression,
     ) -> ConditionalExpressionId {
-        ConditionalExpressionId(ExpressionId(self.expressions.alloc_with_id(|id| {
-            Expression::Conditional(f(ConditionalExpressionId(ExpressionId(id))))
-        })))
+        ConditionalExpressionId(
+            self.expressions.alloc_with_id(|id| {
+                Expression::Conditional(f(ConditionalExpressionId(id)))
+            })
+        )
     }
     pub fn alloc_binary_expression(
         &mut self,
         f: impl FnOnce(BinaryExpressionId) -> BinaryExpression,
     ) -> BinaryExpressionId {
-        BinaryExpressionId(ExpressionId(
+        BinaryExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Binary(f(BinaryExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Binary(f(BinaryExpressionId(id)))),
+        )
     }
     pub fn alloc_unary_expression(
         &mut self,
         f: impl FnOnce(UnaryExpressionId) -> UnaryExpression,
     ) -> UnaryExpressionId {
-        UnaryExpressionId(ExpressionId(
+        UnaryExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Unary(f(UnaryExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Unary(f(UnaryExpressionId(id)))),
+        )
     }
     pub fn alloc_slicing_expression(
         &mut self,
         f: impl FnOnce(SlicingExpressionId) -> SlicingExpression,
     ) -> SlicingExpressionId {
-        SlicingExpressionId(ExpressionId(
+        SlicingExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Slicing(f(SlicingExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Slicing(f(SlicingExpressionId(id)))),
+        )
     }
     pub fn alloc_indexing_expression(
         &mut self,
         f: impl FnOnce(IndexingExpressionId) -> IndexingExpression,
     ) -> IndexingExpressionId {
-        IndexingExpressionId(ExpressionId(
+        IndexingExpressionId(
             self.expressions.alloc_with_id(|id| {
-                Expression::Indexing(f(IndexingExpressionId(ExpressionId(id))))
+                Expression::Indexing(f(IndexingExpressionId(id)))
             }),
-        ))
+        )
     }
     pub fn alloc_select_expression(
         &mut self,
         f: impl FnOnce(SelectExpressionId) -> SelectExpression,
     ) -> SelectExpressionId {
-        SelectExpressionId(ExpressionId(
+        SelectExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Select(f(SelectExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Select(f(SelectExpressionId(id)))),
+        )
     }
     pub fn alloc_array_expression(
         &mut self,
         f: impl FnOnce(ArrayExpressionId) -> ArrayExpression,
     ) -> ArrayExpressionId {
-        ArrayExpressionId(ExpressionId(
+        ArrayExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Array(f(ArrayExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Array(f(ArrayExpressionId(id)))),
+        )
     }
     pub fn alloc_constant_expression(
         &mut self,
         f: impl FnOnce(ConstantExpressionId) -> ConstantExpression,
     ) -> ConstantExpressionId {
-        ConstantExpressionId(ExpressionId(
+        ConstantExpressionId(
             self.expressions.alloc_with_id(|id| {
-                Expression::Constant(f(ConstantExpressionId(ExpressionId(id))))
+                Expression::Constant(f(ConstantExpressionId(id)))
             }),
-        ))
+        )
     }
     pub fn alloc_call_expression(
         &mut self,
         f: impl FnOnce(CallExpressionId) -> CallExpression,
     ) -> CallExpressionId {
-        CallExpressionId(ExpressionId(
+        CallExpressionId(
             self.expressions
-                .alloc_with_id(|id| Expression::Call(f(CallExpressionId(ExpressionId(id))))),
-        ))
+                .alloc_with_id(|id| Expression::Call(f(CallExpressionId(id)))),
+        )
     }
     pub fn alloc_variable_expression(
         &mut self,
         f: impl FnOnce(VariableExpressionId) -> VariableExpression,
     ) -> VariableExpressionId {
-        VariableExpressionId(ExpressionId(
+        VariableExpressionId(
             self.expressions.alloc_with_id(|id| {
-                Expression::Variable(f(VariableExpressionId(ExpressionId(id))))
+                Expression::Variable(f(VariableExpressionId(id)))
             }),
-        ))
+        )
     }
     pub fn alloc_block_statement(
         &mut self,
         f: impl FnOnce(BlockStatementId) -> BlockStatement,
     ) -> BlockStatementId {
-        BlockStatementId(StatementId(
+        BlockStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Block(f(BlockStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Block(f(BlockStatementId(id)))),
+        )
     }
     pub fn alloc_memory_statement(
         &mut self,
         f: impl FnOnce(MemoryStatementId) -> MemoryStatement,
     ) -> MemoryStatementId {
-        MemoryStatementId(LocalStatementId(StatementId(self.statements.alloc_with_id(|id| {
-            Statement::Local(LocalStatement::Memory(f(MemoryStatementId(LocalStatementId(
-                StatementId(id),
-            )))))
-        }))))
+        MemoryStatementId(LocalStatementId(self.statements.alloc_with_id(|id| {
+            Statement::Local(LocalStatement::Memory(
+                f(MemoryStatementId(LocalStatementId(id)))
+            ))
+        })))
     }
     pub fn alloc_channel_statement(
         &mut self,
         f: impl FnOnce(ChannelStatementId) -> ChannelStatement,
     ) -> ChannelStatementId {
-        ChannelStatementId(LocalStatementId(StatementId(self.statements.alloc_with_id(|id| {
-            Statement::Local(LocalStatement::Channel(f(ChannelStatementId(LocalStatementId(
-                StatementId(id),
-            )))))
-        }))))
+        ChannelStatementId(LocalStatementId(self.statements.alloc_with_id(|id| {
+            Statement::Local(LocalStatement::Channel(
+                f(ChannelStatementId(LocalStatementId(id)))
+            ))
+        })))
     }
     pub fn alloc_skip_statement(
         &mut self,
         f: impl FnOnce(SkipStatementId) -> SkipStatement,
     ) -> SkipStatementId {
-        SkipStatementId(StatementId(
+        SkipStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Skip(f(SkipStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Skip(f(SkipStatementId(id)))),
+        )
     }
     pub fn alloc_if_statement(
         &mut self,
         f: impl FnOnce(IfStatementId) -> IfStatement,
     ) -> IfStatementId {
-        IfStatementId(StatementId(
-            self.statements.alloc_with_id(|id| Statement::If(f(IfStatementId(StatementId(id))))),
-        ))
+        IfStatementId(
+            self.statements.alloc_with_id(|id| Statement::If(f(IfStatementId(id)))),
+        )
     }
     pub fn alloc_end_if_statement(
         &mut self,
         f: impl FnOnce(EndIfStatementId) -> EndIfStatement,
     ) -> EndIfStatementId {
-        EndIfStatementId(StatementId(
+        EndIfStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::EndIf(f(EndIfStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::EndIf(f(EndIfStatementId(id)))),
+        )
     }
     pub fn alloc_while_statement(
         &mut self,
         f: impl FnOnce(WhileStatementId) -> WhileStatement,
     ) -> WhileStatementId {
-        WhileStatementId(StatementId(
+        WhileStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::While(f(WhileStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::While(f(WhileStatementId(id)))),
+        )
     }
     pub fn alloc_end_while_statement(
         &mut self,
         f: impl FnOnce(EndWhileStatementId) -> EndWhileStatement,
     ) -> EndWhileStatementId {
-        EndWhileStatementId(StatementId(
+        EndWhileStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::EndWhile(f(EndWhileStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::EndWhile(f(EndWhileStatementId(id)))),
+        )
     }
     pub fn alloc_break_statement(
         &mut self,
         f: impl FnOnce(BreakStatementId) -> BreakStatement,
     ) -> BreakStatementId {
-        BreakStatementId(StatementId(
+        BreakStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Break(f(BreakStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Break(f(BreakStatementId(id)))),
+        )
     }
     pub fn alloc_continue_statement(
         &mut self,
         f: impl FnOnce(ContinueStatementId) -> ContinueStatement,
     ) -> ContinueStatementId {
-        ContinueStatementId(StatementId(
+        ContinueStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Continue(f(ContinueStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Continue(f(ContinueStatementId(id)))),
+        )
     }
     pub fn alloc_synchronous_statement(
         &mut self,

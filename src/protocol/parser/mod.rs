@@ -3,10 +3,12 @@ mod symbol_table;
 mod type_table;
 mod type_resolver;
 mod visitor;
+mod visitor_linker;
 
 use depth_visitor::*;
 use symbol_table::SymbolTable;
-use visitor::{Visitor2, ValidityAndLinkerVisitor};
+use visitor::Visitor2;
+use visitor_linker::ValidityAndLinkerVisitor;
 use type_table::TypeTable;
 
 use crate::protocol::ast::*;
