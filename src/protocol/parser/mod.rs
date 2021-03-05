@@ -1,6 +1,7 @@
 mod depth_visitor;
 mod symbol_table;
 mod type_table;
+mod type_resolver;
 mod visitor;
 
 use depth_visitor::*;
@@ -11,7 +12,6 @@ use type_table::TypeTable;
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::lexer::*;
-
 
 use std::collections::HashMap;
 use crate::protocol::parser::visitor::Ctx;
