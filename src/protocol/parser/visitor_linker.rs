@@ -698,7 +698,7 @@ impl ValidityAndLinkerVisitor {
         // the traversal of the block's statements.
         let body = &mut ctx.heap[id];
         body.parent_scope = self.cur_scope.clone();
-        println!("DEBUG: Assigning relative {} to block {}", self.relative_pos_in_block, id.0.0.index);
+        println!("DEBUG: Assigning relative {} to block {}", self.relative_pos_in_block, id.0.index);
         body.relative_pos_in_parent = self.relative_pos_in_block;
 
         let old_scope = self.cur_scope.replace(match hint {

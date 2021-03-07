@@ -191,7 +191,7 @@ impl ASTWriter {
     //--------------------------------------------------------------------------
 
     fn write_module(&mut self, heap: &Heap, root_id: RootId) {
-        self.kv(0).with_id(PREFIX_ROOT_ID, root_id.0.index)
+        self.kv(0).with_id(PREFIX_ROOT_ID, root_id.index)
             .with_s_key("Module");
 
         let root = &heap[root_id];
@@ -214,12 +214,12 @@ impl ASTWriter {
     fn write_pragma(&mut self, heap: &Heap, pragma_id: PragmaId, indent: usize) {
         match &heap[pragma_id] {
             Pragma::Version(pragma) => {
-                self.kv(indent).with_id(PREFIX_PRAGMA_ID, pragma.this.0.index)
+                self.kv(indent).with_id(PREFIX_PRAGMA_ID, pragma.this.index)
                     .with_s_key("PragmaVersion")
                     .with_disp_val(&pragma.version);
             },
             Pragma::Module(pragma) => {
-                self.kv(indent).with_id(PREFIX_PRAGMA_ID, pragma.this.0.index)
+                self.kv(indent).with_id(PREFIX_PRAGMA_ID, pragma.this.index)
                     .with_s_key("PragmaModule")
                     .with_ascii_val(&pragma.value);
             }
@@ -232,21 +232,21 @@ impl ASTWriter {
 
         match import {
             Import::Module(import) => {
-                self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.0.index)
+                self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportModule");
 
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module_name);
                 self.kv(indent2).with_s_key("Alias").with_ascii_val(&import.alias);
                 self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
             },
             Import::Symbols(import) => {
-                self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.0.index)
+                self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportSymbol");
 
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module_name);
                 self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
 
                 self.kv(indent2).with_s_key("Symbols");
 
@@ -257,7 +257,7 @@ impl ASTWriter {
                     self.kv(indent4).with_s_key("Name").with_ascii_val(&symbol.name);
                     self.kv(indent4).with_s_key("Alias").with_ascii_val(&symbol.alias);
                     self.kv(indent4).with_s_key("Definition")
-                        .with_opt_disp_val(symbol.definition_id.as_ref().map(|v| &v.0.index));
+                        .with_opt_disp_val(symbol.definition_id.as_ref().map(|v| &v.index));
                 }
             }
         }
@@ -277,7 +277,7 @@ impl ASTWriter {
             Definition::Enum(_) => todo!("implement Definition::Enum"),
             Definition::Function(_) => todo!("implement Definition::Function"),
             Definition::Component(def) => {
-                self.kv(indent).with_id(PREFIX_COMPONENT_ID,def.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_COMPONENT_ID,def.this.0.index)
                     .with_s_key("DefinitionComponent");
 
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
@@ -286,7 +286,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parameters");
                 for param_id in &def.parameters {
                     let param = &heap[*param_id];
-                    self.kv(indent3).with_id(PREFIX_PARAMETER_ID, param_id.0.0.index)
+                    self.kv(indent3).with_id(PREFIX_PARAMETER_ID, param_id.0.index)
                         .with_s_key("Parameter");
 
                     self.kv(indent4).with_s_key("Name").with_ascii_val(&param.identifier.value);
@@ -306,7 +306,7 @@ impl ASTWriter {
 
         match stmt {
             Statement::Block(stmt) => {
-                self.kv(indent).with_id(PREFIX_BLOCK_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_BLOCK_STMT_ID, stmt.this.0.index)
                     .with_s_key("Block");
 
                 for stmt_id in &stmt.statements {
@@ -316,7 +316,7 @@ impl ASTWriter {
             Statement::Local(stmt) => {
                 match stmt {
                     LocalStatement::Channel(stmt) => {
-                        self.kv(indent).with_id(PREFIX_CHANNEL_STMT_ID, stmt.this.0.0.0.index)
+                        self.kv(indent).with_id(PREFIX_CHANNEL_STMT_ID, stmt.this.0.0.index)
                             .with_s_key("LocalChannel");
 
                         self.kv(indent2).with_s_key("From");
@@ -324,10 +324,10 @@ impl ASTWriter {
                         self.kv(indent2).with_s_key("To");
                         self.write_local(heap, stmt.to, indent3);
                         self.kv(indent2).with_s_key("Next")
-                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
                     },
                     LocalStatement::Memory(stmt) => {
-                        self.kv(indent).with_id(PREFIX_MEM_STMT_ID, stmt.this.0.0.0.index)
+                        self.kv(indent).with_id(PREFIX_MEM_STMT_ID, stmt.this.0.0.index)
                             .with_s_key("LocalMemory");
 
                         self.kv(indent2).with_s_key("Variable");
@@ -335,18 +335,18 @@ impl ASTWriter {
                         self.kv(indent2).with_s_key("initial");
                         self.write_expr(heap, stmt.initial, indent3);
                         self.kv(indent2).with_s_key("Next")
-                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
                     }
                 }
             },
             Statement::Skip(stmt) => {
-                self.kv(indent).with_id(PREFIX_SKIP_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_SKIP_STMT_ID, stmt.this.0.index)
                     .with_s_key("Skip");
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Labeled(stmt) => {
-                self.kv(indent).with_id(PREFIX_LABELED_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_LABELED_STMT_ID, stmt.this.0.index)
                     .with_s_key("Labeled");
 
                 self.kv(indent2).with_s_key("Label").with_ascii_val(&stmt.label.value);
@@ -354,11 +354,11 @@ impl ASTWriter {
                 self.write_stmt(heap, stmt.body, indent3);
             },
             Statement::If(stmt) => {
-                self.kv(indent).with_id(PREFIX_IF_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_IF_STMT_ID, stmt.this.0.index)
                     .with_s_key("If");
 
                 self.kv(indent2).with_s_key("EndIf")
-                    .with_opt_disp_val(stmt.end_if.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.end_if.as_ref().map(|v| &v.0.index));
 
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, stmt.test, indent3);
@@ -370,108 +370,108 @@ impl ASTWriter {
                 self.write_stmt(heap, stmt.false_body, indent3);
             },
             Statement::EndIf(stmt) => {
-                self.kv(indent).with_id(PREFIX_ENDIF_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ENDIF_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndIf");
-                self.kv(indent2).with_s_key("StartIf").with_disp_val(&stmt.start_if.0.0.index);
+                self.kv(indent2).with_s_key("StartIf").with_disp_val(&stmt.start_if.0.index);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::While(stmt) => {
-                self.kv(indent).with_id(PREFIX_WHILE_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_WHILE_STMT_ID, stmt.this.0.index)
                     .with_s_key("While");
 
                 self.kv(indent2).with_s_key("EndWhile")
-                    .with_opt_disp_val(stmt.end_while.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.end_while.as_ref().map(|v| &v.0.index));
                 self.kv(indent2).with_s_key("InSync")
-                    .with_opt_disp_val(stmt.in_sync.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.in_sync.as_ref().map(|v| &v.0.index));
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, stmt.test, indent3);
                 self.kv(indent2).with_s_key("Body");
                 self.write_stmt(heap, stmt.body, indent3);
             },
             Statement::EndWhile(stmt) => {
-                self.kv(indent).with_id(PREFIX_ENDWHILE_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ENDWHILE_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndWhile");
-                self.kv(indent2).with_s_key("StartWhile").with_disp_val(&stmt.start_while.0.0.index);
+                self.kv(indent2).with_s_key("StartWhile").with_disp_val(&stmt.start_while.0.index);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Break(stmt) => {
-                self.kv(indent).with_id(PREFIX_BREAK_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_BREAK_STMT_ID, stmt.this.0.index)
                     .with_s_key("Break");
                 self.kv(indent2).with_s_key("Label")
                     .with_opt_ascii_val(stmt.label.as_ref().map(|v| v.value.as_slice()));
                 self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
             Statement::Continue(stmt) => {
-                self.kv(indent).with_id(PREFIX_CONTINUE_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_CONTINUE_STMT_ID, stmt.this.0.index)
                     .with_s_key("Continue");
                 self.kv(indent2).with_s_key("Label")
                     .with_opt_ascii_val(stmt.label.as_ref().map(|v| v.value.as_slice()));
                 self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
             Statement::Synchronous(stmt) => {
-                self.kv(indent).with_id(PREFIX_SYNC_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_SYNC_STMT_ID, stmt.this.0.index)
                     .with_s_key("Synchronous");
                 self.kv(indent2).with_s_key("EndSync")
-                    .with_opt_disp_val(stmt.end_sync.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.end_sync.as_ref().map(|v| &v.0.index));
                 self.kv(indent2).with_s_key("Body");
                 self.write_stmt(heap, stmt.body, indent3);
             },
             Statement::EndSynchronous(stmt) => {
-                self.kv(indent).with_id(PREFIX_ENDSYNC_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ENDSYNC_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndSynchronous");
-                self.kv(indent2).with_s_key("StartSync").with_disp_val(&stmt.start_sync.0.0.index);
+                self.kv(indent2).with_s_key("StartSync").with_disp_val(&stmt.start_sync.0.index);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Return(stmt) => {
-                self.kv(indent).with_id(PREFIX_RETURN_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_RETURN_STMT_ID, stmt.this.0.index)
                     .with_s_key("Return");
                 self.kv(indent2).with_s_key("Expression");
                 self.write_expr(heap, stmt.expression, indent3);
             },
             Statement::Assert(stmt) => {
-                self.kv(indent).with_id(PREFIX_ASSERT_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ASSERT_STMT_ID, stmt.this.0.index)
                     .with_s_key("Assert");
                 self.kv(indent2).with_s_key("Expression");
                 self.write_expr(heap, stmt.expression, indent3);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Goto(stmt) => {
-                self.kv(indent).with_id(PREFIX_GOTO_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_GOTO_STMT_ID, stmt.this.0.index)
                     .with_s_key("Goto");
                 self.kv(indent2).with_s_key("Label").with_ascii_val(&stmt.label.value);
                 self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.0.index));
+                    .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
             Statement::New(stmt) => {
-                self.kv(indent).with_id(PREFIX_NEW_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_NEW_STMT_ID, stmt.this.0.index)
                     .with_s_key("New");
                 self.kv(indent2).with_s_key("Expression");
                 self.write_expr(heap, stmt.expression.upcast(), indent3);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Put(stmt) => {
-                self.kv(indent).with_id(PREFIX_PUT_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_PUT_STMT_ID, stmt.this.0.index)
                     .with_s_key("Put");
                 self.kv(indent2).with_s_key("Port");
                 self.write_expr(heap, stmt.port, indent3);
                 self.kv(indent2).with_s_key("Message");
                 self.write_expr(heap, stmt.message, indent3);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
             Statement::Expression(stmt) => {
-                self.kv(indent).with_id(PREFIX_EXPR_STMT_ID, stmt.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_EXPR_STMT_ID, stmt.this.0.index)
                     .with_s_key("ExpressionStatement");
                 self.write_expr(heap, stmt.expression, indent2);
                 self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             }
         }
     }
@@ -483,7 +483,7 @@ impl ASTWriter {
 
         match expr {
             Expression::Assignment(expr) => {
-                self.kv(indent).with_id(PREFIX_ASSIGNMENT_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ASSIGNMENT_EXPR_ID, expr.this.0.index)
                     .with_s_key("AssignmentExpr");
                 self.kv(indent2).with_s_key("Operation").with_debug_val(&expr.operation);
                 self.kv(indent2).with_s_key("Left");
@@ -492,7 +492,7 @@ impl ASTWriter {
                 self.write_expr(heap, expr.right, indent3);
             },
             Expression::Conditional(expr) => {
-                self.kv(indent).with_id(PREFIX_CONDITIONAL_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_CONDITIONAL_EXPR_ID, expr.this.0.index)
                     .with_s_key("ConditionalExpr");
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, expr.test, indent3);
@@ -502,7 +502,7 @@ impl ASTWriter {
                 self.write_expr(heap, expr.false_expression, indent3);
             },
             Expression::Binary(expr) => {
-                self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
                     .with_s_key("BinaryExpr");
                 self.kv(indent2).with_s_key("Operation").with_debug_val(&expr.operation);
                 self.kv(indent2).with_s_key("Left");
@@ -511,14 +511,14 @@ impl ASTWriter {
                 self.write_expr(heap, expr.right, indent3);
             },
             Expression::Unary(expr) => {
-                self.kv(indent).with_id(PREFIX_UNARY_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_UNARY_EXPR_ID, expr.this.0.index)
                     .with_s_key("UnaryExpr");
                 self.kv(indent2).with_s_key("Operation").with_debug_val(&expr.operation);
                 self.kv(indent2).with_s_key("Argument");
                 self.write_expr(heap, expr.expression, indent3);
             },
             Expression::Indexing(expr) => {
-                self.kv(indent).with_id(PREFIX_INDEXING_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_INDEXING_EXPR_ID, expr.this.0.index)
                     .with_s_key("IndexingExpr");
                 self.kv(indent2).with_s_key("Subject");
                 self.write_expr(heap, expr.subject, indent3);
@@ -526,7 +526,7 @@ impl ASTWriter {
                 self.write_expr(heap, expr.index, indent3);
             },
             Expression::Slicing(expr) => {
-                self.kv(indent).with_id(PREFIX_SLICING_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_SLICING_EXPR_ID, expr.this.0.index)
                     .with_s_key("SlicingExpr");
                 self.kv(indent2).with_s_key("Subject");
                 self.write_expr(heap, expr.subject, indent3);
@@ -536,7 +536,7 @@ impl ASTWriter {
                 self.write_expr(heap, expr.to_index, indent3);
             },
             Expression::Select(expr) => {
-                self.kv(indent).with_id(PREFIX_SELECT_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_SELECT_EXPR_ID, expr.this.0.index)
                     .with_s_key("SelectExpr");
                 self.kv(indent2).with_s_key("Subject");
                 self.write_expr(heap, expr.subject, indent3);
@@ -551,7 +551,7 @@ impl ASTWriter {
                 }
             },
             Expression::Array(expr) => {
-                self.kv(indent).with_id(PREFIX_ARRAY_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_ARRAY_EXPR_ID, expr.this.0.index)
                     .with_s_key("ArrayExpr");
                 self.kv(indent2).with_s_key("Elements");
                 for expr_id in &expr.elements {
@@ -559,7 +559,7 @@ impl ASTWriter {
                 }
             },
             Expression::Constant(expr) => {
-                self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.index)
                     .with_s_key("ConstantExpr");
 
                 let val = self.kv(indent2).with_s_key("Value");
@@ -572,7 +572,7 @@ impl ASTWriter {
                 }
             },
             Expression::Call(expr) => {
-                self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
                     .with_s_key("CallExpr");
 
                 // Method
@@ -585,7 +585,7 @@ impl ASTWriter {
                         method.with_s_val("symbolic");
                         self.kv(indent3).with_s_key("Name").with_ascii_val(&symbolic.identifier.value);
                         self.kv(indent3).with_s_key("Definition")
-                            .with_opt_disp_val(symbolic.definition.as_ref().map(|v| &v.0.index));
+                            .with_opt_disp_val(symbolic.definition.as_ref().map(|v| &v.index));
                     }
                 }
 
@@ -596,11 +596,11 @@ impl ASTWriter {
                 }
             },
             Expression::Variable(expr) => {
-                self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.0.index)
+                self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.index)
                     .with_s_key("VariableExpr");
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&expr.identifier.value);
                 self.kv(indent2).with_s_key("Definition")
-                    .with_opt_disp_val(expr.declaration.as_ref().map(|v| &v.0.index));
+                    .with_opt_disp_val(expr.declaration.as_ref().map(|v| &v.index));
             }
         }
     }
@@ -609,7 +609,7 @@ impl ASTWriter {
         let local = &heap[local_id];
         let indent2 = indent + 1;
 
-        self.kv(indent).with_id(PREFIX_LOCAL_ID, local_id.0.0.index)
+        self.kv(indent).with_id(PREFIX_LOCAL_ID, local_id.0.index)
             .with_s_key("Local");
 
         self.kv(indent2).with_s_key("Name").with_ascii_val(&local.identifier.value);
@@ -651,7 +651,7 @@ fn write_type(target: &mut String, t: &TypeAnnotation) {
         PrimitiveType::Long => target.write_str("long"),
         PrimitiveType::Symbolic(symbolic) => {
             let mut temp = String::new();
-            write_option(&mut temp, symbolic.definition.map(|v| v.0.index));
+            write_option(&mut temp, symbolic.definition.map(|v| v.index));
             write!(target, "Symbolic(name: {}, target: {})", String::from_utf8_lossy(&symbolic.identifier.value), &temp)
         }
     };

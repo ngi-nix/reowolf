@@ -8,12 +8,16 @@ use super::arena::{Arena, Id};
 // TODO: @cleanup, transform wrapping types into type aliases where possible
 use crate::protocol::inputsource::*;
 
+/// Helper macro that defines a type alias for a AST element ID. In this case 
+/// only used to alias the `Id<T>` types.
 macro_rules! define_aliased_ast_id {
     ($name:ident, $parent:ty) => {
-        type $name = $parent;
+        pub type $name = $parent;
     }
 }
 
+/// Helper macro that defines a subtype for a particular variant of an AST 
+/// element ID.
 macro_rules! define_new_ast_id {
     ($name:ident, $parent:ty) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -77,7 +81,7 @@ define_new_ast_id!(ConstantExpressionId, ExpressionId);
 define_new_ast_id!(CallExpressionId, ExpressionId);
 define_new_ast_id!(VariableExpressionId, ExpressionId);
 
-define_new_ast_id!(DeclarationId, ExpressionId); // TODO: @cleanup
+define_aliased_ast_id!(DeclarationId, Id<Declaration>); // TODO: @cleanup
 define_new_ast_id!(DefinedDeclarationId, DeclarationId);
 define_new_ast_id!(ImportedDeclarationId, DeclarationId);
 
@@ -332,514 +336,512 @@ impl Heap {
         &mut self,
         f: impl FnOnce(SynchronousStatementId) -> SynchronousStatement,
     ) -> SynchronousStatementId {
-        SynchronousStatementId(StatementId(self.statements.alloc_with_id(|id| {
-            Statement::Synchronous(f(SynchronousStatementId(StatementId(id))))
-        })))
+        SynchronousStatementId(self.statements.alloc_with_id(|id| {
+            Statement::Synchronous(f(SynchronousStatementId(id)))
+        }))
     }
     pub fn alloc_end_synchronous_statement(
         &mut self,
         f: impl FnOnce(EndSynchronousStatementId) -> EndSynchronousStatement,
     ) -> EndSynchronousStatementId {
-        EndSynchronousStatementId(StatementId(self.statements.alloc_with_id(|id| {
-            Statement::EndSynchronous(f(EndSynchronousStatementId(StatementId(id))))
-        })))
+        EndSynchronousStatementId(self.statements.alloc_with_id(|id| {
+            Statement::EndSynchronous(f(EndSynchronousStatementId(id)))
+        }))
     }
     pub fn alloc_return_statement(
         &mut self,
         f: impl FnOnce(ReturnStatementId) -> ReturnStatement,
     ) -> ReturnStatementId {
-        ReturnStatementId(StatementId(
+        ReturnStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Return(f(ReturnStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Return(f(ReturnStatementId(id)))),
+        )
     }
     pub fn alloc_assert_statement(
         &mut self,
         f: impl FnOnce(AssertStatementId) -> AssertStatement,
     ) -> AssertStatementId {
-        AssertStatementId(StatementId(
+        AssertStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Assert(f(AssertStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Assert(f(AssertStatementId(id)))),
+        )
     }
     pub fn alloc_goto_statement(
         &mut self,
         f: impl FnOnce(GotoStatementId) -> GotoStatement,
     ) -> GotoStatementId {
-        GotoStatementId(StatementId(
+        GotoStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Goto(f(GotoStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Goto(f(GotoStatementId(id)))),
+        )
     }
     pub fn alloc_new_statement(
         &mut self,
         f: impl FnOnce(NewStatementId) -> NewStatement,
     ) -> NewStatementId {
-        NewStatementId(StatementId(
-            self.statements.alloc_with_id(|id| Statement::New(f(NewStatementId(StatementId(id))))),
-        ))
+        NewStatementId(
+            self.statements.alloc_with_id(|id| Statement::New(f(NewStatementId(id)))),
+        )
     }
     pub fn alloc_put_statement(
         &mut self,
         f: impl FnOnce(PutStatementId) -> PutStatement,
     ) -> PutStatementId {
-        PutStatementId(StatementId(
-            self.statements.alloc_with_id(|id| Statement::Put(f(PutStatementId(StatementId(id))))),
-        ))
+        PutStatementId(
+            self.statements.alloc_with_id(|id| Statement::Put(f(PutStatementId(id)))),
+        )
     }
     pub fn alloc_labeled_statement(
         &mut self,
         f: impl FnOnce(LabeledStatementId) -> LabeledStatement,
     ) -> LabeledStatementId {
-        LabeledStatementId(StatementId(
+        LabeledStatementId(
             self.statements
-                .alloc_with_id(|id| Statement::Labeled(f(LabeledStatementId(StatementId(id))))),
-        ))
+                .alloc_with_id(|id| Statement::Labeled(f(LabeledStatementId(id)))),
+        )
     }
     pub fn alloc_expression_statement(
         &mut self,
         f: impl FnOnce(ExpressionStatementId) -> ExpressionStatement,
     ) -> ExpressionStatementId {
-        ExpressionStatementId(StatementId(
+        ExpressionStatementId(
             self.statements.alloc_with_id(|id| {
-                Statement::Expression(f(ExpressionStatementId(StatementId(id))))
+                Statement::Expression(f(ExpressionStatementId(id)))
             }),
-        ))
+        )
     }
     pub fn alloc_struct_definition(&mut self, f: impl FnOnce(StructId) -> StructDefinition) -> StructId {
-        StructId(DefinitionId(self.definitions.alloc_with_id(|id| {
-            Definition::Struct(f(StructId(DefinitionId(id))))
-        })))
+        StructId(self.definitions.alloc_with_id(|id| {
+            Definition::Struct(f(StructId(id)))
+        }))
     }
     pub fn alloc_enum_definition(&mut self, f: impl FnOnce(EnumId) -> EnumDefinition) -> EnumId {
-        EnumId(DefinitionId(self.definitions.alloc_with_id(|id| {
-            Definition::Enum(f(EnumId(DefinitionId(id))))
-        })))
+        EnumId(self.definitions.alloc_with_id(|id| {
+            Definition::Enum(f(EnumId(id)))
+        }))
     }
     pub fn alloc_component(&mut self, f: impl FnOnce(ComponentId) -> Component) -> ComponentId {
-        ComponentId(DefinitionId(self.definitions.alloc_with_id(|id| {
-            Definition::Component(f(ComponentId(
-                DefinitionId(id),
-            )))
-        })))
+        ComponentId(self.definitions.alloc_with_id(|id| {
+            Definition::Component(f(ComponentId(id)))
+        }))
     }
     pub fn alloc_function(&mut self, f: impl FnOnce(FunctionId) -> Function) -> FunctionId {
-        FunctionId(DefinitionId(
+        FunctionId(
             self.definitions
-                .alloc_with_id(|id| Definition::Function(f(FunctionId(DefinitionId(id))))),
-        ))
+                .alloc_with_id(|id| Definition::Function(f(FunctionId(id)))),
+        )
     }
     pub fn alloc_pragma(&mut self, f: impl FnOnce(PragmaId) -> Pragma) -> PragmaId {
-        PragmaId(self.pragmas.alloc_with_id(|id| f(PragmaId(id))))
+        self.pragmas.alloc_with_id(|id| f(id))
     }
     pub fn alloc_import(&mut self, f: impl FnOnce(ImportId) -> Import) -> ImportId {
-        ImportId(self.imports.alloc_with_id(|id| f(ImportId(id))))
+        self.imports.alloc_with_id(|id| f(id))
     }
     pub fn alloc_protocol_description(&mut self, f: impl FnOnce(RootId) -> Root) -> RootId {
-        RootId(self.protocol_descriptions.alloc_with_id(|id| f(RootId(id))))
+        self.protocol_descriptions.alloc_with_id(|id| f(id))
     }
     pub fn alloc_imported_declaration(
         &mut self,
         f: impl FnOnce(ImportedDeclarationId) -> ImportedDeclaration,
     ) -> ImportedDeclarationId {
-        ImportedDeclarationId(DeclarationId(self.declarations.alloc_with_id(|id| {
-            Declaration::Imported(f(ImportedDeclarationId(DeclarationId(id))))
-        })))
+        ImportedDeclarationId(self.declarations.alloc_with_id(|id| {
+            Declaration::Imported(f(ImportedDeclarationId(id)))
+        }))
     }
     pub fn alloc_defined_declaration(
         &mut self,
         f: impl FnOnce(DefinedDeclarationId) -> DefinedDeclaration,
     ) -> DefinedDeclarationId {
-        DefinedDeclarationId(DeclarationId(
+        DefinedDeclarationId(
             self.declarations.alloc_with_id(|id| {
-                Declaration::Defined(f(DefinedDeclarationId(DeclarationId(id))))
+                Declaration::Defined(f(DefinedDeclarationId(id)))
             }),
-        ))
+        )
     }
 }
 
 impl Index<RootId> for Heap {
     type Output = Root;
     fn index(&self, index: RootId) -> &Self::Output {
-        &self.protocol_descriptions[index.0]
+        &self.protocol_descriptions[index]
     }
 }
 
 impl IndexMut<RootId> for Heap {
     fn index_mut(&mut self, index: RootId) -> &mut Self::Output {
-        &mut self.protocol_descriptions[index.0]
+        &mut self.protocol_descriptions[index]
     }
 }
 
 impl Index<PragmaId> for Heap {
     type Output = Pragma;
     fn index(&self, index: PragmaId) -> &Self::Output {
-        &self.pragmas[index.0]
+        &self.pragmas[index]
     }
 }
 
 impl Index<ImportId> for Heap {
     type Output = Import;
     fn index(&self, index: ImportId) -> &Self::Output {
-        &self.imports[index.0]
+        &self.imports[index]
     }
 }
 
 impl IndexMut<ImportId> for Heap {
     fn index_mut(&mut self, index: ImportId) -> &mut Self::Output {
-        &mut self.imports[index.0]
+        &mut self.imports[index]
     }
 }
 
 impl Index<TypeAnnotationId> for Heap {
     type Output = TypeAnnotation;
     fn index(&self, index: TypeAnnotationId) -> &Self::Output {
-        &self.type_annotations[index.0]
+        &self.type_annotations[index]
     }
 }
 
 impl Index<VariableId> for Heap {
     type Output = Variable;
     fn index(&self, index: VariableId) -> &Self::Output {
-        &self.variables[index.0]
+        &self.variables[index]
     }
 }
 
 impl Index<ParameterId> for Heap {
     type Output = Parameter;
     fn index(&self, index: ParameterId) -> &Self::Output {
-        &self.variables[(index.0).0].as_parameter()
+        &self.variables[index.0].as_parameter()
     }
 }
 
 impl Index<LocalId> for Heap {
     type Output = Local;
     fn index(&self, index: LocalId) -> &Self::Output {
-        &self.variables[(index.0).0].as_local()
+        &self.variables[index.0].as_local()
     }
 }
 
 impl IndexMut<LocalId> for Heap {
     fn index_mut(&mut self, index: LocalId) -> &mut Self::Output {
-        self.variables[index.0.0].as_local_mut()
+        self.variables[index.0].as_local_mut()
     }
 }
 
 impl Index<DefinitionId> for Heap {
     type Output = Definition;
     fn index(&self, index: DefinitionId) -> &Self::Output {
-        &self.definitions[index.0]
+        &self.definitions[index]
     }
 }
 
 impl Index<ComponentId> for Heap {
     type Output = Component;
     fn index(&self, index: ComponentId) -> &Self::Output {
-        &self.definitions[(index.0).0].as_component()
+        &self.definitions[index.0].as_component()
     }
 }
 
 impl Index<FunctionId> for Heap {
     type Output = Function;
     fn index(&self, index: FunctionId) -> &Self::Output {
-        &self.definitions[(index.0).0].as_function()
+        &self.definitions[index.0].as_function()
     }
 }
 
 impl Index<StatementId> for Heap {
     type Output = Statement;
     fn index(&self, index: StatementId) -> &Self::Output {
-        &self.statements[index.0]
+        &self.statements[index]
     }
 }
 
 impl IndexMut<StatementId> for Heap {
     fn index_mut(&mut self, index: StatementId) -> &mut Self::Output {
-        &mut self.statements[index.0]
+        &mut self.statements[index]
     }
 }
 
 impl Index<BlockStatementId> for Heap {
     type Output = BlockStatement;
     fn index(&self, index: BlockStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_block()
+        &self.statements[index.0].as_block()
     }
 }
 
 impl IndexMut<BlockStatementId> for Heap {
     fn index_mut(&mut self, index: BlockStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_block_mut()
+        (&mut self.statements[index.0]).as_block_mut()
     }
 }
 
 impl Index<LocalStatementId> for Heap {
     type Output = LocalStatement;
     fn index(&self, index: LocalStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_local()
+        &self.statements[index.0].as_local()
     }
 }
 
 impl Index<MemoryStatementId> for Heap {
     type Output = MemoryStatement;
     fn index(&self, index: MemoryStatementId) -> &Self::Output {
-        &self.statements[((index.0).0).0].as_memory()
+        &self.statements[index.0.0].as_memory()
     }
 }
 
 impl Index<ChannelStatementId> for Heap {
     type Output = ChannelStatement;
     fn index(&self, index: ChannelStatementId) -> &Self::Output {
-        &self.statements[((index.0).0).0].as_channel()
+        &self.statements[index.0.0].as_channel()
     }
 }
 
 impl Index<SkipStatementId> for Heap {
     type Output = SkipStatement;
     fn index(&self, index: SkipStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_skip()
+        &self.statements[index.0].as_skip()
     }
 }
 
 impl Index<LabeledStatementId> for Heap {
     type Output = LabeledStatement;
     fn index(&self, index: LabeledStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_labeled()
+        &self.statements[index.0].as_labeled()
     }
 }
 
 impl IndexMut<LabeledStatementId> for Heap {
     fn index_mut(&mut self, index: LabeledStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_labeled_mut()
+        (&mut self.statements[index.0]).as_labeled_mut()
     }
 }
 
 impl Index<IfStatementId> for Heap {
     type Output = IfStatement;
     fn index(&self, index: IfStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_if()
+        &self.statements[index.0].as_if()
     }
 }
 
 impl IndexMut<IfStatementId> for Heap {
     fn index_mut(&mut self, index: IfStatementId) -> &mut Self::Output {
-        self.statements[(index.0).0].as_if_mut()
+        self.statements[index.0].as_if_mut()
     }
 }
 
 impl Index<EndIfStatementId> for Heap {
     type Output = EndIfStatement;
     fn index(&self, index: EndIfStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_end_if()
+        &self.statements[index.0].as_end_if()
     }
 }
 
 impl Index<WhileStatementId> for Heap {
     type Output = WhileStatement;
     fn index(&self, index: WhileStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_while()
+        &self.statements[index.0].as_while()
     }
 }
 
 impl IndexMut<WhileStatementId> for Heap {
     fn index_mut(&mut self, index: WhileStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_while_mut()
+        (&mut self.statements[index.0]).as_while_mut()
     }
 }
 
 impl Index<BreakStatementId> for Heap {
     type Output = BreakStatement;
     fn index(&self, index: BreakStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_break()
+        &self.statements[index.0].as_break()
     }
 }
 
 impl IndexMut<BreakStatementId> for Heap {
     fn index_mut(&mut self, index: BreakStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_break_mut()
+        (&mut self.statements[index.0]).as_break_mut()
     }
 }
 
 impl Index<ContinueStatementId> for Heap {
     type Output = ContinueStatement;
     fn index(&self, index: ContinueStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_continue()
+        &self.statements[index.0].as_continue()
     }
 }
 
 impl IndexMut<ContinueStatementId> for Heap {
     fn index_mut(&mut self, index: ContinueStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_continue_mut()
+        (&mut self.statements[index.0]).as_continue_mut()
     }
 }
 
 impl Index<SynchronousStatementId> for Heap {
     type Output = SynchronousStatement;
     fn index(&self, index: SynchronousStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_synchronous()
+        &self.statements[index.0].as_synchronous()
     }
 }
 
 impl IndexMut<SynchronousStatementId> for Heap {
     fn index_mut(&mut self, index: SynchronousStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_synchronous_mut()
+        (&mut self.statements[index.0]).as_synchronous_mut()
     }
 }
 
 impl Index<EndSynchronousStatementId> for Heap {
     type Output = EndSynchronousStatement;
     fn index(&self, index: EndSynchronousStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_end_synchronous()
+        &self.statements[index.0].as_end_synchronous()
     }
 }
 
 impl Index<ReturnStatementId> for Heap {
     type Output = ReturnStatement;
     fn index(&self, index: ReturnStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_return()
+        &self.statements[index.0].as_return()
     }
 }
 
 impl Index<AssertStatementId> for Heap {
     type Output = AssertStatement;
     fn index(&self, index: AssertStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_assert()
+        &self.statements[index.0].as_assert()
     }
 }
 
 impl Index<GotoStatementId> for Heap {
     type Output = GotoStatement;
     fn index(&self, index: GotoStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_goto()
+        &self.statements[index.0].as_goto()
     }
 }
 
 impl IndexMut<GotoStatementId> for Heap {
     fn index_mut(&mut self, index: GotoStatementId) -> &mut Self::Output {
-        (&mut self.statements[(index.0).0]).as_goto_mut()
+        (&mut self.statements[index.0]).as_goto_mut()
     }
 }
 
 impl Index<NewStatementId> for Heap {
     type Output = NewStatement;
     fn index(&self, index: NewStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_new()
+        &self.statements[index.0].as_new()
     }
 }
 
 impl Index<PutStatementId> for Heap {
     type Output = PutStatement;
     fn index(&self, index: PutStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_put()
+        &self.statements[index.0].as_put()
     }
 }
 
 impl Index<ExpressionStatementId> for Heap {
     type Output = ExpressionStatement;
     fn index(&self, index: ExpressionStatementId) -> &Self::Output {
-        &self.statements[(index.0).0].as_expression()
+        &self.statements[index.0].as_expression()
     }
 }
 
 impl Index<ExpressionId> for Heap {
     type Output = Expression;
     fn index(&self, index: ExpressionId) -> &Self::Output {
-        &self.expressions[index.0]
+        &self.expressions[index]
     }
 }
 
 impl Index<AssignmentExpressionId> for Heap {
     type Output = AssignmentExpression;
     fn index(&self, index: AssignmentExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_assignment()
+        &self.expressions[index.0].as_assignment()
     }
 }
 
 impl Index<ConditionalExpressionId> for Heap {
     type Output = ConditionalExpression;
     fn index(&self, index: ConditionalExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_conditional()
+        &self.expressions[index.0].as_conditional()
     }
 }
 
 impl Index<BinaryExpressionId> for Heap {
     type Output = BinaryExpression;
     fn index(&self, index: BinaryExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_binary()
+        &self.expressions[index.0].as_binary()
     }
 }
 
 impl Index<UnaryExpressionId> for Heap {
     type Output = UnaryExpression;
     fn index(&self, index: UnaryExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_unary()
+        &self.expressions[index.0].as_unary()
     }
 }
 
 impl Index<IndexingExpressionId> for Heap {
     type Output = IndexingExpression;
     fn index(&self, index: IndexingExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_indexing()
+        &self.expressions[index.0].as_indexing()
     }
 }
 
 impl Index<SlicingExpressionId> for Heap {
     type Output = SlicingExpression;
     fn index(&self, index: SlicingExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_slicing()
+        &self.expressions[index.0].as_slicing()
     }
 }
 
 impl Index<SelectExpressionId> for Heap {
     type Output = SelectExpression;
     fn index(&self, index: SelectExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_select()
+        &self.expressions[index.0].as_select()
     }
 }
 
 impl Index<ArrayExpressionId> for Heap {
     type Output = ArrayExpression;
     fn index(&self, index: ArrayExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_array()
+        &self.expressions[index.0].as_array()
     }
 }
 
 impl Index<ConstantExpressionId> for Heap {
     type Output = ConstantExpression;
     fn index(&self, index: ConstantExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_constant()
+        &self.expressions[index.0].as_constant()
     }
 }
 
 impl Index<CallExpressionId> for Heap {
     type Output = CallExpression;
     fn index(&self, index: CallExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_call()
+        &self.expressions[index.0].as_call()
     }
 }
 
 impl IndexMut<CallExpressionId> for Heap {
     fn index_mut(&mut self, index: CallExpressionId) -> &mut Self::Output {
-        (&mut self.expressions[(index.0).0]).as_call_mut()
+        (&mut self.expressions[index.0]).as_call_mut()
     }
 }
 
 impl Index<VariableExpressionId> for Heap {
     type Output = VariableExpression;
     fn index(&self, index: VariableExpressionId) -> &Self::Output {
-        &self.expressions[(index.0).0].as_variable()
+        &self.expressions[index.0].as_variable()
     }
 }
 
 impl IndexMut<VariableExpressionId> for Heap {
     fn index_mut(&mut self, index: VariableExpressionId) -> &mut Self::Output {
-        (&mut self.expressions[(index.0).0]).as_variable_mut()
+        (&mut self.expressions[index.0]).as_variable_mut()
     }
 }
 
 impl Index<DeclarationId> for Heap {
     type Output = Declaration;
     fn index(&self, index: DeclarationId) -> &Self::Output {
-        &self.declarations[index.0]
+        &self.declarations[index]
     }
 }
 
@@ -1167,7 +1169,7 @@ impl Display for Type {
                     write!(
                         f, "Symbolic({}, id: {})", 
                         String::from_utf8_lossy(&data.identifier.value),
-                        id.0.index
+                        id.index
                     )?;
                 } else {
                     write!(

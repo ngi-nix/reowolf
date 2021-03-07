@@ -131,7 +131,7 @@ impl TypeTable {
     ) -> Result<TypeTable, ParseError2> {
         if cfg!(debug_assertions) {
             for (index, module) in modules.iter().enumerate() {
-                debug_assert_eq!(index, module.root_id.0.index as usize)
+                debug_assert_eq!(index, module.root_id.index as usize)
             }
         }
 
@@ -188,7 +188,7 @@ impl TypeTable {
 
                     if is_cyclic {
                         let mut error = ParseError2::new_error(
-                            &all_modules[new_root_id.0.index as usize].source,
+                            &all_modules[new_root_id.index as usize].source,
                             heap[new_definition_id].position(),
                             "Evaluating this definition results in a a cyclic dependency"
                         );
@@ -205,7 +205,7 @@ impl TypeTable {
                                 Breadcrumb::Jumping((root_id, definition_id)) => {
                                     debug_assert!(index > 0);
                                     error = error.with_postfixed_info(
-                                        &all_modules[root_id.0.index as usize].source,
+                                        &all_modules[root_id.index as usize].source,
                                         heap[*definition_id].position(),
                                         "Which depends on this definition"
                                     )
@@ -251,7 +251,7 @@ impl TypeTable {
                         (module, definition_id)
                     },
                     Breadcrumb::Jumping((root_id, definition_id)) => {
-                        let module = &modules[root_id.0.index as usize];
+                        let module = &modules[root_id.index as usize];
                         debug_assert_eq!(module.root_id, *root_id);
                         (module, *definition_id)
                     }

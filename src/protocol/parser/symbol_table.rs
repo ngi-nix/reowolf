@@ -77,7 +77,7 @@ impl SymbolTable {
         if cfg!(debug_assertions) {
             for (index, module) in modules.iter().enumerate() {
                 debug_assert_eq!(
-                    index, module.root_id.0.index as usize,
+                    index, module.root_id.index as usize,
                     "module RootId does not correspond to LexedModule index"
                 )
             }
@@ -205,7 +205,7 @@ impl SymbolTable {
                                             &format!("Imported symbol '{}' is already defined", String::from_utf8_lossy(&identifier.value))
                                         )
                                         .with_postfixed_info(
-                                            &modules[target_root_id.0.index as usize].source,
+                                            &modules[target_root_id.index as usize].source,
                                             definition.position(),
                                             "The imported symbol is defined here"
                                         )
