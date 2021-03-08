@@ -2,7 +2,6 @@ use std::fmt::{Debug, Display, Write};
 use std::io::Write as IOWrite;
 
 use super::ast::*;
-use std::borrow::Borrow;
 
 const INDENT: usize = 2;
 

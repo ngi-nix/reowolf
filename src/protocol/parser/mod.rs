@@ -16,7 +16,6 @@ use crate::protocol::inputsource::*;
 use crate::protocol::lexer::*;
 
 use std::collections::HashMap;
-use crate::protocol::parser::visitor::Ctx;
 use crate::protocol::ast_printer::ASTWriter;
 
 // TODO: @fixme, pub qualifier

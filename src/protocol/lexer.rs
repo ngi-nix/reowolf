@@ -2050,7 +2050,6 @@ impl Lexer<'_> {
             pragmas,
             imports,
             definitions,
-            declarations: Vec::new(),
         }))
     }
 }
@@ -2058,7 +2057,7 @@ impl Lexer<'_> {
 #[cfg(test)]
 mod tests {
     use crate::protocol::ast::*;
-    use crate::protocol::{ast, lexer::*};
+    use crate::protocol::lexer::*;
     use crate::protocol::inputsource::*;
 
     #[test]

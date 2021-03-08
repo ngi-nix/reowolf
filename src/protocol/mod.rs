@@ -3,7 +3,6 @@ mod arena;
 mod eval;
 pub(crate) mod inputsource;
 // mod lexer;
-mod library;
 mod parser;
 
 // TODO: Remove when not benchmarking

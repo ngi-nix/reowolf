@@ -81,10 +81,6 @@ define_new_ast_id!(ConstantExpressionId, ExpressionId);
 define_new_ast_id!(CallExpressionId, ExpressionId);
 define_new_ast_id!(VariableExpressionId, ExpressionId);
 
-define_aliased_ast_id!(DeclarationId, Id<Declaration>); // TODO: @cleanup
-define_new_ast_id!(DefinedDeclarationId, DeclarationId);
-define_new_ast_id!(ImportedDeclarationId, DeclarationId);
-
 // TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
@@ -102,7 +98,6 @@ pub struct Heap {
     pub(crate) definitions: Arena<Definition>,
     pub(crate) statements: Arena<Statement>,
     pub(crate) expressions: Arena<Expression>,
-    declarations: Arena<Declaration>,
 }
 
 impl Heap {
@@ -118,7 +113,6 @@ impl Heap {
             definitions: Arena::new(),
             statements: Arena::new(),
             expressions: Arena::new(),
-            declarations: Arena::new(),
         }
     }
     pub fn alloc_type_annotation(
@@ -439,24 +433,6 @@ impl Heap {
     }
     pub fn alloc_protocol_description(&mut self, f: impl FnOnce(RootId) -> Root) -> RootId {
         self.protocol_descriptions.alloc_with_id(|id| f(id))
-    }
-    pub fn alloc_imported_declaration(
-        &mut self,
-        f: impl FnOnce(ImportedDeclarationId) -> ImportedDeclaration,
-    ) -> ImportedDeclarationId {
-        ImportedDeclarationId(self.declarations.alloc_with_id(|id| {
-            Declaration::Imported(f(ImportedDeclarationId(id)))
-        }))
-    }
-    pub fn alloc_defined_declaration(
-        &mut self,
-        f: impl FnOnce(DefinedDeclarationId) -> DefinedDeclaration,
-    ) -> DefinedDeclarationId {
-        DefinedDeclarationId(
-            self.declarations.alloc_with_id(|id| {
-                Declaration::Defined(f(DefinedDeclarationId(id)))
-            }),
-        )
     }
 }
 
@@ -838,13 +814,6 @@ impl IndexMut<VariableExpressionId> for Heap {
     }
 }
 
-impl Index<DeclarationId> for Heap {
-    type Output = Declaration;
-    fn index(&self, index: DeclarationId) -> &Self::Output {
-        &self.declarations[index]
-    }
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Root {
     pub this: RootId,
@@ -853,8 +822,6 @@ pub struct Root {
     pub pragmas: Vec<PragmaId>,
     pub imports: Vec<ImportId>,
     pub definitions: Vec<DefinitionId>,
-    // Pase 2: linker
-    pub declarations: Vec<DeclarationId>,
 }
 
 impl Root {
@@ -862,25 +829,6 @@ impl Root {
         for &def in self.definitions.iter() {
             if h[def].identifier().value == id {
                 return Some(def);
-            }
-        }
-        None
-    }
-    pub fn get_declaration(&self, h: &Heap, id: &Identifier) -> Option<DeclarationId> {
-        for declaration_id in self.declarations.iter() {
-            let declaration = &h[*declaration_id];
-            if declaration.identifier().value == id.value {
-                return Some(*declaration_id);
-            }
-        }
-        None
-    }
-    pub fn get_declaration_namespaced(&self, h: &Heap, id: &NamespacedIdentifier) -> Option<DeclarationId> {
-        for declaration_id in self.declarations.iter() {
-            let declaration = &h[*declaration_id];
-            // TODO: @fixme
-            if declaration.identifier().value == id.value {
-                return Some(*declaration_id);
             }
         }
         None
@@ -1553,52 +1501,6 @@ impl SyntaxElement for Function {
     fn position(&self) -> InputPosition {
         self.position
     }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Declaration {
-    Defined(DefinedDeclaration),
-    Imported(ImportedDeclaration),
-}
-
-impl Declaration {
-    pub fn signature(&self) -> &Signature {
-        match self {
-            Declaration::Defined(decl) => &decl.signature,
-            Declaration::Imported(decl) => &decl.signature,
-        }
-    }
-    pub fn identifier(&self) -> &Identifier {
-        self.signature().identifier()
-    }
-    pub fn is_component(&self) -> bool {
-        self.signature().is_component()
-    }
-    pub fn is_function(&self) -> bool {
-        self.signature().is_function()
-    }
-    pub fn as_defined(&self) -> &DefinedDeclaration {
-        match self {
-            Declaration::Defined(result) => result,
-            _ => panic!("Unable to cast `Declaration` to `DefinedDeclaration`"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DefinedDeclaration {
-    pub this: DefinedDeclarationId,
-    // Phase 2: linker
-    pub definition: DefinitionId,
-    pub signature: Signature,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ImportedDeclaration {
-    pub this: ImportedDeclarationId,
-    // Phase 2: linker
-    pub import: ImportId,
-    pub signature: Signature,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
