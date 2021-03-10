@@ -34,7 +34,7 @@ macro_rules! define_new_ast_id {
 define_aliased_ast_id!(RootId, Id<Root>);
 define_aliased_ast_id!(PragmaId, Id<Pragma>);
 define_aliased_ast_id!(ImportId, Id<Import>);
-define_aliased_ast_id!(TypeAnnotationId, Id<TypeAnnotation>);
+define_aliased_ast_id!(ParserTypeId, Id<ParserType>);
 
 define_aliased_ast_id!(VariableId, Id<Variable>);
 define_new_ast_id!(ParameterId, VariableId);
@@ -84,8 +84,6 @@ define_new_ast_id!(VariableExpressionId, ExpressionId);
 // TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Heap {
-    // Allocators
-    // #[serde(skip)] string_alloc: StringAllocator,
     // Root arena, contains the entry point for different modules. Each root
     // contains lists of IDs that correspond to the other arenas.
     pub(crate) protocol_descriptions: Arena<Root>,
@@ -93,7 +91,7 @@ pub struct Heap {
     pragmas: Arena<Pragma>,
     pub(crate) imports: Arena<Import>,
     identifiers: Arena<Identifier>,
-    pub(crate) type_annotations: Arena<TypeAnnotation>,
+    pub(crate) parser_types: Arena<ParserType>,
     pub(crate) variables: Arena<Variable>,
     pub(crate) definitions: Arena<Definition>,
     pub(crate) statements: Arena<Statement>,
@@ -108,19 +106,20 @@ impl Heap {
             pragmas: Arena::new(),
             imports: Arena::new(),
             identifiers: Arena::new(),
-            type_annotations: Arena::new(),
+            parser_types: Arena::new(),
             variables: Arena::new(),
             definitions: Arena::new(),
             statements: Arena::new(),
             expressions: Arena::new(),
         }
     }
-    pub fn alloc_type_annotation(
+    pub fn alloc_parser_type(
         &mut self,
-        f: impl FnOnce(TypeAnnotationId) -> TypeAnnotation,
-    ) -> TypeAnnotationId {
-        self.type_annotations.alloc_with_id(|id| f(id))
+        f: impl FnOnce(ParserTypeId) -> ParserType,
+    ) -> ParserTypeId {
+        self.parser_types.alloc_with_id(|id| f(id))
     }
+
     pub fn alloc_parameter(&mut self, f: impl FnOnce(ParameterId) -> Parameter) -> ParameterId {
         ParameterId(
             self.variables.alloc_with_id(|id| Variable::Parameter(f(ParameterId(id)))),
@@ -466,6 +465,13 @@ impl Index<ImportId> for Heap {
 impl IndexMut<ImportId> for Heap {
     fn index_mut(&mut self, index: ImportId) -> &mut Self::Output {
         &mut self.imports[index]
+    }
+}
+
+impl Index<ParserTypeId> for Heap {
+    type Output = ParserType;
+    fn index(&self, index: ParserTypeId) -> &Self::Output {
+        &self.parser_types[index.index]
     }
 }
 
@@ -1028,6 +1034,76 @@ impl Display for Identifier {
     }
 }
 
+/// TODO: @cleanup Maybe handle this differently, preallocate in heap? The
+///     reason I'm handling it like this now is so we don't allocate types in
+///     the `Arena` structure if they're the common types defined here.
+pub enum ParserTypeVariant {
+    // Basic builtin
+    Message,
+    Bool,
+    Byte,
+    Short,
+    Int,
+    Long,
+    String,
+    // Literals (need to get concrete builtin type during typechecking)
+    IntegerLiteral,
+    Inferred,
+    // Complex builtins
+    Array(ParserTypeId), // array of a type
+    Input(ParserTypeId), // typed input endpoint of a channel
+    Output(ParserTypeId), // typed output endpoint of a channel
+    Symbolic(SymbolicParserType), // symbolic type (definition or polyarg)
+}
+
+impl ParserTypeVariant {
+    pub(crate) fn supports_polymorphic_args(&self) -> bool {
+        use ParserTypeVariant::*;
+        match ParserTypeVariant {
+            Message | Bool | Byte | Short | Int | Long | String | IntegerLiteral | Inferred => false,
+            _ => true
+        }
+    }
+}
+
+/// ParserType is a specification of a type during the parsing phase and initial
+/// linker/validator phase of the compilation process. These types may be
+/// (partially) inferred or represent literals (e.g. a integer whose bytesize is
+/// not yet determined).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ParserType {
+    pub this: ParserTypeId,
+    pub pos: InputPosition,
+    pub variant: ParserTypeVariant,
+}
+
+/// SymbolicParserType is the specification of a symbolic type. During the
+/// parsing phase we will only store the identifier of the type. During the
+/// validation phase we will determine whether it refers to a user-defined type,
+/// or a polymorphic argument. After the validation phase it may still be the
+/// case that the resulting `variant` will not pass the typechecker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SymbolicParserType {
+    // Phase 1: parser
+    pub identifier: NamespacedIdentifier,
+    /// The user-specified polymorphic arguments. Zero-length implies that the
+    /// user did not specify any of them, and they're either not needed or all
+    /// need to be inferred. Otherwise the number of polymorphic arguments must
+    /// match those of the corresponding definition
+    pub poly_args: Vec<ParserTypeId>,
+    // Phase 2: validation/linking
+    pub variant: Option<SymbolicParserTypeVariant>
+}
+
+/// Specifies whether the symbolic type points to an actual user-defined type,
+/// or whether it points to a polymorphic argument within the definition (e.g.
+/// a defined variable `T var` within a function `int func<T>()`
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum SymbolicParserTypeVariant {
+    Definition(DefinitionId),
+    PolyArg((DefinitionId, u32)), // index of polyarg in the definition
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveType {
     Input,
@@ -1294,7 +1370,7 @@ pub struct Parameter {
     pub this: ParameterId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub type_annotation: TypeAnnotationId,
+    pub parser_type: ParserTypeId,
     pub identifier: Identifier,
 }
 
@@ -1309,7 +1385,7 @@ pub struct Local {
     pub this: LocalId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub type_annotation: TypeAnnotationId,
+    pub parser_type: ParserTypeId,
     pub identifier: Identifier,
     // Phase 2: linker
     pub relative_pos_in_block: u32,
@@ -1428,7 +1504,7 @@ impl VariableScope for Definition {
 pub struct StructFieldDefinition {
     pub position: InputPosition,
     pub field: Identifier,
-    pub the_type: TypeAnnotationId,
+    pub parser_type: ParserTypeId,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1437,6 +1513,7 @@ pub struct StructDefinition {
     // Phase 1: parser
     pub position: InputPosition,
     pub identifier: Identifier,
+    pub poly_vars: Vec<Identifier>,
     pub fields: Vec<StructFieldDefinition>
 }
 
@@ -1444,7 +1521,7 @@ pub struct StructDefinition {
 pub enum EnumVariantValue {
     None,
     Integer(i64),
-    Type(TypeAnnotationId),
+    Type(ParserTypeId),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1460,6 +1537,7 @@ pub struct EnumDefinition {
     // Phase 1: parser
     pub position: InputPosition,
     pub identifier: Identifier,
+    pub poly_vars: Vec<Identifier>,
     pub variants: Vec<EnumVariantDefinition>,
 }
 
@@ -1476,6 +1554,7 @@ pub struct Component {
     pub position: InputPosition,
     pub variant: ComponentVariant,
     pub identifier: Identifier,
+    pub poly_vars: Vec<Identifier>,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
@@ -1491,8 +1570,9 @@ pub struct Function {
     pub this: FunctionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub return_type: TypeAnnotationId,
+    pub return_type: ParserTypeId,
     pub identifier: Identifier,
+    pub poly_vars: Vec<Identifier>,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
@@ -1930,6 +2010,11 @@ impl SyntaxElement for MemoryStatement {
     }
 }
 
+/// ChannelStatement is the declaration of an input and output port associated
+/// with the same channel. Note that the polarity of the ports are from the
+/// point of view of the component. So an output port is something that a
+/// component uses to send data over (i.e. it is the "input end" of the
+/// channel), and vice versa.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatement {
     pub this: ChannelStatementId,

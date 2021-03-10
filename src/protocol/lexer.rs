@@ -284,6 +284,7 @@ impl Lexer<'_> {
             || self.has_keyword(b"short")
             || self.has_keyword(b"int")
             || self.has_keyword(b"long")
+            || self.has_keyword(b"auto")
     }
     fn has_builtin_keyword(&self) -> bool {
         self.has_keyword(b"get")
@@ -356,6 +357,231 @@ impl Lexer<'_> {
     }
 
     // Types and type annotations
+
+    /// Consumes a type definition. When called the input position should be at
+    /// the type specification. When done the input position will be at the end
+    /// of the type specifications (hence may be at whitespace).
+    fn consume_type2(&mut self, h: &mut Heap, allow_inference: bool) -> Result<ParserTypeId, ParseError2> {
+        // Small helper function to convert in/out polymorphic arguments
+        let reduce_port_poly_args = |
+            heap: &mut Heap,
+            port_pos: &InputPosition,
+            args: Vec<ParserTypeId>,
+        | {
+            match args.len() {
+                0 => Ok(h.alloc_parser_type(|this| ParserType{
+                        this,
+                        pos: port_pos.clone(),
+                        variant: ParserTypeVariant::Inferred
+                })),
+                1 => Ok(args[0]),
+                _ => Err(())
+            }
+        };
+
+        // Consume the type
+        let pos = self.source.pos();
+        let parser_type_variant = if self.has_keyword(b"msg") {
+            self.consume_keyword(b"msg");
+            ParserTypeVariant::Message
+        } else if self.has_keyword(b"boolean") {
+            self.consume_keyword(b"boolean");
+            ParserTypeVariant::Bool
+        } else if self.has_keyword(b"byte") {
+            self.consume_keyword(b"byte");
+            ParserTypeVariant::Byte
+        } else if self.has_keyword(b"short") {
+            self.consume_keyword(b"short");
+            ParserTypeVariant::Short
+        } else if self.has_keyword(b"int") {
+            self.consume_keyword(b"int");
+            ParserTypeVariant::Int
+        } else if self.has_keyword(b"long") {
+            self.consume_keyword(b"long");
+            ParserTypeVariant::Long
+        } else if self.has_keyword(b"str") {
+            self.consume_keyword(b"str");
+            ParserTypeVariant::String
+        } else if self.has_keyword(b"auto") {
+            if !allow_inference {
+                return Err(ParseError2::new_error(
+                        &self.source, pos,
+                        "Type inference is not allowed here"
+                ));
+            }
+
+            self.consume_keyword(b"auto");
+            ParserTypeVariant::Inferred
+        } else if self.has_keyword(b"in") {
+            // TODO: @cleanup: not particularly neat to have this special case
+            //  where we enforce polyargs in the parser-phase
+            self.consume_keyword(b"in");
+            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
+            let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
+                .map_err(|| ParseError2::new_error(
+                    &self.source, pos, "'in' type only accepts up to 1 polymorphic argument"
+                ))?;
+            ParserTypeVariant::Input(poly_arg)
+        } else if self.has_keyword(b"out") {
+            self.consume_keyword(b"out");
+            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
+            let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
+                .map_err(|| ParseError2::new_error(
+                    &self.source, pos, "'out' type only accepts up to 1 polymorphic argument"
+                ))?;
+            ParserTypeVariant::Output(poly_arg)
+        } else {
+            // Must be a symbolic type
+            let identifier = self.consume_namespaced_identifier()?;
+            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
+            ParserTypeVariant::Symbolic(SymbolicParserType{identifier, poly_args, variant: None})
+        };
+
+        // If the type was a basic type (not supporting polymorphic type
+        // arguments), then we make sure the user did not specify any of them.
+        let mut backup_pos = self.source.pos();
+        if !parser_type.supports_polymorphic_args() {
+            self.consume_whitespace(false)?;
+            if let Some(b'<') = self.source.next() {
+                return Err(ParseError2::new_error(
+                    &self.source, self.source.pos(),
+                    "This type does not allow polymorphic arguments"
+                ));
+            }
+
+            self.source.seek(backup_pos);
+        }
+
+        let mut parser_type_id = h.alloc_parser_type(|this| ParserType{
+            this, pos, variant: parser_type_variant
+        });
+
+        // If we're dealing with arrays, then we need to wrap the currently
+        // parsed type in array types
+        self.consume_whitespace(false)?;
+        while let Some(b'[') = self.source.next() {
+            let pos = self.source.pos();
+            self.source.consume();
+            self.consume_whitespace(false)?;
+            if let Some(b']') = self.source.next() {
+                // Type is wrapped in an array
+                self.source.consume();
+                parser_type_id = h.alloc_parser_type(|this| ParserType{
+                    this, pos, variant: ParserTypeVariant::Array(parser_type_id)
+                });
+                backup_pos = self.source.pos();
+
+                // In case we're dealing with another array
+                self.consume_whitespace(false)?;
+            } else {
+                return Err(ParseError2::new_error(
+                    &self.source, pos,
+                    "Expected a closing ']'"
+                ));
+            }
+        }
+
+        self.source.seek(backup_pos);
+        Ok(parser_type_id)
+    }
+
+    /// Consumes polymorphic arguments and its delimiters if specified. The
+    /// input position may be at whitespace. If polyargs are present then the
+    /// whitespace and the args are consumed and the input position will be
+    /// placed after the polyarg list. If polyargs are not present then the
+    /// input position will remain unmodified and an empty vector will be
+    /// returned.
+    ///
+    /// Polymorphic arguments represent the specification of the parametric
+    /// types of a polymorphic type: they specify the value of the polymorphic
+    /// type's polymorphic variables.
+    fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Vec<ParserTypeId>, ParseError2> {
+        let backup_pos = self.source.pos();
+        self.consume_whitespace(false)?;
+        if let Some(b'<') = self.source.next() {
+            // Has polymorphic args, at least one type must be specified
+            self.source.consume();
+            self.consume_whitespace(false)?;
+            let mut poly_args = Vec::new();
+
+            loop {
+                // TODO: @cleanup, remove the no_more_types var
+                poly_args.push(self.consume_type2(h, allow_inference)?);
+                self.consume_whitespace(false)?;
+
+                let has_comma = self.source.next() == Some(b',');
+                if has_comma {
+                    // We might not actually be getting more types when the
+                    // comma is at the end of the line, and we get a closing
+                    // angular bracket on the next line.
+                    self.source.consume();
+                    self.consume_whitespace(false)?;
+                }
+
+                if let Some(b'>') = self.source.next() {
+                    self.source.consume();
+                    break;
+                } else if !has_comma {
+                    return Err(ParseError2::new_error(
+                        &self.source, self.source.pos(),
+                        "Expected the end of the polymorphic argument list"
+                    ))
+                }
+            }
+
+            Ok(poly_args)
+        } else {
+            // No polymorphic args
+            self.source.seek(backup_pos);
+            Ok(vec!())
+        }
+    }
+
+    /// Consumes polymorphic variables. These are identifiers that are used
+    /// within polymorphic types. The input position may be at whitespace. If
+    /// polymorphic variables are present then the whitespace, wrapping
+    /// delimiters and the polymorphic variables are consumed. Otherwise the
+    /// input position will stay where it is. If no polymorphic variables are
+    /// present then an empty vector will be returned.
+    fn consume_polymorphic_vars(&mut self) -> Result<Vec<Identifier>, ParseError2> {
+        let backup_pos = self.source.pos();
+        self.consume_whitespace(false)?;
+        if let Some(b'<') = self.source.next() {
+            // Found the opening delimiter, we want at least one polyvar
+            self.source.consume();
+            self.consume_whitespace(false)?;
+            let mut poly_vars = Vec::new();
+
+            loop {
+                poly_vars.push(self.consume_identifier()?);
+                self.consume_whitespace(false)?;
+
+                let has_comma = self.source.next() == Some(b',');
+                if has_comma {
+                    // We may get another variable
+                    self.source.consume();
+                    self.consume_whitespace(false)?;
+                }
+
+                if let Some(b'>') = self.source.next() {
+                    self.source.consume();
+                    break;
+                } else if !has_comma {
+                    return Err(ParseError2::new_error(
+                        &self.source, self.source.pos(),
+                        "Expected the end of the polymorphic variable list"
+                    ))
+                }
+            }
+
+            Ok(poly_vars)
+        } else {
+            // No polymorphic args
+            self.source.seek(backup_pos);
+            Ok(vec!())
+        }
+    }
+
     fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
         if self.has_keyword(b"in") {
             self.consume_keyword(b"in")?;
@@ -381,9 +607,9 @@ impl Lexer<'_> {
         } else if self.has_keyword(b"long") {
             self.consume_keyword(b"long")?;
             Ok(PrimitiveType::Long)
-        } else if self.has_keyword(b"let") {
+        } else if self.has_keyword(b"auto") {
             // TODO: @types
-            return Err(self.error_at_pos("inferred types using 'let' are reserved, but not yet implemented"));
+            return Err(self.error_at_pos("inferred types using 'auto' are reserved, but not yet implemented"));
         } else {
             let identifier = self.consume_namespaced_identifier()?;
             Ok(PrimitiveType::Symbolic(PrimitiveSymbolic{
@@ -439,12 +665,12 @@ impl Lexer<'_> {
     // Parameters
 
     fn consume_parameter(&mut self, h: &mut Heap) -> Result<ParameterId, ParseError2> {
-        let position = self.source.pos();
-        let type_annotation = self.consume_type_annotation(h)?;
+        let parser_type = self.consume_type2(h, false)?;
         self.consume_whitespace(true)?;
+        let position = self.source.pos();
         let identifier = self.consume_identifier()?;
         let id =
-            h.alloc_parameter(|this| Parameter { this, position, type_annotation, identifier });
+            h.alloc_parameter(|this| Parameter { this, position, parser_type, identifier });
         Ok(id)
     }
     fn consume_parameters(
@@ -1350,44 +1576,68 @@ impl Lexer<'_> {
         &mut self,
         h: &mut Heap,
     ) -> Result<ChannelStatementId, ParseError2> {
+        // Consume channel statement and polymorphic argument if specified
         let position = self.source.pos();
         self.consume_keyword(b"channel")?;
+
+        let poly_args = self.consume_polymorphic_args(h, true)?;
+        let poly_arg_id = match poly_args.len() {
+            0 => h.alloc_parser_type(|this| ParserType{
+                this, pos: position.clone(), variant: ParserTypeVariant::Inferred,
+            }),
+            1 => poly_args[0],
+            _ => return Err(ParseError2::new_error(
+                &self.source, self.source.pos(),
+                "port construction using 'channel' accepts up to 1 polymorphic argument"
+            ))
+        };
         self.consume_whitespace(true)?;
-        let from_annotation = self.create_type_annotation_output(h)?;
-        let from_identifier = self.consume_identifier()?;
+
+        // Consume the output port
+        let out_parser_type = h.alloc_parser_type(|this| ParserType{
+            this, pos: position.clone(), variant: ParserTypeVariant::Output(poly_arg_id)
+        });
+        let out_identifier = self.consume_identifier()?;
+
+        // Consume the "->" syntax
         self.consume_whitespace(false)?;
         self.consume_string(b"->")?;
         self.consume_whitespace(false)?;
-        let to_annotation = self.create_type_annotation_input(h)?;
-        let to_identifier = self.consume_identifier()?;
+
+        // Consume the input port
+        // TODO: Unsure about this, both ports refer to the same ParserType, is this ok?
+        let in_parser_type = h.alloc_parser_type(|this| ParserType{
+            this, pos: position.clone(), variant: ParserTypeVariant::Output(poly_arg_id)
+        });
+        let in_identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
-        let from = h.alloc_local(|this| Local {
+        let out_port = h.alloc_local(|this| Local {
             this,
             position,
-            type_annotation: from_annotation,
-            identifier: from_identifier,
+            parser_type: out_parser_type,
+            identifier: out_identifier,
             relative_pos_in_block: 0
         });
-        let to = h.alloc_local(|this| Local {
+        let in_port = h.alloc_local(|this| Local {
             this,
             position,
-            type_annotation: to_annotation,
-            identifier: to_identifier,
+            parser_type: in_parser_type,
+            identifier: in_identifier,
             relative_pos_in_block: 0
         });
         Ok(h.alloc_channel_statement(|this| ChannelStatement {
             this,
             position,
-            from,
-            to,
+            from: out_port,
+            to: in_port,
             relative_pos_in_block: 0,
             next: None,
         }))
     }
     fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<MemoryStatementId, ParseError2> {
         let position = self.source.pos();
-        let type_annotation = self.consume_type_annotation(h)?;
+        let parser_type = self.consume_type2(h, true)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
@@ -1397,7 +1647,7 @@ impl Lexer<'_> {
         let variable = h.alloc_local(|this| Local {
             this,
             position,
-            type_annotation,
+            parser_type,
             identifier,
             relative_pos_in_block: 0
         });
@@ -1633,11 +1883,12 @@ impl Lexer<'_> {
         }
     }
     fn consume_struct_definition(&mut self, h: &mut Heap) -> Result<StructId, ParseError2> {
-        // Parse "struct" keyword and its identifier
+        // Parse "struct" keyword, optional polyvars and its identifier
         let struct_pos = self.source.pos();
         self.consume_keyword(b"struct")?;
         self.consume_whitespace(true)?;
         let struct_ident = self.consume_identifier()?;
+        let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
         // Parse struct fields
@@ -1653,7 +1904,7 @@ impl Lexer<'_> {
             // Consume field definition
             self.consume_whitespace(false)?;
             let field_position = self.source.pos();
-            let field_type = self.consume_type_annotation(h)?;
+            let field_parser_type = self.consume_type2(h, false)?;
             self.consume_whitespace(true)?;
             let field_ident = self.consume_identifier()?;
             self.consume_whitespace(false)?;
@@ -1661,7 +1912,7 @@ impl Lexer<'_> {
             fields.push(StructFieldDefinition{
                 position: field_position,
                 field: field_ident,
-                the_type: field_type,
+                parser_type: field_parser_type,
             });
 
             // If we have a comma, then we may or may not have another field
@@ -1685,15 +1936,17 @@ impl Lexer<'_> {
             this,
             position: struct_pos,
             identifier: struct_ident,
+            poly_vars,
             fields,
         }))
     }
     fn consume_enum_definition(&mut self, h: &mut Heap) -> Result<EnumId, ParseError2> {
-        // Parse "enum" keyword and its identifier
+        // Parse "enum" keyword, optional polyvars and its identifier
         let enum_pos = self.source.pos();
         self.consume_keyword(b"enum")?;
         self.consume_whitespace(true)?;
         let enum_ident = self.consume_identifier()?;
+        let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
         // Parse enum variants
@@ -1730,7 +1983,7 @@ impl Lexer<'_> {
             } else if let Some(b'(') = next {
                 self.source.consume();
                 self.consume_whitespace(false)?;
-                let variant_type = self.consume_type_annotation(h)?;
+                let variant_type = self.consume_type2(h, false)?;
                 self.consume_whitespace(false)?;
                 self.consume_string(b")")?;
                 self.consume_whitespace(false)?;
@@ -1769,6 +2022,7 @@ impl Lexer<'_> {
             this,
             position: enum_pos,
             identifier: enum_ident,
+            poly_vars,
             variants,
         }))
     }
@@ -1781,48 +2035,79 @@ impl Lexer<'_> {
         }
     }
     fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+        // Parse keyword, optional polyvars and the identifier
         let position = self.source.pos();
         self.consume_keyword(b"composite")?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
+
+        // Consume parameters
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
         self.consume_whitespace(false)?;
+
+        // Parse body
         let body = self.consume_block_statement(h)?;
         Ok(h.alloc_component(|this| Component { 
-            this, variant: ComponentVariant::Composite, position, identifier, parameters, body 
+            this,
+            variant: ComponentVariant::Composite,
+            position,
+            identifier,
+            poly_vars,
+            parameters,
+            body
         }))
     }
     fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+        // Consume keyword, optional polyvars and identifier
         let position = self.source.pos();
         self.consume_keyword(b"primitive")?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
+
+        // Consume parameters
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
         self.consume_whitespace(false)?;
+
+        // Consume body
         let body = self.consume_block_statement(h)?;
         Ok(h.alloc_component(|this| Component { 
-            this, variant: ComponentVariant::Primitive, position, identifier, parameters, body 
+            this,
+            variant: ComponentVariant::Primitive,
+            position,
+            identifier,
+            poly_vars,
+            parameters,
+            body
         }))
     }
     fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError2> {
+        // Consume return type, optional polyvars and identifier
         let position = self.source.pos();
         let return_type = self.consume_type_annotation(h)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
+
+        // Consume parameters
         let mut parameters = Vec::new();
         self.consume_parameters(h, &mut parameters)?;
         self.consume_whitespace(false)?;
+
+        // Consume body
         let body = self.consume_block_statement(h)?;
         Ok(h.alloc_function(|this| Function {
             this,
             position,
             return_type,
             identifier,
+            poly_vars,
             parameters,
             body,
         }))

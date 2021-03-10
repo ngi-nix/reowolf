@@ -76,6 +76,9 @@ pub struct UnionVariant {
     tag_value: i64,
 }
 
+/// `UnionType` is the algebraic datatype (or sum type, or discriminated union).
+/// A value is an element of the union, identified by its tag, and may contain
+/// a single subtype.
 pub struct UnionType {
     variants: Vec<UnionVariant>,
     tag_representation: PrimitiveType
@@ -272,6 +275,7 @@ impl TypeTable {
                         // Check the definition to see if we're dealing with an
                         // enum or a union. If we find any union variants then
                         // we immediately check if the type is already resolved.
+                        assert!(definition.poly_vars.is_empty(), "Polyvars for enum not yet implemented");
                         let mut has_tag_values = None;
                         let mut has_int_values = None;
                         for variant in &definition.variants {
@@ -388,6 +392,7 @@ impl TypeTable {
                     Definition::Struct(definition) => {
                         // Before we start allocating fields, make sure we can
                         // actually resolve all of the field types
+                        assert!(definition.poly_vars.is_empty(), "Polyvars for struct not yet implemented");
                         for field_definition in &definition.fields {
                             let type_definition = &heap[field_definition.the_type];
                             let lookup_result = lookup_type_definition(
@@ -419,6 +424,7 @@ impl TypeTable {
                     },
                     Definition::Component(definition) => {
                         // As always, ensure all parameter types are resolved
+                        assert!(definition.poly_vars.is_empty(), "Polyvars for component not yet implemented");
                         for parameter_id in &definition.parameters {
                             let parameter = &heap[*parameter_id];
                             let type_definition = &heap[parameter.type_annotation];
@@ -452,6 +458,7 @@ impl TypeTable {
                         }));
                     },
                     Definition::Function(definition) => {
+                        assert!(definition.poly_vars.is_empty(), "Polyvars for function not yet implemented");
                         // Handle checking the return type
                         let lookup_result = lookup_type_definition(
                             heap, &table, symbols, module.root_id,

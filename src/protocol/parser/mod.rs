@@ -1,6 +1,7 @@
 mod depth_visitor;
 mod symbol_table;
 mod type_table;
+mod type_table2;
 mod type_resolver;
 mod visitor;
 mod visitor_linker;

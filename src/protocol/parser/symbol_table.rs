@@ -23,8 +23,11 @@ pub(crate) enum Symbol {
 }
 
 pub(crate) struct SymbolValue {
-    // Position refers to the origin of the symbol definition (i.e. the module's
-    // RootId that is in the key being used to lookup this value)
+    // Position is the place where the symbol is introduced to a module (this
+    // position always corresponds to the module whose RootId is stored in the
+    // `SymbolKey` associated with this `SymbolValue`). For a definition this
+    // is the position where the symbol is defined, for an import this is the
+    // position of the import statement.
     pub(crate) position: InputPosition,
     pub(crate) symbol: Symbol,
 }
