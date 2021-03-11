@@ -1,7 +1,7 @@
 mod depth_visitor;
 mod symbol_table;
+// mod type_table_old;
 mod type_table;
-mod type_table2;
 mod type_resolver;
 mod visitor;
 mod visitor_linker;
@@ -10,7 +10,7 @@ use depth_visitor::*;
 use symbol_table::SymbolTable;
 use visitor::Visitor2;
 use visitor_linker::ValidityAndLinkerVisitor;
-use type_table::TypeTable;
+use type_table::{TypeTable, TypeCtx};
 
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
@@ -188,7 +188,8 @@ impl Parser {
 
         // All imports in the AST are now annotated. We now use the symbol table
         // to construct the type table.
-        let type_table = TypeTable::new(&symbol_table, &self.heap, &self.modules)?;
+        let type_ctx = TypeCtx::new(&symbol_table, &self.heap, &self.modules);
+        let type_table = TypeTable::new(&type_ctx)?;
 
         Ok((symbol_table, type_table))
     }
@@ -214,9 +215,9 @@ impl Parser {
             return Err(ParseError2::new_error(&self.modules[0].source, position, &message))
         }
 
-        // let mut writer = ASTWriter::new();
-        // let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
-        // writer.write_ast(&mut file, &self.heap);
+        let mut writer = ASTWriter::new();
+        let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
+        writer.write_ast(&mut file, &self.heap);
 
         Ok(root_id)
     }

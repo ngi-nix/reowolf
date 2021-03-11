@@ -471,14 +471,7 @@ impl IndexMut<ImportId> for Heap {
 impl Index<ParserTypeId> for Heap {
     type Output = ParserType;
     fn index(&self, index: ParserTypeId) -> &Self::Output {
-        &self.parser_types[index.index]
-    }
-}
-
-impl Index<TypeAnnotationId> for Heap {
-    type Output = TypeAnnotation;
-    fn index(&self, index: TypeAnnotationId) -> &Self::Output {
-        &self.type_annotations[index]
+        &self.parser_types[index]
     }
 }
 
@@ -1037,6 +1030,7 @@ impl Display for Identifier {
 /// TODO: @cleanup Maybe handle this differently, preallocate in heap? The
 ///     reason I'm handling it like this now is so we don't allocate types in
 ///     the `Arena` structure if they're the common types defined here.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParserTypeVariant {
     // Basic builtin
     Message,
@@ -1059,7 +1053,7 @@ pub enum ParserTypeVariant {
 impl ParserTypeVariant {
     pub(crate) fn supports_polymorphic_args(&self) -> bool {
         use ParserTypeVariant::*;
-        match ParserTypeVariant {
+        match self {
             Message | Bool | Byte | Short | Int | Long | String | IntegerLiteral | Inferred => false,
             _ => true
         }
@@ -1070,7 +1064,7 @@ impl ParserTypeVariant {
 /// linker/validator phase of the compilation process. These types may be
 /// (partially) inferred or represent literals (e.g. a integer whose bytesize is
 /// not yet determined).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParserType {
     pub this: ParserTypeId,
     pub pos: InputPosition,
@@ -1091,7 +1085,8 @@ pub struct SymbolicParserType {
     /// need to be inferred. Otherwise the number of polymorphic arguments must
     /// match those of the corresponding definition
     pub poly_args: Vec<ParserTypeId>,
-    // Phase 2: validation/linking
+    // Phase 2: validation/linking (for types in function/component bodies) and
+    //  type table construction (for embedded types of structs/unions)
     pub variant: Option<SymbolicParserTypeVariant>
 }
 
@@ -1208,20 +1203,6 @@ impl Display for Type {
         } else {
             Ok(())
         }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TypeAnnotation {
-    pub this: TypeAnnotationId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub the_type: Type,
-}
-
-impl SyntaxElement for TypeAnnotation {
-    fn position(&self) -> InputPosition {
-        self.position
     }
 }
 
@@ -1346,12 +1327,6 @@ impl Variable {
         match self {
             Variable::Local(result) => result,
             _ => panic!("Unable to cast 'Variable' to 'Local'"),
-        }
-    }
-    pub fn the_type<'b>(&self, h: &'b Heap) -> &'b Type {
-        match self {
-            Variable::Parameter(param) => &h[param.type_annotation].the_type,
-            Variable::Local(local) => &h[local.type_annotation].the_type,
         }
     }
 }
@@ -1582,68 +1557,68 @@ impl SyntaxElement for Function {
         self.position
     }
 }
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Signature {
-    Component(ComponentSignature),
-    Function(FunctionSignature),
-}
-
-impl Signature {
-    pub fn from_definition(h: &Heap, def: DefinitionId) -> Signature {
-        // TODO: Fix this
-        match &h[def] {
-            Definition::Component(com) => Signature::Component(ComponentSignature {
-                identifier: com.identifier.clone(), // TODO: @fix
-                arity: Signature::convert_parameters(h, &com.parameters),
-            }),
-            Definition::Function(fun) => Signature::Function(FunctionSignature {
-                return_type: h[fun.return_type].the_type.clone(),
-                identifier: fun.identifier.clone(), // TODO: @fix
-                arity: Signature::convert_parameters(h, &fun.parameters),
-            }),
-            _ => panic!("cannot retrieve signature (for StructDefinition or EnumDefinition)")
-        }
-    }
-    fn convert_parameters(h: &Heap, params: &Vec<ParameterId>) -> Vec<Type> {
-        let mut result = Vec::new();
-        for &param in params.iter() {
-            result.push(h[h[param].type_annotation].the_type.clone());
-        }
-        result
-    }
-    fn identifier(&self) -> &Identifier {
-        match self {
-            Signature::Component(com) => &com.identifier,
-            Signature::Function(fun) => &fun.identifier,
-        }
-    }
-    pub fn is_component(&self) -> bool {
-        match self {
-            Signature::Component(_) => true,
-            Signature::Function(_) => false,
-        }
-    }
-    pub fn is_function(&self) -> bool {
-        match self {
-            Signature::Component(_) => false,
-            Signature::Function(_) => true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ComponentSignature {
-    pub identifier: Identifier,
-    pub arity: Vec<Type>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FunctionSignature {
-    pub return_type: Type,
-    pub identifier: Identifier,
-    pub arity: Vec<Type>,
-}
+// TODO: @remove ???
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// pub enum Signature {
+//     Component(ComponentSignature),
+//     Function(FunctionSignature),
+// }
+//
+// impl Signature {
+//     pub fn from_definition(h: &Heap, def: DefinitionId) -> Signature {
+//         // TODO: Fix this
+//         match &h[def] {
+//             Definition::Component(com) => Signature::Component(ComponentSignature {
+//                 identifier: com.identifier.clone(), // TODO: @fix
+//                 arity: Signature::convert_parameters(h, &com.parameters),
+//             }),
+//             Definition::Function(fun) => Signature::Function(FunctionSignature {
+//                 return_type: h[fun.return_type].the_type.clone(),
+//                 identifier: fun.identifier.clone(), // TODO: @fix
+//                 arity: Signature::convert_parameters(h, &fun.parameters),
+//             }),
+//             _ => panic!("cannot retrieve signature (for StructDefinition or EnumDefinition)")
+//         }
+//     }
+//     fn convert_parameters(h: &Heap, params: &Vec<ParameterId>) -> Vec<Type> {
+//         let mut result = Vec::new();
+//         for &param in params.iter() {
+//             result.push(h[h[param].type_annotation].the_type.clone());
+//         }
+//         result
+//     }
+//     fn identifier(&self) -> &Identifier {
+//         match self {
+//             Signature::Component(com) => &com.identifier,
+//             Signature::Function(fun) => &fun.identifier,
+//         }
+//     }
+//     pub fn is_component(&self) -> bool {
+//         match self {
+//             Signature::Component(_) => true,
+//             Signature::Function(_) => false,
+//         }
+//     }
+//     pub fn is_function(&self) -> bool {
+//         match self {
+//             Signature::Component(_) => false,
+//             Signature::Function(_) => true,
+//         }
+//     }
+// }
+//
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// pub struct ComponentSignature {
+//     pub identifier: Identifier,
+//     pub arity: Vec<Type>,
+// }
+//
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// pub struct FunctionSignature {
+//     pub return_type: Type,
+//     pub identifier: Identifier,
+//     pub arity: Vec<Type>,
+// }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Statement {

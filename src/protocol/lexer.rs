@@ -156,6 +156,13 @@ impl Lexer<'_> {
             Ok(())
         }
     }
+    fn consume_any_chars(&mut self) {
+        if !is_ident_start(self.source.next()) { return }
+        self.source.consume();
+        while is_ident_rest(self.source.next()) {
+            self.source.consume()
+        }
+    }
     fn has_keyword(&self, keyword: &[u8]) -> bool {
         if !self.source.has(keyword) {
             return false;
@@ -367,9 +374,9 @@ impl Lexer<'_> {
             heap: &mut Heap,
             port_pos: &InputPosition,
             args: Vec<ParserTypeId>,
-        | {
+        | -> Result<ParserTypeId, ()> {
             match args.len() {
-                0 => Ok(h.alloc_parser_type(|this| ParserType{
+                0 => Ok(heap.alloc_parser_type(|this| ParserType{
                         this,
                         pos: port_pos.clone(),
                         variant: ParserTypeVariant::Inferred
@@ -418,7 +425,7 @@ impl Lexer<'_> {
             self.consume_keyword(b"in");
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
-                .map_err(|| ParseError2::new_error(
+                .map_err(|_| ParseError2::new_error(
                     &self.source, pos, "'in' type only accepts up to 1 polymorphic argument"
                 ))?;
             ParserTypeVariant::Input(poly_arg)
@@ -426,7 +433,7 @@ impl Lexer<'_> {
             self.consume_keyword(b"out");
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
-                .map_err(|| ParseError2::new_error(
+                .map_err(|_| ParseError2::new_error(
                     &self.source, pos, "'out' type only accepts up to 1 polymorphic argument"
                 ))?;
             ParserTypeVariant::Output(poly_arg)
@@ -440,7 +447,7 @@ impl Lexer<'_> {
         // If the type was a basic type (not supporting polymorphic type
         // arguments), then we make sure the user did not specify any of them.
         let mut backup_pos = self.source.pos();
-        if !parser_type.supports_polymorphic_args() {
+        if !parser_type_variant.supports_polymorphic_args() {
             self.consume_whitespace(false)?;
             if let Some(b'<') = self.source.next() {
                 return Err(ParseError2::new_error(
@@ -483,6 +490,72 @@ impl Lexer<'_> {
 
         self.source.seek(backup_pos);
         Ok(parser_type_id)
+    }
+
+    /// Consumes things that look like types. If everything seems to look like
+    /// a type then `true` will be returned and the input position will be
+    /// placed after the type. If it doesn't appear to be a type then `false`
+    /// will be returned.
+    /// TODO: @cleanup, this is not particularly pretty or robust, methinks
+    fn maybe_consume_type_spilled(&mut self) -> bool {
+        // Spilling polymorphic args. Don't care about the input position
+        fn maybe_consume_polymorphic_args(v: &mut Lexer) -> bool {
+            if v.consume_whitespace(false).is_err() { return false; }
+            if let Some(b'<') = v.source.next() {
+                v.source.consume();
+                if v.consume_whitespace(false).is_err() { return false; }
+                loop {
+                    if !maybe_consume_type_inner(v) { return false; }
+                    if v.consume_whitespace(false).is_err() { return false; }
+                    let has_comma = v.source.next() == Some(b',');
+                    if has_comma {
+                        v.source.consume();
+                        if v.consume_whitespace(false).is_err() { return false; }
+                    }
+                    if let Some(b'>') = v.source.next() {
+                        v.source.consume();
+                        break;
+                    } else if !has_comma {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Inner recursive type parser. This method simply advances the lexer
+        // and does not store the backup position in case parsing fails
+        fn maybe_consume_type_inner(v: &mut Lexer) -> bool {
+            // Consume type identifier and optional polymorphic args
+            if v.has_type_keyword() {
+                v.consume_any_chars()
+            } else {
+                let ident = v.consume_namespaced_identifier();
+                if ident.is_err() { return false }
+            }
+
+            if !maybe_consume_polymorphic_args(v) { return false; }
+
+            // Check if wrapped in array
+            if v.consume_whitespace(false).is_err() { return false }
+            while let Some(b'[') = v.source.next() {
+                v.source.consume();
+                if v.consume_whitespace(false).is_err() { return false; }
+                if Some(b']') != v.source.next() { return false; }
+                v.source.consume();
+            }
+
+            return true;
+        }
+
+        let backup_pos = self.source.pos();
+        if !maybe_consume_type_inner(self) {
+            // Not a type
+            self.source.seek(backup_pos);
+            return false;
+        }
+
+        return true;
     }
 
     /// Consumes polymorphic arguments and its delimiters if specified. The
@@ -582,85 +655,85 @@ impl Lexer<'_> {
         }
     }
 
-    fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
-        if self.has_keyword(b"in") {
-            self.consume_keyword(b"in")?;
-            Ok(PrimitiveType::Input)
-        } else if self.has_keyword(b"out") {
-            self.consume_keyword(b"out")?;
-            Ok(PrimitiveType::Output)
-        } else if self.has_keyword(b"msg") {
-            self.consume_keyword(b"msg")?;
-            Ok(PrimitiveType::Message)
-        } else if self.has_keyword(b"boolean") {
-            self.consume_keyword(b"boolean")?;
-            Ok(PrimitiveType::Boolean)
-        } else if self.has_keyword(b"byte") {
-            self.consume_keyword(b"byte")?;
-            Ok(PrimitiveType::Byte)
-        } else if self.has_keyword(b"short") {
-            self.consume_keyword(b"short")?;
-            Ok(PrimitiveType::Short)
-        } else if self.has_keyword(b"int") {
-            self.consume_keyword(b"int")?;
-            Ok(PrimitiveType::Int)
-        } else if self.has_keyword(b"long") {
-            self.consume_keyword(b"long")?;
-            Ok(PrimitiveType::Long)
-        } else if self.has_keyword(b"auto") {
-            // TODO: @types
-            return Err(self.error_at_pos("inferred types using 'auto' are reserved, but not yet implemented"));
-        } else {
-            let identifier = self.consume_namespaced_identifier()?;
-            Ok(PrimitiveType::Symbolic(PrimitiveSymbolic{
-                identifier,
-                definition: None
-            }))
-        }
-    }
-    fn has_array(&mut self) -> bool {
-        let backup_pos = self.source.pos();
-        let mut result = false;
-        match self.consume_whitespace(false) {
-            Ok(_) => result = self.has_string(b"["),
-            Err(_) => {}
-        }
-        self.source.seek(backup_pos);
-        return result;
-    }
-    fn consume_type(&mut self) -> Result<Type, ParseError2> {
-        let primitive = self.consume_primitive_type()?;
-        let array;
-        if self.has_array() {
-            self.consume_string(b"[]")?;
-            array = true;
-        } else {
-            array = false;
-        }
-        Ok(Type { primitive, array })
-    }
-    fn create_type_annotation_input(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-        let position = self.source.pos();
-        let the_type = Type::INPUT;
-        let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-        Ok(id)
-    }
-    fn create_type_annotation_output(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-        let position = self.source.pos();
-        let the_type = Type::OUTPUT;
-        let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-        Ok(id)
-    }
-    fn consume_type_annotation(&mut self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-        let position = self.source.pos();
-        let the_type = self.consume_type()?;
-        let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-        Ok(id)
-    }
-    fn consume_type_annotation_spilled(&mut self) -> Result<(), ParseError2> {
-        self.consume_type()?;
-        Ok(())
-    }
+    // fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
+    //     if self.has_keyword(b"in") {
+    //         self.consume_keyword(b"in")?;
+    //         Ok(PrimitiveType::Input)
+    //     } else if self.has_keyword(b"out") {
+    //         self.consume_keyword(b"out")?;
+    //         Ok(PrimitiveType::Output)
+    //     } else if self.has_keyword(b"msg") {
+    //         self.consume_keyword(b"msg")?;
+    //         Ok(PrimitiveType::Message)
+    //     } else if self.has_keyword(b"boolean") {
+    //         self.consume_keyword(b"boolean")?;
+    //         Ok(PrimitiveType::Boolean)
+    //     } else if self.has_keyword(b"byte") {
+    //         self.consume_keyword(b"byte")?;
+    //         Ok(PrimitiveType::Byte)
+    //     } else if self.has_keyword(b"short") {
+    //         self.consume_keyword(b"short")?;
+    //         Ok(PrimitiveType::Short)
+    //     } else if self.has_keyword(b"int") {
+    //         self.consume_keyword(b"int")?;
+    //         Ok(PrimitiveType::Int)
+    //     } else if self.has_keyword(b"long") {
+    //         self.consume_keyword(b"long")?;
+    //         Ok(PrimitiveType::Long)
+    //     } else if self.has_keyword(b"auto") {
+    //         // TODO: @types
+    //         return Err(self.error_at_pos("inferred types using 'auto' are reserved, but not yet implemented"));
+    //     } else {
+    //         let identifier = self.consume_namespaced_identifier()?;
+    //         Ok(PrimitiveType::Symbolic(PrimitiveSymbolic{
+    //             identifier,
+    //             definition: None
+    //         }))
+    //     }
+    // }
+    // fn has_array(&mut self) -> bool {
+    //     let backup_pos = self.source.pos();
+    //     let mut result = false;
+    //     match self.consume_whitespace(false) {
+    //         Ok(_) => result = self.has_string(b"["),
+    //         Err(_) => {}
+    //     }
+    //     self.source.seek(backup_pos);
+    //     return result;
+    // }
+    // fn consume_type(&mut self) -> Result<Type, ParseError2> {
+    //     let primitive = self.consume_primitive_type()?;
+    //     let array;
+    //     if self.has_array() {
+    //         self.consume_string(b"[]")?;
+    //         array = true;
+    //     } else {
+    //         array = false;
+    //     }
+    //     Ok(Type { primitive, array })
+    // }
+    // fn create_type_annotation_input(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
+    //     let position = self.source.pos();
+    //     let the_type = Type::INPUT;
+    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
+    //     Ok(id)
+    // }
+    // fn create_type_annotation_output(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
+    //     let position = self.source.pos();
+    //     let the_type = Type::OUTPUT;
+    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
+    //     Ok(id)
+    // }
+    // fn consume_type_annotation(&mut self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
+    //     let position = self.source.pos();
+    //     let the_type = self.consume_type()?;
+    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
+    //     Ok(id)
+    // }
+    // fn consume_type_annotation_spilled(&mut self) -> Result<(), ParseError2> {
+    //     self.consume_type()?;
+    //     Ok(())
+    // }
 
     // Parameters
 
@@ -1528,11 +1601,13 @@ impl Lexer<'_> {
         }
         let backup_pos = self.source.pos();
         let mut result = false;
-        if let Ok(_) = self.consume_type_annotation_spilled() {
-            if let Ok(_) = self.consume_whitespace(false) {
+        if self.maybe_consume_type_spilled() {
+            // We seem to have a valid type, do we now have an identifier?
+            if self.consume_whitespace(false).is_ok() {
                 result = self.has_identifier();
             }
         }
+
         self.source.seek(backup_pos);
         return result;
     }
@@ -1607,7 +1682,7 @@ impl Lexer<'_> {
         // Consume the input port
         // TODO: Unsure about this, both ports refer to the same ParserType, is this ok?
         let in_parser_type = h.alloc_parser_type(|this| ParserType{
-            this, pos: position.clone(), variant: ParserTypeVariant::Output(poly_arg_id)
+            this, pos: position.clone(), variant: ParserTypeVariant::Input(poly_arg_id)
         });
         let in_identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
@@ -2089,7 +2164,7 @@ impl Lexer<'_> {
     fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError2> {
         // Consume return type, optional polyvars and identifier
         let position = self.source.pos();
-        let return_type = self.consume_type_annotation(h)?;
+        let return_type = self.consume_type2(h, false)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         let poly_vars = self.consume_polymorphic_vars()?;
@@ -2345,6 +2420,28 @@ mod tests {
     use crate::protocol::lexer::*;
     use crate::protocol::inputsource::*;
 
+    #[derive(Debug, Eq, PartialEq)]
+    enum ParserTypeClass {
+        Message, Bool, Byte, Short, Int, Long, String, Array, Nope
+    }
+    impl ParserTypeClass {
+        fn from(v: &ParserType) -> ParserTypeClass {
+            use ParserTypeVariant as PTV;
+            use ParserTypeClass as PTC;
+            match &v.variant {
+                PTV::Message => PTC::Message,
+                PTV::Bool => PTC::Bool,
+                PTV::Byte => PTC::Byte,
+                PTV::Short => PTC::Short,
+                PTV::Int => PTC::Int,
+                PTV::Long => PTC::Long,
+                PTV::String => PTC::String,
+                PTV::Array(_) => PTC::Array,
+                _ => PTC::Nope,
+            }
+        }
+    }
+
     #[test]
     fn test_pragmas() {
         let mut h = Heap::new();
@@ -2449,41 +2546,41 @@ mod tests {
 
         assert_eq!(root.definitions.len(), 2);
 
-        let symbolic_type = |v: &PrimitiveType| -> Vec<u8> {
-            if let PrimitiveType::Symbolic(v) = v {
-                v.identifier.value.clone()
-            } else {
-                assert!(false);
-                unreachable!();
-            }
-        };
+        // let symbolic_type = |v: &PrimitiveType| -> Vec<u8> {
+        //     if let PrimitiveType::Symbolic(v) = v {
+        //         v.identifier.value.clone()
+        //     } else {
+        //         assert!(false);
+        //         unreachable!();
+        //     }
+        // };
 
         let foo_def = h[root.definitions[0]].as_struct();
         assert_eq!(foo_def.identifier.value, b"Foo");
         assert_eq!(foo_def.fields.len(), 3);
         assert_eq!(foo_def.fields[0].field.value, b"one");
-        assert_eq!(h[foo_def.fields[0].the_type].the_type, Type::BYTE);
+        assert_eq!(ParserTypeClass::from(&h[foo_def.fields[0].parser_type]), ParserTypeClass::Byte);
         assert_eq!(foo_def.fields[1].field.value, b"two");
-        assert_eq!(h[foo_def.fields[1].the_type].the_type, Type::SHORT);
+        assert_eq!(ParserTypeClass::from(&h[foo_def.fields[1].parser_type]), ParserTypeClass::Short);
         assert_eq!(foo_def.fields[2].field.value, b"three");
-        assert_eq!(
-            symbolic_type(&h[foo_def.fields[2].the_type].the_type.primitive), 
-            Vec::from("Bar".as_bytes())
-        );
+        // assert_eq!(
+        //     symbolic_type(&h[foo_def.fields[2].the_type].the_type.primitive),
+        //     Vec::from("Bar".as_bytes())
+        // );
 
         let bar_def = h[root.definitions[1]].as_struct();
         assert_eq!(bar_def.identifier.value, b"Bar");
         assert_eq!(bar_def.fields.len(), 3);
         assert_eq!(bar_def.fields[0].field.value, b"one");
-        assert_eq!(h[bar_def.fields[0].the_type].the_type, Type::INT_ARRAY);
+        assert_eq!(ParserTypeClass::from(&h[bar_def.fields[0].parser_type]), ParserTypeClass::Array);
         assert_eq!(bar_def.fields[1].field.value, b"two");
-        assert_eq!(h[bar_def.fields[1].the_type].the_type, Type::INT_ARRAY);
+        assert_eq!(ParserTypeClass::from(&h[bar_def.fields[1].parser_type]), ParserTypeClass::Array);
         assert_eq!(bar_def.fields[2].field.value, b"three");
-        assert_eq!(h[bar_def.fields[2].the_type].the_type.array, true);
-        assert_eq!(
-            symbolic_type(&h[bar_def.fields[2].the_type].the_type.primitive), 
-            Vec::from("Qux".as_bytes())
-        );
+        assert_eq!(ParserTypeClass::from(&h[bar_def.fields[2].parser_type]), ParserTypeClass::Array);
+        // assert_eq!(
+        //     symbolic_type(&h[bar_def.fields[2].parser_type].the_type.primitive),
+        //     Vec::from("Qux".as_bytes())
+        // );
     }
 
     #[test]
@@ -2529,7 +2626,7 @@ mod tests {
         assert_eq!(bar_def.variants[2].value, EnumVariantValue::None);
 
         let qux_def = h[root.definitions[2]].as_enum();
-        let enum_type = |value: &EnumVariantValue| -> &TypeAnnotation {
+        let enum_type = |value: &EnumVariantValue| -> &ParserType {
             if let EnumVariantValue::Type(t) = value {
                 &h[*t]
             } else {
@@ -2540,15 +2637,15 @@ mod tests {
         assert_eq!(qux_def.identifier.value, b"Qux");
         assert_eq!(qux_def.variants.len(), 3);
         assert_eq!(qux_def.variants[0].identifier.value, b"A");
-        assert_eq!(enum_type(&qux_def.variants[0].value).the_type, Type::BYTE_ARRAY);
+        assert_eq!(ParserTypeClass::from(enum_type(&qux_def.variants[0].value)), ParserTypeClass::Array);
         assert_eq!(qux_def.variants[1].identifier.value, b"B");
-        assert_eq!(enum_type(&qux_def.variants[1].value).the_type.array, true);
-        if let PrimitiveType::Symbolic(t) = &enum_type(&qux_def.variants[1].value).the_type.primitive {
-            assert_eq!(t.identifier.value, Vec::from("Bar".as_bytes()));
-        } else { assert!(false) }
+        assert_eq!(ParserTypeClass::from(enum_type(&qux_def.variants[1].value)), ParserTypeClass::Array);
+        // if let PrimitiveType::Symbolic(t) = &enum_type(&qux_def.variants[1].value).the_type.primitive {
+        //     assert_eq!(t.identifier.value, Vec::from("Bar".as_bytes()));
+        // } else { assert!(false) }
 
         assert_eq!(qux_def.variants[2].identifier.value, b"C");
-        assert_eq!(enum_type(&qux_def.variants[2].value).the_type, Type::BYTE);
+        assert_eq!(ParserTypeClass::from(enum_type(&qux_def.variants[2].value)), ParserTypeClass::Byte);
     }
 
 //     #[test]

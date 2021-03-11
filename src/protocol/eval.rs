@@ -21,9 +21,13 @@ const MESSAGE_MAX_LENGTH: i64 = SHORT_MAX;
 
 const ONE: Value = Value::Byte(ByteValue(1));
 
+// TODO: All goes one day anyway, so dirty typechecking hack
 trait ValueImpl {
     fn exact_type(&self) -> Type;
-    fn is_type_compatible(&self, t: &Type) -> bool;
+    fn is_type_compatible(&self, h: &Heap, t: &ParserType) -> bool {
+        Self::is_type_compatible_hack(h, t)
+    }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool;
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -838,26 +842,27 @@ impl ValueImpl for Value {
             Value::LongArray(val) => val.exact_type(),
         }
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
+    fn is_type_compatible(&self, h: &Heap, t: &ParserType) -> bool {
         match self {
-            Value::Input(val) => val.is_type_compatible(t),
-            Value::Output(val) => val.is_type_compatible(t),
-            Value::Message(val) => val.is_type_compatible(t),
-            Value::Boolean(val) => val.is_type_compatible(t),
-            Value::Byte(val) => val.is_type_compatible(t),
-            Value::Short(val) => val.is_type_compatible(t),
-            Value::Int(val) => val.is_type_compatible(t),
-            Value::Long(val) => val.is_type_compatible(t),
-            Value::InputArray(val) => val.is_type_compatible(t),
-            Value::OutputArray(val) => val.is_type_compatible(t),
-            Value::MessageArray(val) => val.is_type_compatible(t),
-            Value::BooleanArray(val) => val.is_type_compatible(t),
-            Value::ByteArray(val) => val.is_type_compatible(t),
-            Value::ShortArray(val) => val.is_type_compatible(t),
-            Value::IntArray(val) => val.is_type_compatible(t),
-            Value::LongArray(val) => val.is_type_compatible(t),
+            Value::Input(_) => InputValue::is_type_compatible_hack(h, t),
+            Value::Output(_) => OutputValue::is_type_compatible_hack(h, t),
+            Value::Message(_) => MessageValue::is_type_compatible_hack(h, t),
+            Value::Boolean(_) => BooleanValue::is_type_compatible_hack(h, t),
+            Value::Byte(_) => ByteValue::is_type_compatible_hack(h, t),
+            Value::Short(_) => ShortValue::is_type_compatible_hack(h, t),
+            Value::Int(_) => IntValue::is_type_compatible_hack(h, t),
+            Value::Long(_) => LongValue::is_type_compatible_hack(h, t),
+            Value::InputArray(_) => InputArrayValue::is_type_compatible_hack(h, t),
+            Value::OutputArray(_) => OutputArrayValue::is_type_compatible_hack(h, t),
+            Value::MessageArray(_) => MessageArrayValue::is_type_compatible_hack(h, t),
+            Value::BooleanArray(_) => BooleanArrayValue::is_type_compatible_hack(h, t),
+            Value::ByteArray(_) => ByteArrayValue::is_type_compatible_hack(h, t),
+            Value::ShortArray(_) => ShortArrayValue::is_type_compatible_hack(h, t),
+            Value::IntArray(_) => InputArrayValue::is_type_compatible_hack(h, t),
+            Value::LongArray(_) => LongArrayValue::is_type_compatible_hack(h, t),
         }
     }
+    fn is_type_compatible_hack(_h: &Heap, _t: &ParserType) -> bool { false }
 }
 
 impl Display for Value {
@@ -898,15 +903,8 @@ impl ValueImpl for InputValue {
     fn exact_type(&self) -> Type {
         Type::INPUT
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Input => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        return if let ParserTypeVariant::Input(_) = t.variant { true } else { false }
     }
 }
 
@@ -923,15 +921,8 @@ impl ValueImpl for OutputValue {
     fn exact_type(&self) -> Type {
         Type::OUTPUT
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Output => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        return if let ParserTypeVariant::Output(_) = t.variant { true } else { false }
     }
 }
 
@@ -958,15 +949,8 @@ impl ValueImpl for MessageValue {
     fn exact_type(&self) -> Type {
         Type::MESSAGE
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Message => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        return if let ParserTypeVariant::Message = t.variant { true } else { false };
     }
 }
 
@@ -983,18 +967,11 @@ impl ValueImpl for BooleanValue {
     fn exact_type(&self) -> Type {
         Type::BOOLEAN
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Boolean => true,
-            PrimitiveType::Byte => true,
-            PrimitiveType::Short => true,
-            PrimitiveType::Int => true,
-            PrimitiveType::Long => true,
-            _ => false,
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        use ParserTypeVariant::*;
+        match t.variant {
+            Bool | Byte | Short | Int | Long => true,
+            _ => false
         }
     }
 }
@@ -1012,17 +989,11 @@ impl ValueImpl for ByteValue {
     fn exact_type(&self) -> Type {
         Type::BYTE
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Byte => true,
-            PrimitiveType::Short => true,
-            PrimitiveType::Int => true,
-            PrimitiveType::Long => true,
-            _ => false,
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        use ParserTypeVariant::*;
+        match t.variant {
+            Byte | Short | Int | Long => true,
+            _ => false
         }
     }
 }
@@ -1040,16 +1011,11 @@ impl ValueImpl for ShortValue {
     fn exact_type(&self) -> Type {
         Type::SHORT
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Short => true,
-            PrimitiveType::Int => true,
-            PrimitiveType::Long => true,
-            _ => false,
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        use ParserTypeVariant::*;
+        match t.variant {
+            Short | Int | Long => true,
+            _ => false
         }
     }
 }
@@ -1067,15 +1033,11 @@ impl ValueImpl for IntValue {
     fn exact_type(&self) -> Type {
         Type::INT
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Int => true,
-            PrimitiveType::Long => true,
-            _ => false,
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        use ParserTypeVariant::*;
+        match t.variant {
+            Int | Long => true,
+            _ => false
         }
     }
 }
@@ -1093,15 +1055,15 @@ impl ValueImpl for LongValue {
     fn exact_type(&self) -> Type {
         Type::LONG
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if *array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Long => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+        return if let ParserTypeVariant::Long = t.variant { true } else { false }
+    }
+}
+
+fn get_array_inner(t: &ParserType) -> Option<ParserTypeId> {
+    match t.variant {
+        ParserTypeVariant::Array(inner) => Some(inner),
+        _ => None
     }
 }
 
@@ -1127,15 +1089,10 @@ impl ValueImpl for InputArrayValue {
     fn exact_type(&self) -> Type {
         Type::INPUT_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Input => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| InputValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1161,15 +1118,10 @@ impl ValueImpl for OutputArrayValue {
     fn exact_type(&self) -> Type {
         Type::OUTPUT_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Output => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| OutputValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1195,15 +1147,10 @@ impl ValueImpl for MessageArrayValue {
     fn exact_type(&self) -> Type {
         Type::MESSAGE_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Message => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| MessageValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1229,15 +1176,10 @@ impl ValueImpl for BooleanArrayValue {
     fn exact_type(&self) -> Type {
         Type::BOOLEAN_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Boolean => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| BooleanValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1263,15 +1205,10 @@ impl ValueImpl for ByteArrayValue {
     fn exact_type(&self) -> Type {
         Type::BYTE_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Byte => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| ByteValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1297,15 +1234,10 @@ impl ValueImpl for ShortArrayValue {
     fn exact_type(&self) -> Type {
         Type::SHORT_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Short => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| ShortValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1331,15 +1263,10 @@ impl ValueImpl for IntArrayValue {
     fn exact_type(&self) -> Type {
         Type::INT_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Int => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| IntValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1365,15 +1292,10 @@ impl ValueImpl for LongArrayValue {
     fn exact_type(&self) -> Type {
         Type::LONG_ARRAY
     }
-    fn is_type_compatible(&self, t: &Type) -> bool {
-        let Type { primitive, array } = t;
-        if !*array {
-            return false;
-        }
-        match primitive {
-            PrimitiveType::Long => true,
-            _ => false,
-        }
+    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+        get_array_inner(t)
+            .map(|v| LongValue::is_type_compatible_hack(h, &h[v]))
+            .unwrap_or(false)
     }
 }
 
@@ -1387,8 +1309,11 @@ impl Store {
     }
     fn initialize(&mut self, h: &Heap, var: VariableId, value: Value) {
         // Ensure value is compatible with type of variable
-        let the_type = h[var].the_type(h);
-        assert!(value.is_type_compatible(the_type));
+        let parser_type = match &h[var] {
+            Variable::Local(v) => v.parser_type,
+            Variable::Parameter(v) => v.parser_type,
+        };
+        assert!(value.is_type_compatible(h, &h[parser_type]));
         // Overwrite mapping
         self.map.insert(var, value.clone());
     }
@@ -1403,8 +1328,12 @@ impl Store {
             Expression::Variable(var) => {
                 let var = var.declaration.unwrap();
                 // Ensure value is compatible with type of variable
-                let the_type = h[var].the_type(h);
-                assert!(value.is_type_compatible(the_type));
+                let parser_type_id = match &h[var] {
+                    Variable::Local(v) => v.parser_type,
+                    Variable::Parameter(v) => v.parser_type
+                };
+                let parser_type = &h[parser_type_id];
+                assert!(value.is_type_compatible(h, parser_type));
                 // Overwrite mapping
                 self.map.insert(var, value.clone());
                 Ok(value)
@@ -1631,8 +1560,8 @@ impl Prompt {
         assert_eq!(params.len(), args.len());
         for (param, value) in params.iter().zip(args.iter()) {
             let hparam = &h[*param];
-            let type_annot = &h[hparam.type_annotation];
-            assert!(value.is_type_compatible(&type_annot.the_type));
+            let parser_type = &h[hparam.parser_type];
+            assert!(value.is_type_compatible(h, parser_type));
             self.store.initialize(h, param.upcast(), value.clone());
         }
     }

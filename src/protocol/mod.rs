@@ -83,12 +83,10 @@ impl ProtocolDescription {
         }
         for &param in def.parameters().iter() {
             let param = &h[param];
-            let type_annot = &h[param.type_annotation];
-            if type_annot.the_type.array {
-                return Err(NonPortTypeParameters);
-            }
-            match type_annot.the_type.primitive {
-                PrimitiveType::Input | PrimitiveType::Output => continue,
+            let parser_type = &h[param.parser_type];
+
+            match parser_type.variant {
+                ParserTypeVariant::Input(_) | ParserTypeVariant::Output(_) => continue,
                 _ => {
                     return Err(NonPortTypeParameters);
                 }
@@ -97,11 +95,11 @@ impl ProtocolDescription {
         let mut result = Vec::new();
         for &param in def.parameters().iter() {
             let param = &h[param];
-            let type_annot = &h[param.type_annotation];
-            let ptype = &type_annot.the_type.primitive;
-            if ptype == &PrimitiveType::Input {
+            let parser_type = &h[param.parser_type];
+
+            if let ParserTypeVariant::Input(_) = parser_type.variant {
                 result.push(Polarity::Getter)
-            } else if ptype == &PrimitiveType::Output {
+            } else if let ParserTypeVariant::Output(_) = parser_type.variant {
                 result.push(Polarity::Putter)
             } else {
                 unreachable!()

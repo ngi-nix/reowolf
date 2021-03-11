@@ -698,7 +698,6 @@ impl ValidityAndLinkerVisitor {
         // the traversal of the block's statements.
         let body = &mut ctx.heap[id];
         body.parent_scope = self.cur_scope.clone();
-        println!("DEBUG: Assigning relative {} to block {}", self.relative_pos_in_block, id.0.index);
         body.relative_pos_in_parent = self.relative_pos_in_block;
 
         let old_scope = self.cur_scope.replace(match hint {
@@ -980,9 +979,9 @@ impl ValidityAndLinkerVisitor {
         match &symbol.symbol {
             Symbol::Definition((_, definition_id)) => {
                 // Make sure definition is of the expected type
-                let definition_type = types.get_definition(definition_id);
+                let definition_type = types.get_base_definition(&definition_id);
                 debug_assert!(definition_type.is_some(), "Found symbol '{}' in symbol table, but not in type table", String::from_utf8_lossy(&identifier.value));
-                let definition_type_class = definition_type.unwrap().type_class();
+                let definition_type_class = definition_type.unwrap().definition.type_class();
 
                 if definition_type_class != expected_type_class {
                     FindOfTypeResult::TypeMismatch(definition_type_class.display_name())

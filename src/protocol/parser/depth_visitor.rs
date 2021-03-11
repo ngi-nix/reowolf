@@ -900,7 +900,7 @@ impl Visitor for LinkStatements {
         // Update the while's next statement to point to the pseudo-statement
         let end_while_id = h[stmt].end_while;
         assert!(end_while_id.is_some());
-        let end_while_id = end_while_id.unwrap();
+        // let end_while_id = end_while_id.unwrap();
 
         assert!(self.prev.is_none());
         self.visit_statement(h, h[stmt].body)?;

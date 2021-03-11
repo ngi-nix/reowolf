@@ -289,7 +289,7 @@ impl ASTWriter {
                         .with_s_key("Parameter");
 
                     self.kv(indent4).with_s_key("Name").with_ascii_val(&param.identifier.value);
-                    self.kv(indent4).with_s_key("Type").with_custom_val(|w| write_type(w, &heap[param.type_annotation]));
+                    self.kv(indent4).with_s_key("Type").with_custom_val(|w| write_type(w, heap, &heap[param.parser_type]));
                 }
 
                 self.kv(indent2).with_s_key("Body");
@@ -613,7 +613,7 @@ impl ASTWriter {
 
         self.kv(indent2).with_s_key("Name").with_ascii_val(&local.identifier.value);
         self.kv(indent2).with_s_key("Type")
-            .with_custom_val(|w| write_type(w, &heap[local.type_annotation]));
+            .with_custom_val(|w| write_type(w, heap, &heap[local.parser_type]));
     }
 
     //--------------------------------------------------------------------------
@@ -638,24 +638,35 @@ fn write_option<V: Display>(target: &mut String, value: Option<V>) {
     };
 }
 
-fn write_type(target: &mut String, t: &TypeAnnotation) {
-    match &t.the_type.primitive {
-        PrimitiveType::Input => target.write_str("in"),
-        PrimitiveType::Output => target.write_str("out"),
-        PrimitiveType::Message => target.write_str("msg"),
-        PrimitiveType::Boolean => target.write_str("bool"),
-        PrimitiveType::Byte => target.write_str("byte"),
-        PrimitiveType::Short => target.write_str("short"),
-        PrimitiveType::Int => target.write_str("int"),
-        PrimitiveType::Long => target.write_str("long"),
-        PrimitiveType::Symbolic(symbolic) => {
-            let mut temp = String::new();
-            write_option(&mut temp, symbolic.definition.map(|v| v.index));
-            write!(target, "Symbolic(name: {}, target: {})", String::from_utf8_lossy(&symbolic.identifier.value), &temp)
+fn write_type(target: &mut String, heap: &Heap, t: &ParserType) {
+    use ParserTypeVariant as PTV;
+
+    let mut embedded = Vec::new();
+    match &t.variant {
+        PTV::Input(id) => { target.write_str("in"); embedded.push(*id); }
+        PTV::Output(id) => { target.write_str("out"); embedded.push(*id) }
+        PTV::Array(id) => { target.write_str("array"); embedded.push(*id) }
+        PTV::Message => { target.write_str("msg"); }
+        PTV::Bool => { target.write_str("bool"); }
+        PTV::Byte => { target.write_str("byte"); }
+        PTV::Short => { target.write_str("short"); }
+        PTV::Int => { target.write_str("int"); }
+        PTV::Long => { target.write_str("long"); }
+        PTV::String => { target.write_str("str"); }
+        PTV::IntegerLiteral => { target.write_str("int_lit"); }
+        PTV::Inferred => { target.write_str("auto"); }
+        PTV::Symbolic(symbolic) => {
+            target.write_str(&String::from_utf8_lossy(&symbolic.identifier.value));
+            embedded.extend(&symbolic.poly_args);
         }
     };
 
-    if t.the_type.array {
-        target.push_str("[]");
+    if !embedded.is_empty() {
+        target.write_str("<");
+        for (idx, embedded_id) in embedded.into_iter().enumerate() {
+            if idx != 0 { target.write_str(", "); }
+            write_type(target, heap, &heap[embedded_id]);
+        }
+        target.write_str(">");
     }
 }
