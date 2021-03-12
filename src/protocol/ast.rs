@@ -1,3 +1,6 @@
+// TODO: @cleanup, rigorous cleanup of dead code and silly object-oriented
+//  trait impls where I deem them unfit.
+
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Index, IndexMut};
@@ -11,14 +14,32 @@ use crate::protocol::inputsource::*;
 /// Helper macro that defines a type alias for a AST element ID. In this case 
 /// only used to alias the `Id<T>` types.
 macro_rules! define_aliased_ast_id {
+    // Variant where we just defined the alias, without any indexing
     ($name:ident, $parent:ty) => {
         pub type $name = $parent;
+    };
+    // Variant where we define the type, and the Index and IndexMut traits
+    ($name:ident, $parent:ty, $indexed_type:ty, $indexed_arena:ident) => {
+        define_aliased_ast_id!($name, $parent);
+        impl Index<$name> for Heap {
+            type Output = $indexed_type;
+            fn index(&self, index: $name) -> &Self::Output {
+                &self.$indexed_arena[index]
+            }
+        }
+
+        impl IndexMut<$name> for Heap {
+            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
+                &mut self.$indexed_arena[index]
+            }
+        }
     }
 }
 
-/// Helper macro that defines a subtype for a particular variant of an AST 
-/// element ID.
+/// Helper macro that defines a wrapper type for a particular variant of an AST
+/// element ID. Only used to define single-wrapping IDs.
 macro_rules! define_new_ast_id {
+    // Variant where we just defined the new type, without any indexing
     ($name:ident, $parent:ty) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         pub struct $name (pub(crate) $parent);
@@ -29,57 +50,81 @@ macro_rules! define_new_ast_id {
             }
         }
     };
+    // Variant where we define the type, and the Index and IndexMut traits
+    ($name:ident, $parent:ty, $indexed_type:ty, $wrapper_type:path, $indexed_arena:ident) => {
+        define_new_ast_id!($name, $parent);
+        impl Index<$name> for Heap {
+            type Output = $indexed_type;
+            fn index(&self, index: $name) -> &Self::Output {
+                if let $wrapper_type(v) = &self.$indexed_arena[index.0] {
+                    v
+                } else {
+                    unreachable!()
+                }
+            }
+        }
+
+        impl IndexMut<$name> for Heap {
+            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
+                if let $wrapper_type(v) = &mut self.$indexed_arena[index.0] {
+                    v
+                } else {
+                    unreachable!()
+                }
+            }
+        }
+    }
 }
 
-define_aliased_ast_id!(RootId, Id<Root>);
-define_aliased_ast_id!(PragmaId, Id<Pragma>);
-define_aliased_ast_id!(ImportId, Id<Import>);
-define_aliased_ast_id!(ParserTypeId, Id<ParserType>);
+define_aliased_ast_id!(RootId, Id<Root>, Root, protocol_descriptions);
+define_aliased_ast_id!(PragmaId, Id<Pragma>, Pragma, pragmas);
+define_aliased_ast_id!(ImportId, Id<Import>, Import, imports);
+define_aliased_ast_id!(ParserTypeId, Id<ParserType>, ParserType, parser_types);
 
-define_aliased_ast_id!(VariableId, Id<Variable>);
-define_new_ast_id!(ParameterId, VariableId);
-define_new_ast_id!(LocalId, VariableId);
+define_aliased_ast_id!(VariableId, Id<Variable>, Variable, variables);
+define_new_ast_id!(ParameterId, VariableId, Parameter, Variable::Parameter, variables);
+define_new_ast_id!(LocalId, VariableId, Local, Variable::Local, variables);
 
-define_aliased_ast_id!(DefinitionId, Id<Definition>);
-define_new_ast_id!(StructId, DefinitionId);
-define_new_ast_id!(EnumId, DefinitionId);
-define_new_ast_id!(ComponentId, DefinitionId);
-define_new_ast_id!(FunctionId, DefinitionId);
+define_aliased_ast_id!(DefinitionId, Id<Definition>, Definition, definitions);
+define_new_ast_id!(StructId, DefinitionId, StructDefinition, Definition::Struct, definitions);
+define_new_ast_id!(EnumId, DefinitionId, EnumDefinition, Definition::Enum, definitions);
+define_new_ast_id!(ComponentId, DefinitionId, Component, Definition::Component, definitions);
+define_new_ast_id!(FunctionId, DefinitionId, Function, Definition::Function, definitions);
 
-define_aliased_ast_id!(StatementId, Id<Statement>);
-define_new_ast_id!(BlockStatementId, StatementId);
-define_new_ast_id!(LocalStatementId, StatementId);
+define_aliased_ast_id!(StatementId, Id<Statement>, Statement, statements);
+define_new_ast_id!(BlockStatementId, StatementId, BlockStatement, Statement::Block, statements);
+define_new_ast_id!(LocalStatementId, StatementId, LocalStatement, Statement::Local, statements);
 define_new_ast_id!(MemoryStatementId, LocalStatementId);
 define_new_ast_id!(ChannelStatementId, LocalStatementId);
-define_new_ast_id!(SkipStatementId, StatementId);
-define_new_ast_id!(LabeledStatementId, StatementId);
-define_new_ast_id!(IfStatementId, StatementId);
-define_new_ast_id!(EndIfStatementId, StatementId);
-define_new_ast_id!(WhileStatementId, StatementId);
-define_new_ast_id!(EndWhileStatementId, StatementId);
-define_new_ast_id!(BreakStatementId, StatementId);
-define_new_ast_id!(ContinueStatementId, StatementId);
-define_new_ast_id!(SynchronousStatementId, StatementId);
-define_new_ast_id!(EndSynchronousStatementId, StatementId);
-define_new_ast_id!(ReturnStatementId, StatementId);
-define_new_ast_id!(AssertStatementId, StatementId);
-define_new_ast_id!(GotoStatementId, StatementId);
-define_new_ast_id!(NewStatementId, StatementId);
-define_new_ast_id!(PutStatementId, StatementId);
-define_new_ast_id!(ExpressionStatementId, StatementId);
+define_new_ast_id!(SkipStatementId, StatementId, SkipStatement, Statement::Skip, statements);
+define_new_ast_id!(LabeledStatementId, StatementId, LabeledStatement, Statement::Labeled, statements);
+define_new_ast_id!(IfStatementId, StatementId, IfStatement, Statement::If, statements);
+define_new_ast_id!(EndIfStatementId, StatementId, EndIfStatement, Statement::EndIf, statements);
+define_new_ast_id!(WhileStatementId, StatementId, WhileStatement, Statement::While, statements);
+define_new_ast_id!(EndWhileStatementId, StatementId, EndWhileStatement, Statement::EndWhile, statements);
+define_new_ast_id!(BreakStatementId, StatementId, BreakStatement, Statement::Break, statements);
+define_new_ast_id!(ContinueStatementId, StatementId, ContinueStatement, Statement::Continue, statements);
+define_new_ast_id!(SynchronousStatementId, StatementId, SynchronousStatement, Statement::Synchronous, statements);
+define_new_ast_id!(EndSynchronousStatementId, StatementId, EndSynchronousStatement, Statement::EndSynchronous, statements);
+define_new_ast_id!(ReturnStatementId, StatementId, ReturnStatement, Statement::Return, statements);
+define_new_ast_id!(AssertStatementId, StatementId, AssertStatement, Statement::Assert, statements);
+define_new_ast_id!(GotoStatementId, StatementId, GotoStatement, Statement::Goto, statements);
+define_new_ast_id!(NewStatementId, StatementId, NewStatement, Statement::New, statements);
+define_new_ast_id!(PutStatementId, StatementId, PutStatement, Statement::Put, statements);
+define_new_ast_id!(ExpressionStatementId, StatementId, ExpressionStatement, Statement::Expression, statements);
 
-define_aliased_ast_id!(ExpressionId, Id<Expression>);
-define_new_ast_id!(AssignmentExpressionId, ExpressionId);
-define_new_ast_id!(ConditionalExpressionId, ExpressionId);
-define_new_ast_id!(BinaryExpressionId, ExpressionId);
-define_new_ast_id!(UnaryExpressionId, ExpressionId);
-define_new_ast_id!(IndexingExpressionId, ExpressionId);
-define_new_ast_id!(SlicingExpressionId, ExpressionId);
-define_new_ast_id!(SelectExpressionId, ExpressionId);
-define_new_ast_id!(ArrayExpressionId, ExpressionId);
-define_new_ast_id!(ConstantExpressionId, ExpressionId);
-define_new_ast_id!(CallExpressionId, ExpressionId);
-define_new_ast_id!(VariableExpressionId, ExpressionId);
+define_aliased_ast_id!(ExpressionId, Id<Expression>, Expression, expressions);
+define_new_ast_id!(AssignmentExpressionId, ExpressionId, AssignmentExpression, Expression::Assignment, expressions);
+define_new_ast_id!(ConditionalExpressionId, ExpressionId, ConditionalExpression, Expression::Conditional, expressions);
+define_new_ast_id!(BinaryExpressionId, ExpressionId, BinaryExpression, Expression::Binary, expressions);
+define_new_ast_id!(UnaryExpressionId, ExpressionId, UnaryExpression, Expression::Unary, expressions);
+define_new_ast_id!(IndexingExpressionId, ExpressionId, IndexingExpression, Expression::Indexing, expressions);
+define_new_ast_id!(SlicingExpressionId, ExpressionId, SlicingExpression, Expression::Slicing, expressions);
+define_new_ast_id!(SelectExpressionId, ExpressionId, SelectExpression, Expression::Select, expressions);
+define_new_ast_id!(ArrayExpressionId, ExpressionId, ArrayExpression, Expression::Array, expressions);
+define_new_ast_id!(ConstantExpressionId, ExpressionId, ConstantExpression, Expression::Constant, expressions);
+define_new_ast_id!(CallExpressionId, ExpressionId, CallExpression, Expression::Call, expressions);
+define_new_ast_id!(VariableExpressionId, ExpressionId, VariableExpression, Expression::Variable, expressions);
 
 // TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -435,133 +480,6 @@ impl Heap {
     }
 }
 
-impl Index<RootId> for Heap {
-    type Output = Root;
-    fn index(&self, index: RootId) -> &Self::Output {
-        &self.protocol_descriptions[index]
-    }
-}
-
-impl IndexMut<RootId> for Heap {
-    fn index_mut(&mut self, index: RootId) -> &mut Self::Output {
-        &mut self.protocol_descriptions[index]
-    }
-}
-
-impl Index<PragmaId> for Heap {
-    type Output = Pragma;
-    fn index(&self, index: PragmaId) -> &Self::Output {
-        &self.pragmas[index]
-    }
-}
-
-impl Index<ImportId> for Heap {
-    type Output = Import;
-    fn index(&self, index: ImportId) -> &Self::Output {
-        &self.imports[index]
-    }
-}
-
-impl IndexMut<ImportId> for Heap {
-    fn index_mut(&mut self, index: ImportId) -> &mut Self::Output {
-        &mut self.imports[index]
-    }
-}
-
-impl Index<ParserTypeId> for Heap {
-    type Output = ParserType;
-    fn index(&self, index: ParserTypeId) -> &Self::Output {
-        &self.parser_types[index]
-    }
-}
-
-impl IndexMut<ParserTypeId> for Heap {
-    fn index_mut(&mut self, index: ParserTypeId) -> &mut Self::Output {
-        &mut self.parser_types[index]
-    }
-}
-
-impl Index<VariableId> for Heap {
-    type Output = Variable;
-    fn index(&self, index: VariableId) -> &Self::Output {
-        &self.variables[index]
-    }
-}
-
-impl Index<ParameterId> for Heap {
-    type Output = Parameter;
-    fn index(&self, index: ParameterId) -> &Self::Output {
-        &self.variables[index.0].as_parameter()
-    }
-}
-
-impl Index<LocalId> for Heap {
-    type Output = Local;
-    fn index(&self, index: LocalId) -> &Self::Output {
-        &self.variables[index.0].as_local()
-    }
-}
-
-impl IndexMut<LocalId> for Heap {
-    fn index_mut(&mut self, index: LocalId) -> &mut Self::Output {
-        self.variables[index.0].as_local_mut()
-    }
-}
-
-impl Index<DefinitionId> for Heap {
-    type Output = Definition;
-    fn index(&self, index: DefinitionId) -> &Self::Output {
-        &self.definitions[index]
-    }
-}
-
-impl Index<ComponentId> for Heap {
-    type Output = Component;
-    fn index(&self, index: ComponentId) -> &Self::Output {
-        &self.definitions[index.0].as_component()
-    }
-}
-
-impl Index<FunctionId> for Heap {
-    type Output = Function;
-    fn index(&self, index: FunctionId) -> &Self::Output {
-        &self.definitions[index.0].as_function()
-    }
-}
-
-impl Index<StatementId> for Heap {
-    type Output = Statement;
-    fn index(&self, index: StatementId) -> &Self::Output {
-        &self.statements[index]
-    }
-}
-
-impl IndexMut<StatementId> for Heap {
-    fn index_mut(&mut self, index: StatementId) -> &mut Self::Output {
-        &mut self.statements[index]
-    }
-}
-
-impl Index<BlockStatementId> for Heap {
-    type Output = BlockStatement;
-    fn index(&self, index: BlockStatementId) -> &Self::Output {
-        &self.statements[index.0].as_block()
-    }
-}
-
-impl IndexMut<BlockStatementId> for Heap {
-    fn index_mut(&mut self, index: BlockStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_block_mut()
-    }
-}
-
-impl Index<LocalStatementId> for Heap {
-    type Output = LocalStatement;
-    fn index(&self, index: LocalStatementId) -> &Self::Output {
-        &self.statements[index.0].as_local()
-    }
-}
-
 impl Index<MemoryStatementId> for Heap {
     type Output = MemoryStatement;
     fn index(&self, index: MemoryStatementId) -> &Self::Output {
@@ -573,249 +491,6 @@ impl Index<ChannelStatementId> for Heap {
     type Output = ChannelStatement;
     fn index(&self, index: ChannelStatementId) -> &Self::Output {
         &self.statements[index.0.0].as_channel()
-    }
-}
-
-impl Index<SkipStatementId> for Heap {
-    type Output = SkipStatement;
-    fn index(&self, index: SkipStatementId) -> &Self::Output {
-        &self.statements[index.0].as_skip()
-    }
-}
-
-impl Index<LabeledStatementId> for Heap {
-    type Output = LabeledStatement;
-    fn index(&self, index: LabeledStatementId) -> &Self::Output {
-        &self.statements[index.0].as_labeled()
-    }
-}
-
-impl IndexMut<LabeledStatementId> for Heap {
-    fn index_mut(&mut self, index: LabeledStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_labeled_mut()
-    }
-}
-
-impl Index<IfStatementId> for Heap {
-    type Output = IfStatement;
-    fn index(&self, index: IfStatementId) -> &Self::Output {
-        &self.statements[index.0].as_if()
-    }
-}
-
-impl IndexMut<IfStatementId> for Heap {
-    fn index_mut(&mut self, index: IfStatementId) -> &mut Self::Output {
-        self.statements[index.0].as_if_mut()
-    }
-}
-
-impl Index<EndIfStatementId> for Heap {
-    type Output = EndIfStatement;
-    fn index(&self, index: EndIfStatementId) -> &Self::Output {
-        &self.statements[index.0].as_end_if()
-    }
-}
-
-impl Index<WhileStatementId> for Heap {
-    type Output = WhileStatement;
-    fn index(&self, index: WhileStatementId) -> &Self::Output {
-        &self.statements[index.0].as_while()
-    }
-}
-
-impl IndexMut<WhileStatementId> for Heap {
-    fn index_mut(&mut self, index: WhileStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_while_mut()
-    }
-}
-
-impl Index<BreakStatementId> for Heap {
-    type Output = BreakStatement;
-    fn index(&self, index: BreakStatementId) -> &Self::Output {
-        &self.statements[index.0].as_break()
-    }
-}
-
-impl IndexMut<BreakStatementId> for Heap {
-    fn index_mut(&mut self, index: BreakStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_break_mut()
-    }
-}
-
-impl Index<ContinueStatementId> for Heap {
-    type Output = ContinueStatement;
-    fn index(&self, index: ContinueStatementId) -> &Self::Output {
-        &self.statements[index.0].as_continue()
-    }
-}
-
-impl IndexMut<ContinueStatementId> for Heap {
-    fn index_mut(&mut self, index: ContinueStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_continue_mut()
-    }
-}
-
-impl Index<SynchronousStatementId> for Heap {
-    type Output = SynchronousStatement;
-    fn index(&self, index: SynchronousStatementId) -> &Self::Output {
-        &self.statements[index.0].as_synchronous()
-    }
-}
-
-impl IndexMut<SynchronousStatementId> for Heap {
-    fn index_mut(&mut self, index: SynchronousStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_synchronous_mut()
-    }
-}
-
-impl Index<EndSynchronousStatementId> for Heap {
-    type Output = EndSynchronousStatement;
-    fn index(&self, index: EndSynchronousStatementId) -> &Self::Output {
-        &self.statements[index.0].as_end_synchronous()
-    }
-}
-
-impl Index<ReturnStatementId> for Heap {
-    type Output = ReturnStatement;
-    fn index(&self, index: ReturnStatementId) -> &Self::Output {
-        &self.statements[index.0].as_return()
-    }
-}
-
-impl Index<AssertStatementId> for Heap {
-    type Output = AssertStatement;
-    fn index(&self, index: AssertStatementId) -> &Self::Output {
-        &self.statements[index.0].as_assert()
-    }
-}
-
-impl Index<GotoStatementId> for Heap {
-    type Output = GotoStatement;
-    fn index(&self, index: GotoStatementId) -> &Self::Output {
-        &self.statements[index.0].as_goto()
-    }
-}
-
-impl IndexMut<GotoStatementId> for Heap {
-    fn index_mut(&mut self, index: GotoStatementId) -> &mut Self::Output {
-        (&mut self.statements[index.0]).as_goto_mut()
-    }
-}
-
-impl Index<NewStatementId> for Heap {
-    type Output = NewStatement;
-    fn index(&self, index: NewStatementId) -> &Self::Output {
-        &self.statements[index.0].as_new()
-    }
-}
-
-impl Index<PutStatementId> for Heap {
-    type Output = PutStatement;
-    fn index(&self, index: PutStatementId) -> &Self::Output {
-        &self.statements[index.0].as_put()
-    }
-}
-
-impl Index<ExpressionStatementId> for Heap {
-    type Output = ExpressionStatement;
-    fn index(&self, index: ExpressionStatementId) -> &Self::Output {
-        &self.statements[index.0].as_expression()
-    }
-}
-
-impl Index<ExpressionId> for Heap {
-    type Output = Expression;
-    fn index(&self, index: ExpressionId) -> &Self::Output {
-        &self.expressions[index]
-    }
-}
-
-impl Index<AssignmentExpressionId> for Heap {
-    type Output = AssignmentExpression;
-    fn index(&self, index: AssignmentExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_assignment()
-    }
-}
-
-impl Index<ConditionalExpressionId> for Heap {
-    type Output = ConditionalExpression;
-    fn index(&self, index: ConditionalExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_conditional()
-    }
-}
-
-impl Index<BinaryExpressionId> for Heap {
-    type Output = BinaryExpression;
-    fn index(&self, index: BinaryExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_binary()
-    }
-}
-
-impl Index<UnaryExpressionId> for Heap {
-    type Output = UnaryExpression;
-    fn index(&self, index: UnaryExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_unary()
-    }
-}
-
-impl Index<IndexingExpressionId> for Heap {
-    type Output = IndexingExpression;
-    fn index(&self, index: IndexingExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_indexing()
-    }
-}
-
-impl Index<SlicingExpressionId> for Heap {
-    type Output = SlicingExpression;
-    fn index(&self, index: SlicingExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_slicing()
-    }
-}
-
-impl Index<SelectExpressionId> for Heap {
-    type Output = SelectExpression;
-    fn index(&self, index: SelectExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_select()
-    }
-}
-
-impl Index<ArrayExpressionId> for Heap {
-    type Output = ArrayExpression;
-    fn index(&self, index: ArrayExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_array()
-    }
-}
-
-impl Index<ConstantExpressionId> for Heap {
-    type Output = ConstantExpression;
-    fn index(&self, index: ConstantExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_constant()
-    }
-}
-
-impl Index<CallExpressionId> for Heap {
-    type Output = CallExpression;
-    fn index(&self, index: CallExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_call()
-    }
-}
-
-impl IndexMut<CallExpressionId> for Heap {
-    fn index_mut(&mut self, index: CallExpressionId) -> &mut Self::Output {
-        (&mut self.expressions[index.0]).as_call_mut()
-    }
-}
-
-impl Index<VariableExpressionId> for Heap {
-    type Output = VariableExpression;
-    fn index(&self, index: VariableExpressionId) -> &Self::Output {
-        &self.expressions[index.0].as_variable()
-    }
-}
-
-impl IndexMut<VariableExpressionId> for Heap {
-    fn index_mut(&mut self, index: VariableExpressionId) -> &mut Self::Output {
-        (&mut self.expressions[index.0]).as_variable_mut()
     }
 }
 
@@ -2233,6 +1908,19 @@ impl SyntaxElement for ExpressionStatement {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum ExpressionParent {
+    None, // only set during initial parsing
+    Memory(MemoryStatementId),
+    If(IfStatementId),
+    While(WhileStatementId),
+    Return(ReturnStatementId),
+    Assert(AssertStatementId),
+    Put(PutStatementId, u32), // index of arg
+    ExpressionStmt(ExpressionStatementId),
+    Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Expression {
     Assignment(AssignmentExpression),
@@ -2327,6 +2015,37 @@ impl Expression {
             _ => panic!("Unable to cast `Expression` to `VariableExpression`"),
         }
     }
+    // TODO: @cleanup
+    pub fn parent(&self) -> &ExpressionParent {
+        match self {
+            Expression::Assignment(expr) => &expr.parent,
+            Expression::Conditional(expr) => &expr.parent,
+            Expression::Binary(expr) => &expr.parent,
+            Expression::Unary(expr) => &expr.parent,
+            Expression::Indexing(expr) => &expr.parent,
+            Expression::Slicing(expr) => &expr.parent,
+            Expression::Select(expr) => &expr.parent,
+            Expression::Array(expr) => &expr.parent,
+            Expression::Constant(expr) => &expr.parent,
+            Expression::Call(expr) => &expr.parent,
+            Expression::Variable(expr) => &expr.parent,
+        }
+    }
+    pub fn set_parent(&mut self, parent: ExpressionParent) {
+        match self {
+            Expression::Assignment(expr) => expr.parent = parent,
+            Expression::Conditional(expr) => expr.parent = parent,
+            Expression::Binary(expr) => expr.parent = parent,
+            Expression::Unary(expr) => expr.parent = parent,
+            Expression::Indexing(expr) => expr.parent = parent,
+            Expression::Slicing(expr) => expr.parent = parent,
+            Expression::Select(expr) => expr.parent = parent,
+            Expression::Array(expr) => expr.parent = parent,
+            Expression::Constant(expr) => expr.parent = parent,
+            Expression::Call(expr) => expr.parent = parent,
+            Expression::Variable(expr) => expr.parent = parent,
+        }
+    }
 }
 
 impl SyntaxElement for Expression {
@@ -2370,6 +2089,8 @@ pub struct AssignmentExpression {
     pub left: ExpressionId,
     pub operation: AssignmentOperator,
     pub right: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for AssignmentExpression {
@@ -2386,6 +2107,8 @@ pub struct ConditionalExpression {
     pub test: ExpressionId,
     pub true_expression: ExpressionId,
     pub false_expression: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for ConditionalExpression {
@@ -2425,6 +2148,8 @@ pub struct BinaryExpression {
     pub left: ExpressionId,
     pub operation: BinaryOperator,
     pub right: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for BinaryExpression {
@@ -2452,6 +2177,8 @@ pub struct UnaryExpression {
     pub position: InputPosition,
     pub operation: UnaryOperation,
     pub expression: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for UnaryExpression {
@@ -2467,6 +2194,8 @@ pub struct IndexingExpression {
     pub position: InputPosition,
     pub subject: ExpressionId,
     pub index: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for IndexingExpression {
@@ -2483,6 +2212,8 @@ pub struct SlicingExpression {
     pub subject: ExpressionId,
     pub from_index: ExpressionId,
     pub to_index: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for SlicingExpression {
@@ -2498,6 +2229,8 @@ pub struct SelectExpression {
     pub position: InputPosition,
     pub subject: ExpressionId,
     pub field: Field,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for SelectExpression {
@@ -2512,6 +2245,8 @@ pub struct ArrayExpression {
     // Phase 1: parser
     pub position: InputPosition,
     pub elements: Vec<ExpressionId>,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for ArrayExpression {
@@ -2527,6 +2262,8 @@ pub struct CallExpression {
     pub position: InputPosition,
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for CallExpression {
@@ -2541,6 +2278,8 @@ pub struct ConstantExpression {
     // Phase 1: parser
     pub position: InputPosition,
     pub value: Constant,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for ConstantExpression {
@@ -2557,6 +2296,7 @@ pub struct VariableExpression {
     pub identifier: NamespacedIdentifier,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
+    pub parent: ExpressionParent,
 }
 
 impl SyntaxElement for VariableExpression {

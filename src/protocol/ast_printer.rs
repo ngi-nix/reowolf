@@ -489,6 +489,8 @@ impl ASTWriter {
                 self.write_expr(heap, expr.left, indent3);
                 self.kv(indent2).with_s_key("Right");
                 self.write_expr(heap, expr.right, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Conditional(expr) => {
                 self.kv(indent).with_id(PREFIX_CONDITIONAL_EXPR_ID, expr.this.0.index)
@@ -499,6 +501,8 @@ impl ASTWriter {
                 self.write_expr(heap, expr.true_expression, indent3);
                 self.kv(indent2).with_s_key("FalseExpression");
                 self.write_expr(heap, expr.false_expression, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Binary(expr) => {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
@@ -508,6 +512,8 @@ impl ASTWriter {
                 self.write_expr(heap, expr.left, indent3);
                 self.kv(indent2).with_s_key("Right");
                 self.write_expr(heap, expr.right, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Unary(expr) => {
                 self.kv(indent).with_id(PREFIX_UNARY_EXPR_ID, expr.this.0.index)
@@ -515,6 +521,8 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Operation").with_debug_val(&expr.operation);
                 self.kv(indent2).with_s_key("Argument");
                 self.write_expr(heap, expr.expression, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Indexing(expr) => {
                 self.kv(indent).with_id(PREFIX_INDEXING_EXPR_ID, expr.this.0.index)
@@ -523,6 +531,8 @@ impl ASTWriter {
                 self.write_expr(heap, expr.subject, indent3);
                 self.kv(indent2).with_s_key("Index");
                 self.write_expr(heap, expr.index, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Slicing(expr) => {
                 self.kv(indent).with_id(PREFIX_SLICING_EXPR_ID, expr.this.0.index)
@@ -533,6 +543,8 @@ impl ASTWriter {
                 self.write_expr(heap, expr.from_index, indent3);
                 self.kv(indent2).with_s_key("ToIndex");
                 self.write_expr(heap, expr.to_index, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Select(expr) => {
                 self.kv(indent).with_id(PREFIX_SELECT_EXPR_ID, expr.this.0.index)
@@ -548,6 +560,8 @@ impl ASTWriter {
                         self.kv(indent2).with_s_key("Field").with_ascii_val(&field.value);
                     }
                 }
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Array(expr) => {
                 self.kv(indent).with_id(PREFIX_ARRAY_EXPR_ID, expr.this.0.index)
@@ -556,6 +570,9 @@ impl ASTWriter {
                 for expr_id in &expr.elements {
                     self.write_expr(heap, *expr_id, indent3);
                 }
+
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Constant(expr) => {
                 self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.index)
@@ -569,6 +586,9 @@ impl ASTWriter {
                     Constant::Character(char) => { val.with_ascii_val(char); },
                     Constant::Integer(int) => { val.with_disp_val(int); },
                 }
+
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Call(expr) => {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
@@ -593,6 +613,10 @@ impl ASTWriter {
                 for arg_id in &expr.arguments {
                     self.write_expr(heap, *arg_id, indent3);
                 }
+
+                // Parent
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Variable(expr) => {
                 self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.index)
@@ -600,6 +624,8 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&expr.identifier.value);
                 self.kv(indent2).with_s_key("Definition")
                     .with_opt_disp_val(expr.declaration.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             }
         }
     }
@@ -669,4 +695,20 @@ fn write_type(target: &mut String, heap: &Heap, t: &ParserType) {
         }
         target.write_str(">");
     }
+}
+
+fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
+    use ExpressionParent as EP;
+
+    *target = match parent {
+        EP::None => String::from("None"),
+        EP::Memory(id) => format!("MemoryStmt({})", id.0.0.index),
+        EP::If(id) => format!("IfStmt({})", id.0.index),
+        EP::While(id) => format!("WhileStmt({})", id.0.index),
+        EP::Return(id) => format!("ReturnStmt({})", id.0.index),
+        EP::Assert(id) => format!("AssertStmt({})", id.0.index),
+        EP::Put(id, idx) => format!("PutStmt({}, {})", id.0.index, idx),
+        EP::ExpressionStmt(id) => format!("ExprStmt({})", id.0.index),
+        EP::Expression(id, idx) => format!("Expr({}, {})", id.index, idx)
+    };
 }

@@ -743,6 +743,7 @@ impl Lexer<'_> {
                 left,
                 operation,
                 right,
+                parent: ExpressionParent::None,
             })
             .upcast())
         } else {
@@ -819,6 +820,7 @@ impl Lexer<'_> {
                 test,
                 true_expression,
                 false_expression,
+                parent: ExpressionParent::None,
             })
             .upcast())
         } else {
@@ -843,6 +845,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -866,6 +869,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -889,6 +893,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -912,6 +917,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -935,6 +941,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -958,6 +965,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -987,6 +995,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -1026,6 +1035,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -1057,6 +1067,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -1088,6 +1099,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -1123,6 +1135,7 @@ impl Lexer<'_> {
                     left,
                     operation,
                     right,
+                    parent: ExpressionParent::None,
                 })
                 .upcast();
         }
@@ -1173,6 +1186,7 @@ impl Lexer<'_> {
                     position,
                     operation,
                     expression,
+                    parent: ExpressionParent::None,
                 })
                 .upcast());
         }
@@ -1198,6 +1212,7 @@ impl Lexer<'_> {
                         position,
                         operation,
                         expression,
+                        parent: ExpressionParent::None,
                     })
                     .upcast();
             } else if self.has_string(b"--") {
@@ -1211,6 +1226,7 @@ impl Lexer<'_> {
                         position,
                         operation,
                         expression,
+                        parent: ExpressionParent::None,
                     })
                     .upcast();
             } else if self.has_string(b"[") {
@@ -1236,6 +1252,7 @@ impl Lexer<'_> {
                             subject,
                             from_index: index,
                             to_index,
+                            parent: ExpressionParent::None,
                         })
                         .upcast();
                 } else {
@@ -1245,6 +1262,7 @@ impl Lexer<'_> {
                             position,
                             subject,
                             index,
+                            parent: ExpressionParent::None,
                         })
                         .upcast();
                 }
@@ -1268,6 +1286,7 @@ impl Lexer<'_> {
                         position,
                         subject,
                         field,
+                        parent: ExpressionParent::None,
                     })
                     .upcast();
             }
@@ -1310,7 +1329,12 @@ impl Lexer<'_> {
             }
         }
         self.consume_string(b"}")?;
-        Ok(h.alloc_array_expression(|this| ArrayExpression { this, position, elements }))
+        Ok(h.alloc_array_expression(|this| ArrayExpression {
+            this,
+            position,
+            elements,
+            parent: ExpressionParent::None,
+        }))
     }
     fn has_constant(&self) -> bool {
         is_constant(self.source.next())
@@ -1351,7 +1375,12 @@ impl Lexer<'_> {
 
             value = Constant::Integer(self.consume_integer()?);
         }
-        Ok(h.alloc_constant_expression(|this| ConstantExpression { this, position, value }))
+        Ok(h.alloc_constant_expression(|this| ConstantExpression {
+            this,
+            position,
+            value,
+            parent: ExpressionParent::None,
+        }))
     }
     fn has_call_expression(&mut self) -> bool {
         /* We prevent ambiguity with variables, by looking ahead
@@ -1413,7 +1442,8 @@ impl Lexer<'_> {
             this,
             position,
             method,
-            arguments
+            arguments,
+            parent: ExpressionParent::None,
         }))
     }
     fn consume_variable_expression(
@@ -1427,6 +1457,7 @@ impl Lexer<'_> {
             position,
             identifier,
             declaration: None,
+            parent: ExpressionParent::None,
         }))
     }
 

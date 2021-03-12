@@ -1,3 +1,5 @@
+use std::mem::{replace, swap};
+
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use crate::protocol::parser::{symbol_table::*, type_table::*};
@@ -9,6 +11,7 @@ use super::visitor::{
     Visitor2, 
     VisitorResult
 };
+use crate::protocol::ast::ExpressionParent::ExpressionStmt;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
@@ -51,6 +54,9 @@ pub(crate) struct ValidityAndLinkerVisitor {
     cur_scope: Option<Scope>,
     def_type: DefinitionType,
     performing_breadth_pass: bool,
+    // Parent expression (the previous stmt/expression we visited that could be
+    // used as an expression parent)
+    expr_parent: ExpressionParent,
     // Keeping track of relative position in block in the breadth-first pass.
     // May not correspond to block.statement[index] if any statements are
     // inserted after the breadth-pass
@@ -72,6 +78,7 @@ impl ValidityAndLinkerVisitor {
             in_sync: None,
             in_while: None,
             cur_scope: None,
+            expr_parent: ExpressionParent::None,
             def_type: DefinitionType::Primitive,
             performing_breadth_pass: false,
             relative_pos_in_block: 0,
@@ -85,10 +92,12 @@ impl ValidityAndLinkerVisitor {
         self.in_sync = None;
         self.in_while = None;
         self.cur_scope = None;
+        self.expr_parent = ExpressionParent::None;
         self.def_type = DefinitionType::Primitive;
         self.relative_pos_in_block = 0;
         self.performing_breadth_pass = false;
         self.statement_buffer.clear();
+        self.expression_buffer.clear();
         self.insert_buffer.clear();
     }
 }
@@ -106,6 +115,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             ComponentVariant::Composite => DefinitionType::Composite,
         };
         self.cur_scope = Some(Scope::Definition(id.upcast()));
+        self.expr_parent = ExpressionParent::None;
         let body_id = ctx.heap[id].body;
 
         self.performing_breadth_pass = true;
@@ -120,8 +130,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         // Set internal statement indices
         self.def_type = DefinitionType::Function;
         self.cur_scope = Some(Scope::Definition(id.upcast()));
-        let body_id = ctx.heap[id].body;
+        self.expr_parent = ExpressionParent::None;
 
+        let body_id = ctx.heap[id].body;
         self.performing_breadth_pass = true;
         self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
@@ -141,7 +152,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let variable_id = ctx.heap[id].variable;
             self.checked_local_add(ctx, self.relative_pos_in_block, variable_id)?;
         } else {
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::Memory(id);
             self.visit_expr(ctx, ctx.heap[id].initial)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -197,7 +211,12 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 let stmt = &ctx.heap[id];
                 (stmt.test, stmt.true_body, stmt.false_body)
             };
+
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::If(id);
             self.visit_expr(ctx, test_id)?;
+            self.expr_parent = ExpressionParent::None;
+
             self.visit_stmt(ctx, true_id)?;
             self.visit_stmt(ctx, false_id)?;
         }
@@ -227,7 +246,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 (stmt.test, stmt.body)
             };
             let old_while = self.in_while.replace(id);
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::While(id);
             self.visit_expr(ctx, test_id)?;
+            self.expr_parent = ExpressionParent::None;
+
             self.visit_stmt(ctx, body_id)?;
             self.in_while = old_while;
         }
@@ -318,7 +341,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
         } else {
             // If here then we are within a function
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::Return(id);
             self.visit_expr(ctx, ctx.heap[id].expression)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -345,7 +371,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 );
             }
         } else {
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::Assert(id);
             let expr_id = stmt.expression;
+            self.expr_parent = ExpressionParent::None;
             self.visit_expr(ctx, expr_id)?;
         }
 
@@ -466,8 +495,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let put_stmt = &ctx.heap[id];
             let port = put_stmt.port;
             let message = put_stmt.message;
+
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::Put(id, 0);
             self.visit_expr(ctx, port)?;
+            self.expr_parent = ExpressionParent::Put(id, 1);
             self.visit_expr(ctx, message)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -476,7 +510,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_expr_stmt(&mut self, ctx: &mut Ctx, id: ExpressionStatementId) -> VisitorResult {
         if !self.performing_breadth_pass {
             let expr_id = ctx.heap[id].expression;
+
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::ExpressionStmt(id);
             self.visit_expr(ctx, expr_id)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -489,23 +527,42 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let assignment_expr = &ctx.heap[id];
+
+        let upcast_id = id.upcast();
+        let assignment_expr = &mut ctx.heap[id];
+
         let left_expr_id = assignment_expr.left;
         let right_expr_id = assignment_expr.right;
+        let old_expr_parent = self.expr_parent;
+        assignment_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, left_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, right_expr_id)?;
+        self.expr_parent = old_expr_parent;
         Ok(())
     }
 
     fn visit_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let conditional_expr = &ctx.heap[id];
+        let upcast_id = id.upcast();
+        let conditional_expr = &mut ctx.heap[id];
+
         let test_expr_id = conditional_expr.test;
         let true_expr_id = conditional_expr.true_expression;
         let false_expr_id = conditional_expr.false_expression;
+        let old_expr_parent = self.expr_parent;
+        conditional_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, test_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, true_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 2);
         self.visit_expr(ctx, false_expr_id)?;
+        self.expr_parent = old_expr_parent;
+
         Ok(())
     }
 

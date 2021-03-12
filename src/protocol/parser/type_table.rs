@@ -228,109 +228,29 @@ impl TypeIterator {
     }
 }
 
-// #[derive(PartialEq, Eq)]
-// enum SpecifiedTypeVariant {
-//     // No subtypes
-//     Message,
-//     Bool,
-//     Byte,
-//     Short,
-//     Int,
-//     Long,
-//     String,
-//     // Always one subtype
-//     ArrayOf,
-//     InputOf,
-//     OutputOf,
-//     // Variable number of subtypes, depending on the polymorphic arguments on
-//     // the definition
-//     InstanceOf(DefinitionId, usize)
-// }
+pub(crate) enum ConcreteTypeVariant {
+    // No subtypes
+    Message,
+    Bool,
+    Byte,
+    Short,
+    Int,
+    Long,
+    String,
+    // One subtype
+    Array,
+    Slice,
+    Input,
+    Output,
+    // Multiple subtypes (definition of thing and number of poly args)
+    Instance(DefinitionId, usize)
+}
 
-// #[derive(Eq)]
-// struct SpecifiedType {
-//     /// Definition ID, may not be enough as the type may be polymorphic
-//     definition: DefinitionId,
-//     /// The polymorphic types for the definition. These are encoded in a list,
-//     /// which we interpret as the depth-first serialization of the type tree.
-//     poly_vars: Vec<SpecifiedTypeVariant>
-// }
-//
-// impl PartialEq for SpecifiedType {
-//     fn eq(&self, other: &Self) -> bool {
-//         // Should point to same definition and have the same polyvars
-//         if self.definition.index != other.definition.index { return false; }
-//         if self.poly_vars.len() != other.poly_vars.len() { return false; }
-//         for (my_var, other_var) in self.poly_vars.iter().zip(other.poly_vars.iter()) {
-//             if my_var != other_var { return false; }
-//         }
-//
-//         return true
-//     }
-// }
-//
-// impl SpecifiedType {
-//     fn new_non_polymorph(definition: DefinitionId) -> Self {
-//         Self{ definition, poly_vars: Vec::new() }
-//     }
-//
-//     fn new_polymorph(definition: DefinitionId, heap: &Heap, parser_type_id: ParserTypeId) -> Self {
-//         // Serialize into concrete types
-//         let mut poly_vars = Vec::new();
-//         Self::construct_poly_vars(&mut poly_vars, heap, parser_type_id);
-//         Self{ definition, poly_vars }
-//     }
-//
-//     fn construct_poly_vars(poly_vars: &mut Vec<SpecifiedTypeVariant>, heap: &Heap, parser_type_id: ParserTypeId) {
-//         // Depth-first construction of poly vars
-//         let parser_type = &heap[parser_type_id];
-//         match &parser_type.variant {
-//             ParserTypeVariant::Message => { poly_vars.push(SpecifiedTypeVariant::Message); },
-//             ParserTypeVariant::Bool => { poly_vars.push(SpecifiedTypeVariant::Bool); },
-//             ParserTypeVariant::Byte => { poly_vars.push(SpecifiedTypeVariant::Byte); },
-//             ParserTypeVariant::Short => { poly_vars.push(SpecifiedTypeVariant::Short); },
-//             ParserTypeVariant::Int => { poly_vars.push(SpecifiedTypeVariant::Int); },
-//             ParserTypeVariant::Long => { poly_vars.push(SpecifiedTypeVariant::Long); },
-//             ParserTypeVariant::String => { poly_vars.push(SpecifiedTypeVariant::String); },
-//             ParserTypeVariant::Array(subtype_id) => {
-//                 poly_vars.push(SpecifiedTypeVariant::ArrayOf);
-//                 Self::construct_poly_vars(poly_vars, heap, *subtype_id);
-//             },
-//             ParserTypeVariant::Input(subtype_id) => {
-//                 poly_vars.push(SpecifiedTypeVariant::InputOf);
-//                 Self::construct_poly_vars(poly_vars, heap, *subtype_id);
-//             },
-//             ParserTypeVariant::Output(subtype_id) => {
-//                 poly_vars.push(SpecifiedTypeVariant::OutputOf);
-//                 Self::construct_poly_vars(poly_vars, heap, *subtype_id);
-//             },
-//             ParserTypeVariant::Symbolic(symbolic) => {
-//                 let definition_id = match symbolic.variant {
-//                     SymbolicParserTypeVariant::Definition(definition_id) => definition_id,
-//                     SymbolicParserTypeVariant::PolyArg(_) => {
-//                         // When construct entries in the type table, we no longer allow the
-//                         // unspecified types in the AST, we expect them to be fully inferred.
-//                         debug_assert!(false, "Encountered 'PolyArg' symbolic type. Expected fully inferred types");
-//                         unreachable!();
-//                     }
-//                 };
-//
-//                 poly_vars.push(SpecifiedTypeVariant::InstanceOf(definition_id, symbolic.poly_args.len()));
-//                 for subtype_id in &symbolic.poly_args {
-//                     Self::construct_poly_vars(poly_vars, heap, *subtype_id);
-//                 }
-//             },
-//             ParserTypeVariant::IntegerLiteral => {
-//                 debug_assert!(false, "Encountered 'IntegerLiteral' symbolic type. Expected fully inferred types");
-//                 unreachable!();
-//             },
-//             ParserTypeVariant::Inferred => {
-//                 debug_assert!(false, "Encountered 'Inferred' symbolic type. Expected fully inferred types");
-//                 unreachable!();
-//             }
-//         }
-//     }
-// }
+pub(crate) struct ConcreteType {
+    // serialized version (interpret as serialized depth-first tree, with
+    // variant indicating the number of children (subtypes))
+    pub(crate) v: Vec<ConcreteTypeVariant>
+}
 
 /// Result from attempting to resolve a `ParserType` using the symbol table and
 /// the type table.

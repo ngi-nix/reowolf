@@ -1,4 +1,5 @@
 use crate::protocol::ast::*;
+use super::type_table::{ConcreteType, ConcreteTypeVariant};
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
@@ -6,6 +7,7 @@ use super::visitor::{
     Visitor2,
     VisitorResult
 };
+use std::collections::HashMap;
 
 enum ExprType {
     Regular, // expression statement or return statement
@@ -13,6 +15,17 @@ enum ExprType {
     Condition, // if/while conditional statement
     Assert, // assert statement
 }
+
+// TODO: @cleanup I will do a very dirty implementation first, because I have no idea
+//  what I am doing.
+// Very rough idea:
+//  - go through entire AST first, find all places where we have inferred types
+//      (which may be embedded) and store them in some kind of map.
+//  - go through entire AST and visit all expressions depth-first. We will
+//      attempt to resolve the return type of each expression. If we can't then
+//      we store them in another lookup map and link the dependency on an
+//      inferred variable to that expression.
+//  - keep iterating until we have completely resolved all variables.
 
 /// This particular visitor will recurse depth-first into the AST and ensures
 /// that all expressions have the appropriate types. At the moment this implies:
@@ -30,6 +43,10 @@ pub(crate) struct TypeResolvingVisitor {
     // Buffers for iteration over substatements and subexpressions
     stmt_buffer: Vec<StatementId>,
     expr_buffer: Vec<ExpressionId>,
+
+    // Map for associating "auto" variable with a concrete type where it is not
+    // yet determined.
+    env: HashMap<ParserTypeId, ConcreteTypeVariant>
 }
 
 impl TypeResolvingVisitor {
@@ -38,6 +55,7 @@ impl TypeResolvingVisitor {
             expr_type: ExprType::Regular,
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expr_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
+            env: HashMap::new(),
         }
     }
 
@@ -56,6 +74,7 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionId) -> VisitorResult {
         let body_stmt_id = ctx.heap[id].body;
+
         self.visit_stmt(ctx, body_stmt_id)
     }
 
@@ -83,26 +102,16 @@ impl Visitor2 for TypeResolvingVisitor {
     fn visit_local_memory_stmt(&mut self, ctx: &mut Ctx, id: MemoryStatementId) -> VisitorResult {
         let memory_stmt = &ctx.heap[id];
 
-        // Type of local should match the type of the initial expression
 
-
-        // For now, with all variables having an explicit type, it seems we 
-        // do not need to consider all expressions within a single definition in
-        // order to do typechecking and type inference for numeric constants.
-
-        // Since each expression will get an assigned type, and everything 
-        // already has a type, we may traverse leaf-to-root, while assigning
-        // output types. We throw an error if the types do not match. If an
-        // expression's type is already assigned then they should match.
-
-        // Note that for numerical types the information may also travel upward.
-        // That is: if we have:
-        //  
-        //      u32 a = 5 * 2 << 3 + 8
-        // 
-        // Then we may infer that the expression yields a u32 type. As a result
-        // All of the literals 5, 2, 3 and 8 will have type u32 as well.
 
         Ok(())
     }
+
+    fn visit_local_channel_stmt(&mut self, ctx: &mut Ctx, id: ChannelStatementId) -> VisitorResult {
+        Ok(())
+    }
+}
+
+impl TypeResolvingVisitor {
+
 }
