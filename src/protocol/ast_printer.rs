@@ -707,6 +707,7 @@ fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
         EP::While(id) => format!("WhileStmt({})", id.0.index),
         EP::Return(id) => format!("ReturnStmt({})", id.0.index),
         EP::Assert(id) => format!("AssertStmt({})", id.0.index),
+        EP::New(id) => format!("NewStmt({})", id.0.index),
         EP::Put(id, idx) => format!("PutStmt({}, {})", id.0.index, idx),
         EP::ExpressionStmt(id) => format!("ExprStmt({})", id.0.index),
         EP::Expression(id, idx) => format!("Expr({}, {})", id.index, idx)

@@ -44,8 +44,8 @@ pub(crate) struct TypeResolvingVisitor {
     stmt_buffer: Vec<StatementId>,
     expr_buffer: Vec<ExpressionId>,
 
-    // Map for associating "auto" variable with a concrete type where it is not
-    // yet determined.
+    // Map for associating "auto"/"polyarg" variables with a concrete type where
+    // it is not yet determined.
     env: HashMap<ParserTypeId, ConcreteTypeVariant>
 }
 

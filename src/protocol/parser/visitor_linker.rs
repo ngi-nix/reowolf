@@ -372,10 +372,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
         } else {
             debug_assert_eq!(self.expr_parent, ExpressionParent::None);
-            self.expr_parent = ExpressionParent::Assert(id);
             let expr_id = stmt.expression;
-            self.expr_parent = ExpressionParent::None;
+
+            self.expr_parent = ExpressionParent::Assert(id);
             self.visit_expr(ctx, expr_id)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -463,19 +464,25 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // Performing depth pass. The function definition should have been
             // resolved in the breadth pass, now we recurse to evaluate the
             // arguments
+            // TODO: @cleanup Maybe just call `visit_call_expr`?
             let call_expr_id = ctx.heap[id].expression;
-            let call_expr = &ctx.heap[call_expr_id];
+            let call_expr = &mut ctx.heap[call_expr_id];
+            call_expr.parent = ExpressionParent::New(id);
 
             let old_num_exprs = self.expression_buffer.len();
             self.expression_buffer.extend(&call_expr.arguments);
             let new_num_exprs = self.expression_buffer.len();
 
+            let old_expr_parent = self.expr_parent;
+
             for arg_expr_idx in old_num_exprs..new_num_exprs {
                 let arg_expr_id = self.expression_buffer[arg_expr_idx];
+                self.expr_parent = ExpressionParent::Expression(call_expr_id.upcast(), arg_expr_idx as u32);
                 self.visit_expr(ctx, arg_expr_id)?;
             }
 
             self.expression_buffer.truncate(old_num_exprs);
+            self.expr_parent = old_expr_parent;
         }
 
         Ok(())
@@ -552,6 +559,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         let test_expr_id = conditional_expr.test;
         let true_expr_id = conditional_expr.true_expression;
         let false_expr_id = conditional_expr.false_expression;
+
         let old_expr_parent = self.expr_parent;
         conditional_expr.parent = old_expr_parent;
 
@@ -568,73 +576,129 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
     fn visit_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let binary_expr = &ctx.heap[id];
+        let upcast_id = id.upcast();
+        let binary_expr = &mut ctx.heap[id];
         let left_expr_id = binary_expr.left;
         let right_expr_id = binary_expr.right;
+
+        let old_expr_parent = self.expr_parent;
+        binary_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, left_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, right_expr_id)?;
+        self.expr_parent = old_expr_parent;
+
         Ok(())
     }
 
     fn visit_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let expr_id = ctx.heap[id].expression;
+
+        let unary_expr = &mut ctx.heap[id];
+        let expr_id = unary_expr.expression;
+
+        let old_expr_parent = self.expr_parent;
+        unary_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(id.upcast(), 0);
         self.visit_expr(ctx, expr_id)?;
+        self.expr_parent = old_expr_parent;
+
         Ok(())
     }
 
     fn visit_indexing_expr(&mut self, ctx: &mut Ctx, id: IndexingExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let indexing_expr = &ctx.heap[id];
+        let upcast_id = id.upcast();
+        let indexing_expr = &mut ctx.heap[id];
+
         let subject_expr_id = indexing_expr.subject;
         let index_expr_id = indexing_expr.index;
+
+        let old_expr_parent = self.expr_parent;
+        indexing_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, index_expr_id)?;
+        self.expr_parent = old_expr_parent;
+
         Ok(())
     }
 
     fn visit_slicing_expr(&mut self, ctx: &mut Ctx, id: SlicingExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        // TODO: Same as the select expression: slicing depends on the type of
-        //  the thing that is being sliced.
-        let slicing_expr = &ctx.heap[id];
+        let upcast_id = id.upcast();
+        let slicing_expr = &mut ctx.heap[id];
+
         let subject_expr_id = slicing_expr.subject;
         let from_expr_id = slicing_expr.from_index;
         let to_expr_id = slicing_expr.to_index;
+
+        let old_expr_parent = self.expr_parent;
+        slicing_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, from_expr_id)?;
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 2);
         self.visit_expr(ctx, to_expr_id)?;
+        self.expr_parent = old_expr_parent;
+
         Ok(())
     }
 
     fn visit_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let expr_id = ctx.heap[id].subject;
+
+        let select_expr = &mut ctx.heap[id];
+        let expr_id = select_expr.subject;
+
+        let old_expr_parent = self.expr_parent;
+        select_expr.parent = old_expr_parent;
+
+        self.expr_parent = ExpressionParent::Expression(id.upcast(), 0);
         self.visit_expr(ctx, expr_id)?;
+        self.expr_parent = old_expr_parent;
 
         Ok(())
     }
 
     fn visit_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
-        let array_expr = &ctx.heap[id];
+
+        let upcast_id = id.upcast();
+        let array_expr = &mut ctx.heap[id];
 
         let old_num_exprs = self.expression_buffer.len();
         self.expression_buffer.extend(&array_expr.elements);
         let new_num_exprs = self.expression_buffer.len();
 
+        let old_expr_parent = self.expr_parent;
+        array_expr.parent = old_expr_parent;
+
         for field_expr_idx in old_num_exprs..new_num_exprs {
             let field_expr_id = self.expression_buffer[field_expr_idx];
+            self.expr_parent = ExpressionParent::Expression(upcast_id, field_expr_idx as u32);
             self.visit_expr(ctx, field_expr_id)?;
         }
 
         self.expression_buffer.truncate(old_num_exprs);
+        self.expr_parent = old_expr_parent;
 
         Ok(())
     }
 
-    fn visit_constant_expr(&mut self, _ctx: &mut Ctx, _id: ConstantExpressionId) -> VisitorResult {
+    fn visit_constant_expr(&mut self, ctx: &mut Ctx, id: ConstantExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
+
+        let constant_expr = &mut ctx.heap[id];
+        constant_expr.parent = self.expr_parent;
+
         Ok(())
     }
 
@@ -689,18 +753,26 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
         }
 
-        // Parse all the arguments in the depth pass as well
+        // Parse all the arguments in the depth pass as well. Note that we check
+        // the number of arguments in the type checker.
         let call_expr = &mut ctx.heap[id];
+        let upcast_id = id.upcast();
+
         let old_num_exprs = self.expression_buffer.len();
         self.expression_buffer.extend(&call_expr.arguments);
         let new_num_exprs = self.expression_buffer.len();
 
+        let old_expr_parent = self.expr_parent;
+        call_expr.parent = old_expr_parent;
+
         for arg_expr_idx in old_num_exprs..new_num_exprs {
             let arg_expr_id = self.expression_buffer[arg_expr_idx];
+            self.expr_parent = ExpressionParent::Expression(upcast_id, arg_expr_idx as u32);
             self.visit_expr(ctx, arg_expr_id)?;
         }
 
         self.expression_buffer.truncate(old_num_exprs);
+        self.expr_parent = old_expr_parent;
 
         Ok(())
     }
@@ -712,6 +784,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         let variable_id = self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier)?;
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
+        var_expr.parent = self.expr_parent;
 
         Ok(())
     }

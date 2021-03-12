@@ -1916,6 +1916,7 @@ pub enum ExpressionParent {
     While(WhileStatementId),
     Return(ReturnStatementId),
     Assert(AssertStatementId),
+    New(NewStatementId),
     Put(PutStatementId, u32), // index of arg
     ExpressionStmt(ExpressionStatementId),
     Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)
