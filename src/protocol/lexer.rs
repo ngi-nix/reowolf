@@ -369,45 +369,51 @@ impl Lexer<'_> {
     /// the type specification. When done the input position will be at the end
     /// of the type specifications (hence may be at whitespace).
     fn consume_type2(&mut self, h: &mut Heap, allow_inference: bool) -> Result<ParserTypeId, ParseError2> {
-        // Small helper function to convert in/out polymorphic arguments
+        // Small helper function to convert in/out polymorphic arguments. Not
+        // pretty, but return boolean is true if the error is due to inference
+        // not being allowed
         let reduce_port_poly_args = |
             heap: &mut Heap,
             port_pos: &InputPosition,
             args: Vec<ParserTypeId>,
-        | -> Result<ParserTypeId, ()> {
+        | -> Result<ParserTypeId, bool> {
             match args.len() {
-                0 => Ok(heap.alloc_parser_type(|this| ParserType{
+                0 => if allow_inference {  
+                    Ok(heap.alloc_parser_type(|this| ParserType{
                         this,
                         pos: port_pos.clone(),
                         variant: ParserTypeVariant::Inferred
-                })),
+                    }))
+                } else {
+                    Err(true)
+                },
                 1 => Ok(args[0]),
-                _ => Err(())
+                _ => Err(false)
             }
         };
 
         // Consume the type
         let pos = self.source.pos();
         let parser_type_variant = if self.has_keyword(b"msg") {
-            self.consume_keyword(b"msg");
+            self.consume_keyword(b"msg")?;
             ParserTypeVariant::Message
         } else if self.has_keyword(b"boolean") {
-            self.consume_keyword(b"boolean");
+            self.consume_keyword(b"boolean")?;
             ParserTypeVariant::Bool
         } else if self.has_keyword(b"byte") {
-            self.consume_keyword(b"byte");
+            self.consume_keyword(b"byte")?;
             ParserTypeVariant::Byte
         } else if self.has_keyword(b"short") {
-            self.consume_keyword(b"short");
+            self.consume_keyword(b"short")?;
             ParserTypeVariant::Short
         } else if self.has_keyword(b"int") {
-            self.consume_keyword(b"int");
+            self.consume_keyword(b"int")?;
             ParserTypeVariant::Int
         } else if self.has_keyword(b"long") {
-            self.consume_keyword(b"long");
+            self.consume_keyword(b"long")?;
             ParserTypeVariant::Long
         } else if self.has_keyword(b"str") {
-            self.consume_keyword(b"str");
+            self.consume_keyword(b"str")?;
             ParserTypeVariant::String
         } else if self.has_keyword(b"auto") {
             if !allow_inference {
@@ -417,25 +423,37 @@ impl Lexer<'_> {
                 ));
             }
 
-            self.consume_keyword(b"auto");
+            self.consume_keyword(b"auto")?;
             ParserTypeVariant::Inferred
         } else if self.has_keyword(b"in") {
             // TODO: @cleanup: not particularly neat to have this special case
             //  where we enforce polyargs in the parser-phase
-            self.consume_keyword(b"in");
+            // TODO: @hack, temporarily allow inferred port values
+            self.consume_keyword(b"in")?;
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
-                .map_err(|_| ParseError2::new_error(
-                    &self.source, pos, "'in' type only accepts up to 1 polymorphic argument"
-                ))?;
+                .map_err(|infer_error|  {
+                    let msg = if infer_error {
+                        "Type inference is not allowed here"
+                    } else {
+                        "Type 'in' only allows for 1 polymorphic argument"
+                    };
+                    ParseError2::new_error(&self.source, pos, msg)
+                })?;
             ParserTypeVariant::Input(poly_arg)
         } else if self.has_keyword(b"out") {
-            self.consume_keyword(b"out");
+            // TODO: @hack, temporarily allow inferred port values
+            self.consume_keyword(b"out")?;
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
-                .map_err(|_| ParseError2::new_error(
-                    &self.source, pos, "'out' type only accepts up to 1 polymorphic argument"
-                ))?;
+                .map_err(|infer_error| {
+                    let msg = if infer_error {
+                        "Type inference is not allowed here"
+                    } else {
+                        "Type 'out' only allows for 1 polymorphic argument, but {} were specified"
+                    };
+                    ParseError2::new_error(&self.source, pos, msg)
+                })?;
             ParserTypeVariant::Output(poly_arg)
         } else {
             // Must be a symbolic type
@@ -654,86 +672,6 @@ impl Lexer<'_> {
             Ok(vec!())
         }
     }
-
-    // fn consume_primitive_type(&mut self) -> Result<PrimitiveType, ParseError2> {
-    //     if self.has_keyword(b"in") {
-    //         self.consume_keyword(b"in")?;
-    //         Ok(PrimitiveType::Input)
-    //     } else if self.has_keyword(b"out") {
-    //         self.consume_keyword(b"out")?;
-    //         Ok(PrimitiveType::Output)
-    //     } else if self.has_keyword(b"msg") {
-    //         self.consume_keyword(b"msg")?;
-    //         Ok(PrimitiveType::Message)
-    //     } else if self.has_keyword(b"boolean") {
-    //         self.consume_keyword(b"boolean")?;
-    //         Ok(PrimitiveType::Boolean)
-    //     } else if self.has_keyword(b"byte") {
-    //         self.consume_keyword(b"byte")?;
-    //         Ok(PrimitiveType::Byte)
-    //     } else if self.has_keyword(b"short") {
-    //         self.consume_keyword(b"short")?;
-    //         Ok(PrimitiveType::Short)
-    //     } else if self.has_keyword(b"int") {
-    //         self.consume_keyword(b"int")?;
-    //         Ok(PrimitiveType::Int)
-    //     } else if self.has_keyword(b"long") {
-    //         self.consume_keyword(b"long")?;
-    //         Ok(PrimitiveType::Long)
-    //     } else if self.has_keyword(b"auto") {
-    //         // TODO: @types
-    //         return Err(self.error_at_pos("inferred types using 'auto' are reserved, but not yet implemented"));
-    //     } else {
-    //         let identifier = self.consume_namespaced_identifier()?;
-    //         Ok(PrimitiveType::Symbolic(PrimitiveSymbolic{
-    //             identifier,
-    //             definition: None
-    //         }))
-    //     }
-    // }
-    // fn has_array(&mut self) -> bool {
-    //     let backup_pos = self.source.pos();
-    //     let mut result = false;
-    //     match self.consume_whitespace(false) {
-    //         Ok(_) => result = self.has_string(b"["),
-    //         Err(_) => {}
-    //     }
-    //     self.source.seek(backup_pos);
-    //     return result;
-    // }
-    // fn consume_type(&mut self) -> Result<Type, ParseError2> {
-    //     let primitive = self.consume_primitive_type()?;
-    //     let array;
-    //     if self.has_array() {
-    //         self.consume_string(b"[]")?;
-    //         array = true;
-    //     } else {
-    //         array = false;
-    //     }
-    //     Ok(Type { primitive, array })
-    // }
-    // fn create_type_annotation_input(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-    //     let position = self.source.pos();
-    //     let the_type = Type::INPUT;
-    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-    //     Ok(id)
-    // }
-    // fn create_type_annotation_output(&self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-    //     let position = self.source.pos();
-    //     let the_type = Type::OUTPUT;
-    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-    //     Ok(id)
-    // }
-    // fn consume_type_annotation(&mut self, h: &mut Heap) -> Result<TypeAnnotationId, ParseError2> {
-    //     let position = self.source.pos();
-    //     let the_type = self.consume_type()?;
-    //     let id = h.alloc_type_annotation(|this| TypeAnnotation { this, position, the_type });
-    //     Ok(id)
-    // }
-    // fn consume_type_annotation_spilled(&mut self) -> Result<(), ParseError2> {
-    //     self.consume_type()?;
-    //     Ok(())
-    // }
 
     // Parameters
 
@@ -1514,19 +1452,14 @@ impl Lexer<'_> {
         result
     }
     fn has_label(&mut self) -> bool {
-        /* To prevent ambiguity with expression statements consisting
-        only of an identifier, we look ahead and match the colon
-        that signals a labeled statement. */
+        // To prevent ambiguity with expression statements consisting only of an
+        // identifier or a namespaced identifier, we look ahead and match on the
+        // *single* colon that signals a labeled statement.
         let backup_pos = self.source.pos();
         let mut result = false;
-        match self.consume_identifier_spilled() {
-            Ok(_) => match self.consume_whitespace(false) {
-                Ok(_) => {
-                    result = self.has_string(b":");
-                }
-                Err(_) => {}
-            },
-            Err(_) => {}
+        if self.consume_identifier_spilled().is_ok() {
+            // next character is ':', second character is NOT ':'
+            result = Some(b':') == self.source.next() && Some(b':') != self.source.lookahead(1)
         }
         self.source.seek(backup_pos);
         return result;

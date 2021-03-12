@@ -1314,7 +1314,7 @@ fn for_msg_byte() {
 
 #[test]
 fn eq_causality() {
-    let test_log_path = Path::new("./logs/eq_no_causality");
+    let test_log_path = Path::new("./logs/eq_causality");
     let pdl = b"
     primitive eq(in a, in b, out c) {
         msg ma = null;
@@ -1368,11 +1368,11 @@ fn eq_causality() {
 fn eq_no_causality() {
     let test_log_path = Path::new("./logs/eq_no_causality");
     let pdl = b"
-    composite eq(in a, in b, out c) {
+    composite eq(in<msg> a, in<msg> b, out<msg> c) {
         channel leftfirsto -> leftfirsti;
         new eqinner(a, b, c, leftfirsto, leftfirsti);
     }
-    primitive eqinner(in a, in b, out c, out leftfirsto, in leftfirsti) {
+    primitive eqinner(in<msg> a, in<msg> b, out<msg> c, out<msg> leftfirsto, in<msg> leftfirsti) {
         msg ma = null;
         msg mb = null;
         while(true) synchronous {
@@ -1397,7 +1397,7 @@ fn eq_no_causality() {
             }
         }
     }
-    primitive quick_test(in a, in b) {
+    primitive quick_test(in<msg> a, in<msg> b) {
         msg ma = null;
         while(true) synchronous {
             if (fires(a)) {

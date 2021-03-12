@@ -15,19 +15,19 @@ pub struct InputSource {
 }
 
 static STD_LIB_PDL: &'static [u8] = b"
-primitive forward(in i, out o) {
+primitive forward(in<msg> i, out<msg> o) {
     while(true) synchronous put(o, get(i));
 }
-primitive sync(in i, out o) {
+primitive sync(in<msg> i, out<msg> o) {
     while(true) synchronous if(fires(i)) put(o, get(i));
 }
-primitive alternator(in i, out l, out r) {
+primitive alternator(in<msg> i, out<msg> l, out<msg> r) {
     while(true) {
         synchronous if(fires(i)) put(l, get(i));
         synchronous if(fires(i)) put(r, get(i));
     }
 }
-primitive replicator(in i, out l, out r) {
+primitive replicator(in<msg> i, out<msg> l, out<msg> r) {
     while(true) synchronous {
         if(fires(i)) {
             msg m = get(i);
@@ -36,7 +36,7 @@ primitive replicator(in i, out l, out r) {
         }
     }
 }
-primitive merger(in l, in r, out o) {
+primitive merger(in<msg> l, in<msg> r, out<msg> o) {
     while(true) synchronous {
         if(fires(l))      put(o, get(l));
         else if(fires(r)) put(o, get(r));

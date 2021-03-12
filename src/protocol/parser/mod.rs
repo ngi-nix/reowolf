@@ -188,8 +188,8 @@ impl Parser {
 
         // All imports in the AST are now annotated. We now use the symbol table
         // to construct the type table.
-        let type_ctx = TypeCtx::new(&symbol_table, &self.heap, &self.modules);
-        let type_table = TypeTable::new(&type_ctx)?;
+        let mut type_ctx = TypeCtx::new(&symbol_table, &mut self.heap, &self.modules);
+        let type_table = TypeTable::new(&mut type_ctx)?;
 
         Ok((symbol_table, type_table))
     }
