@@ -1021,6 +1021,8 @@ impl SyntaxElement for Variable {
     }
 }
 
+/// TODO: Remove distinction between parameter/local and add an enum to indicate
+///     the distinction between the two
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Parameter {
     pub this: ParameterId,

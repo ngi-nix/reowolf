@@ -11,6 +11,9 @@ pub(crate) const STMT_BUFFER_INIT_CAPACITY: usize = 256;
 /// Globally configured vector capacity for expression buffers in visitor
 /// implementations
 pub(crate) const EXPR_BUFFER_INIT_CAPACITY: usize = 256;
+/// Globally configured vector capacity for parser type buffers in visitor
+/// implementations
+pub(crate) const TYPE_BUFFER_INIT_CAPACITY: usize = 128;
 
 /// General context structure that is used while traversing the AST.
 pub(crate) struct Ctx<'p> {
@@ -235,4 +238,7 @@ pub(crate) trait Visitor2 {
     fn visit_constant_expr(&mut self, _ctx: &mut Ctx, _id: ConstantExpressionId) -> VisitorResult { Ok(()) }
     fn visit_call_expr(&mut self, _ctx: &mut Ctx, _id: CallExpressionId) -> VisitorResult { Ok(()) }
     fn visit_variable_expr(&mut self, _ctx: &mut Ctx, _id: VariableExpressionId) -> VisitorResult { Ok(()) }
+
+    // Types
+    fn visit_parser_type(&mut self, _ctx: &mut Ctx, _id: ParserTypeId) -> VisitorResult { Ok(()) }
 }

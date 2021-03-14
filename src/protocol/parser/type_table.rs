@@ -82,6 +82,14 @@ impl TypeClass {
             TypeClass::Component => "component",
         }
     }
+
+    pub(crate) fn is_data_type(&self) -> bool {
+        self == TypeClass::Enum || self == TypeClass::Union || self == TypeClass::Struct
+    }
+
+    pub(crate) fn is_proc_type(&self) -> bool {
+        self == TypeClass::Function || self == TypeClass::Component
+    }
 }
 
 impl std::fmt::Display for TypeClass {
@@ -228,6 +236,7 @@ impl TypeIterator {
     }
 }
 
+#[derive(Copy, Clone)]
 pub(crate) enum ConcreteTypeVariant {
     // No subtypes
     Message,

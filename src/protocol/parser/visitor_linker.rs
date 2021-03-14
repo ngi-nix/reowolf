@@ -7,6 +7,7 @@ use crate::protocol::parser::{symbol_table::*, type_table::*};
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
+    TYPE_BUFFER_INIT_CAPACITY,
     Ctx, 
     Visitor2, 
     VisitorResult
@@ -15,9 +16,16 @@ use crate::protocol::ast::ExpressionParent::ExpressionStmt;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
-    Primitive,
-    Composite,
-    Function
+    None,
+    Primitive(ComponentId),
+    Composite(ComponentId),
+    Function(FunctionId)
+}
+
+impl DefinitionType {
+    fn is_primitive(&self) -> bool { if let Self::Primitive(_) = self { true } else { false } }
+    fn is_composite(&self) -> bool { if let Self::Composite(_) = self { true } else { false } }
+    fn is_function(&self) -> bool { if let Self::Function(_) = self { true } else { false } }
 }
 
 /// This particular visitor will go through the entire AST in a recursive manner
@@ -68,6 +76,8 @@ pub(crate) struct ValidityAndLinkerVisitor {
     // Another buffer, now with expression IDs, to prevent constant cloning of
     // vectors while working around rust's borrowing rules
     expression_buffer: Vec<ExpressionId>,
+    // Yet another buffer, now with parser type IDs, similar to above
+    parser_type_buffer: Vec<ParserTypeId>,
     // Statements to insert after the breadth pass in a single block
     insert_buffer: Vec<(u32, StatementId)>,
 }
@@ -79,11 +89,12 @@ impl ValidityAndLinkerVisitor {
             in_while: None,
             cur_scope: None,
             expr_parent: ExpressionParent::None,
-            def_type: DefinitionType::Primitive,
+            def_type: DefinitionType::None,
             performing_breadth_pass: false,
             relative_pos_in_block: 0,
             statement_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expression_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
+            parser_type_buffer: Vec::with_capacity(TYPE_BUFFER_INIT_CAPACITY),
             insert_buffer: Vec::with_capacity(32),
         }
     }
@@ -93,11 +104,12 @@ impl ValidityAndLinkerVisitor {
         self.in_while = None;
         self.cur_scope = None;
         self.expr_parent = ExpressionParent::None;
-        self.def_type = DefinitionType::Primitive;
+        self.def_type = DefinitionType::None;
         self.relative_pos_in_block = 0;
         self.performing_breadth_pass = false;
         self.statement_buffer.clear();
         self.expression_buffer.clear();
+        self.parser_type_buffer.clear();
         self.insert_buffer.clear();
     }
 }
@@ -111,13 +123,30 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         self.reset_state();
 
         self.def_type = match &ctx.heap[id].variant {
-            ComponentVariant::Primitive => DefinitionType::Primitive,
-            ComponentVariant::Composite => DefinitionType::Composite,
+            ComponentVariant::Primitive => DefinitionType::Primitive(id),
+            ComponentVariant::Composite => DefinitionType::Composite(id),
         };
         self.cur_scope = Some(Scope::Definition(id.upcast()));
         self.expr_parent = ExpressionParent::None;
-        let body_id = ctx.heap[id].body;
 
+        // Visit types of parameters
+        debug_assert!(self.parser_type_buffer.is_empty());
+        let comp_def = &ctx.heap[id];
+        self.parser_type_buffer.extend(
+            comp_def.parameters
+                .iter()
+                .map(|id| ctx.heap[*id].parser_type)
+        );
+
+        let num_types = self.parser_type_buffer.len();
+        for idx in 0..num_types {
+            self.visit_parser_type(ctx, self.parser_type_buffer[idx])?;
+        }
+
+        self.parser_type_buffer.clear();
+
+        // Visit statements in component body
+        let body_id = ctx.heap[id].body;
         self.performing_breadth_pass = true;
         self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
@@ -128,10 +157,28 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         self.reset_state();
 
         // Set internal statement indices
-        self.def_type = DefinitionType::Function;
+        self.def_type = DefinitionType::Function(id);
         self.cur_scope = Some(Scope::Definition(id.upcast()));
         self.expr_parent = ExpressionParent::None;
 
+        // Visit types of parameters
+        debug_assert!(self.parser_type_buffer.is_empty());
+        let func_def = &ctx.heap[id];
+        self.parser_type_buffer.extend(
+            func_def.parameters
+                .iter()
+                .map(|id| ctx.heap[*id].parser_type)
+        );
+        self.parser_type_buffer.push(func_def.return_type);
+
+        let num_types = self.parser_type_buffer.len();
+        for idx in 0..num_types {
+            self.visit_parser_type(ctx, self.parser_type_buffer[idx])?;
+        }
+
+        self.parser_type_buffer.clear();
+
+        // Visit statements in function body
         let body_id = ctx.heap[id].body;
         self.performing_breadth_pass = true;
         self.visit_stmt(ctx, body_id)?;
@@ -152,6 +199,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let variable_id = ctx.heap[id].variable;
             self.checked_local_add(ctx, self.relative_pos_in_block, variable_id)?;
         } else {
+            let variable_id = ctx.heap[id].variable;
+            let parser_type_id = ctx.heap[variable_id].parser_type;
+            self.visit_parser_type(ctx, parser_type_id);
+
             debug_assert_eq!(self.expr_parent, ExpressionParent::None);
             self.expr_parent = ExpressionParent::Memory(id);
             self.visit_expr(ctx, ctx.heap[id].initial)?;
@@ -169,6 +220,12 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             };
             self.checked_local_add(ctx, self.relative_pos_in_block, from_id)?;
             self.checked_local_add(ctx, self.relative_pos_in_block, to_id)?;
+        } else {
+            let chan_stmt = &ctx.heap[id];
+            let from_type_id = ctx.heap[chan_stmt.from].parser_type;
+            let to_type_id = ctx.heap[chan_stmt.to].parser_type;
+            self.visit_parser_type(ctx, from_type_id)?;
+            self.visit_parser_type(ctx, to_type_id)?;
         }
 
         Ok(())
@@ -304,7 +361,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 );
             }
 
-            if self.def_type != DefinitionType::Primitive {
+            if !self.def_type.is_primitive() {
                 return Err(ParseError2::new_error(
                     &ctx.module.source, cur_sync_position,
                     "Synchronous statements may only be used in primitive components"
@@ -334,7 +391,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_return_stmt(&mut self, ctx: &mut Ctx, id: ReturnStatementId) -> VisitorResult {
         if self.performing_breadth_pass {
             let stmt = &ctx.heap[id];
-            if self.def_type != DefinitionType::Function {
+            if !self.def_type.is_function() {
                 return Err(
                     ParseError2::new_error(&ctx.module.source, stmt.position, "Return statements may only appear in function bodies")
                 );
@@ -353,7 +410,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_assert_stmt(&mut self, ctx: &mut Ctx, id: AssertStatementId) -> VisitorResult {
         let stmt = &ctx.heap[id];
         if self.performing_breadth_pass {
-            if self.def_type == DefinitionType::Function {
+            if self.def_type.is_function() {
                 // TODO: We probably want to allow this. Mark the function as
                 //  using asserts, and then only allow calls to these functions
                 //  within components. Such a marker will cascade through any
@@ -415,7 +472,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // TODO: Cleanup error messages, can be done cleaner
             // Make sure new statement occurs within a composite component
             let call_expr_id = ctx.heap[id].expression;
-            if self.def_type != DefinitionType::Composite {
+            if !self.def_type.is_composite() {
                 let new_stmt = &ctx.heap[id];
                 return Err(
                     ParseError2::new_error(&ctx.module.source, new_stmt.position, "Instantiating components may only be done in composite components")
@@ -712,7 +769,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         match &mut call_expr.method {
             Method::Create => {},
             Method::Fires => {
-                if self.def_type != DefinitionType::Primitive {
+                if !self.def_type.is_primitive() {
                     return Err(ParseError2::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'fires' may only occur in primitive component definitions"
@@ -720,7 +777,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 }
             },
             Method::Get => {
-                if self.def_type != DefinitionType::Primitive {
+                if !self.def_type.is_primitive() {
                     return Err(ParseError2::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'get' may only occur in primitive component definitions"
@@ -785,6 +842,64 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
         var_expr.parent = self.expr_parent;
+
+        Ok(())
+    }
+
+    //--------------------------------------------------------------------------
+    // ParserType visitors
+    //--------------------------------------------------------------------------
+
+    fn visit_parser_type(&mut self, ctx: &mut Ctx, id: ParserTypeId) -> VisitorResult {
+        // We visit a particular type rooted in a non-ParserType node in the
+        // AST. Within this function we set up a buffer to visit all nested
+        // ParserType nodes.
+        // The goal is to link symbolic ParserType instances to the appropriate
+        // definition or symbolic type. Alternatively to throw an error if we
+        // cannot resolve the ParserType to either of these (polymorphic) types.
+        use ParserTypeVariant as PTV;
+        debug_assert!(!self.performing_breadth_pass);
+
+        let init_num_types = self.parser_type_buffer.len();
+        self.parser_type_buffer.push(id);
+
+        'resolve_loop: while self.parser_type_buffer.len() > init_num_types {
+            let parser_type_id = self.parser_type_buffer.pop().unwrap();
+            let parser_type = &ctx.heap[parser_type_id];
+
+            match &parser_type.variant {
+                PTV::Message | PTV::Bool |
+                PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
+                PTV::String |
+                PTV::IntegerLiteral | PTV::Inferred => {
+                    // Builtin types or types that do not require recursion
+                    continue 'resolve_loop;
+                },
+                PTV::Array(subtype_id) |
+                PTV::Input(subtype_id) |
+                PTV::Output(subtype_id) => {
+                    // Requires recursing
+                    self.parser_type_buffer.push(*subtype_id);
+                    continue 'resolve_loop;
+                },
+                PTV::Symbolic(symbolic) => {
+                    // Retrieve poly_vars from function/component definition to
+                    // match against.
+                    let poly_vars = match self.def_type {
+                        DefinitionType::None => unreachable!(),
+                        DefinitionType::Primitive(id) => &ctx.heap[id].poly_vars,
+                        DefinitionType::Composite(id) => &ctx.heap[id].poly_vars,
+                        DefinitionType::Function(id) => &ctx.heap[id].poly_vars,
+                    };
+
+                    for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+                        if symbolic.identifier.value == poly_var.value {
+
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
