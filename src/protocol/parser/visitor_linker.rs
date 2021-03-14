@@ -1,8 +1,10 @@
-use std::mem::{replace, swap};
-
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
-use crate::protocol::parser::{symbol_table::*, type_table::*};
+use crate::protocol::parser::{
+    symbol_table::*, 
+    type_table::*,
+    utils::*,
+};
 
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
@@ -12,7 +14,6 @@ use super::visitor::{
     Visitor2, 
     VisitorResult
 };
-use crate::protocol::ast::ExpressionParent::ExpressionStmt;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
@@ -867,7 +868,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let parser_type_id = self.parser_type_buffer.pop().unwrap();
             let parser_type = &ctx.heap[parser_type_id];
 
-            match &parser_type.variant {
+            let (symbolic_variant, num_inferred_to_allocate) = match &parser_type.variant {
                 PTV::Message | PTV::Bool |
                 PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
                 PTV::String |
@@ -885,20 +886,89 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 PTV::Symbolic(symbolic) => {
                     // Retrieve poly_vars from function/component definition to
                     // match against.
-                    let poly_vars = match self.def_type {
+                    let (definition_id, poly_vars) = match self.def_type {
                         DefinitionType::None => unreachable!(),
-                        DefinitionType::Primitive(id) => &ctx.heap[id].poly_vars,
-                        DefinitionType::Composite(id) => &ctx.heap[id].poly_vars,
-                        DefinitionType::Function(id) => &ctx.heap[id].poly_vars,
+                        DefinitionType::Primitive(id) => (id.upcast(), &ctx.heap[id].poly_vars),
+                        DefinitionType::Composite(id) => (id.upcast(), &ctx.heap[id].poly_vars),
+                        DefinitionType::Function(id) => (id.upcast(), &ctx.heap[id].poly_vars),
                     };
 
+                    let mut symbolic_variant = None;
                     for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
                         if symbolic.identifier.value == poly_var.value {
+                            // Type refers to a polymorphic variable.
+                            // TODO: @hkt Maybe allow higher-kinded types?
+                            if !symbolic.poly_args.is_empty() {
+                                return Err(ParseError2::new_error(
+                                    &ctx.module.source, symbolic.identifier.position, 
+                                    "Polymorphic arguments to a polymorphic variable (higher-kinded types) are not allowed (yet)"
+                                ));
+                            }
+                            symbolic_variant = Some(SymbolicParserTypeVariant::PolyArg(definition_id, poly_var_idx));
+                        }
+                    }
 
+                    if let Some(symbolic_variant) = symbolic_variant {
+                        (symbolic_variant, 0)
+                    } else {
+                        // Must be a user-defined type, otherwise an error
+                        let found_type = find_type_definition(
+                            &ctx.symbols, &ctx.types, ctx.module.root_id, &symbolic.identifier
+                        ).as_parse_error(&ctx.module.source)?;
+                        symbolic_variant = Some(SymbolicParserTypeVariant::Definition(found_type.ast_definition));
+
+                        // TODO: @function_ptrs: Allow function pointers at some
+                        //  point in the future
+                        if found_type.definition.type_class().is_proc_type() {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                &format!(
+                                    "This identifier points to a {} type, expected a datatype",
+                                    found_type.definition.type_class()
+                                )
+                            ));
+                        }
+
+                        // If the type is polymorphic then we have two cases: if
+                        // the programmer did not specify the polyargs then we 
+                        // assume we're going to infer all of them. Otherwise we
+                        // make sure that they match in count.
+                        if !found_type.poly_args.is_empty() && symbolic.poly_args.is_empty() {
+                            // All inferred
+                            (
+                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
+                                found_type.poly_args.len()
+                            )
+                        } else if symbolic.poly_args.len() != found_type.poly_args.len() {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                &format!(
+                                    "Expected {} polymorpic arguments (or none, to infer them), but {} were specified",
+                                    found_type.poly_args.len(), symbolic.poly_args.len()
+                                )
+                            ))
+                        } else {
+                            // If here then the type is not polymorphic, or all 
+                            // types are properly specified by the user.
+                            for specified_poly_arg in &symbolic.poly_args {
+                                self.parser_type_buffer.push(*specified_poly_arg);
+                            }
+
+                            (SymbolicParserTypeVariant::Definition(found_type.ast_definition), 0)
                         }
                     }
                 }
+            };
+
+            // If here then type is symbolic, perform a mutable borrow to set
+            // the target of the symbolic type.
+            for _ in 0..num_inferred_to_allocate {
+                self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
+                    this,
+                    position:
+                }))
             }
+            if let PTV::Symbolic(symbolic) = 
         }
 
         Ok(())

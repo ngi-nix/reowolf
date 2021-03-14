@@ -5,6 +5,7 @@ mod type_table;
 mod type_resolver;
 mod visitor;
 mod visitor_linker;
+mod utils;
 
 use depth_visitor::*;
 use symbol_table::SymbolTable;

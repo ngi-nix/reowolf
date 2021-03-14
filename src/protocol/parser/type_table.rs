@@ -84,11 +84,11 @@ impl TypeClass {
     }
 
     pub(crate) fn is_data_type(&self) -> bool {
-        self == TypeClass::Enum || self == TypeClass::Union || self == TypeClass::Struct
+        *self == TypeClass::Enum || *self == TypeClass::Union || *self == TypeClass::Struct
     }
 
     pub(crate) fn is_proc_type(&self) -> bool {
-        self == TypeClass::Function || self == TypeClass::Component
+        *self == TypeClass::Function || *self == TypeClass::Component
     }
 }
 
@@ -467,7 +467,7 @@ impl TypeTable {
             let mut poly_args = self.create_initial_poly_args(&definition.poly_vars);
             for variant in &variants {
                 if let Some(embedded) = variant.parser_type {
-                    self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, &mut poly_args, root_id, embedded)?;
+                    self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, embedded)?;
                 }
             }
             let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
@@ -575,7 +575,7 @@ impl TypeTable {
         // Construct representation of polymorphic arguments
         let mut poly_args = self.create_initial_poly_args(&definition.poly_vars);
         for field in &fields {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, &mut poly_args, root_id, field.parser_type)?;
+            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, field.parser_type)?;
         }
 
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
@@ -641,9 +641,9 @@ impl TypeTable {
 
         // Construct polymorphic arguments
         let mut poly_args = self.create_initial_poly_args(&definition.poly_vars);
-        self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, &mut poly_args, root_id, definition.return_type)?;
+        self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, definition.return_type)?;
         for argument in &arguments {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, &mut poly_args, root_id, argument.parser_type)?;
+            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, argument.parser_type)?;
         }
 
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
@@ -704,7 +704,7 @@ impl TypeTable {
         // Construct polymorphic arguments
         let mut poly_args = self.create_initial_poly_args(&definition.poly_vars);
         for argument in &arguments {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, &mut poly_args, root_id, argument.parser_type)?;
+            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, argument.parser_type)?;
         }
 
         let is_polymorph = poly_args.iter().any(|v| v.is_in_use);
@@ -930,7 +930,9 @@ impl TypeTable {
     /// when the embedded type is a polymorphic variable or points to another
     /// user-defined type.
     fn check_and_resolve_embedded_type_and_modify_poly_args(
-        &mut self, ctx: &mut TypeCtx, poly_args: &mut [PolyArg], root_id: RootId, embedded_type_id: ParserTypeId,
+        &mut self, ctx: &mut TypeCtx, 
+        type_definition_id: DefinitionId, poly_args: &mut [PolyArg], 
+        root_id: RootId, embedded_type_id: ParserTypeId,
     ) -> Result<(), ParseError2> {
         use ParserTypeVariant as PTV;
 
@@ -967,7 +969,7 @@ impl TypeTable {
                             //  polyargs as well
                             debug_assert!(symbolic.poly_args.is_empty(), "got polymorphic arguments to a polymorphic variable");
                             debug_assert!(symbolic.variant.is_none(), "symbolic parser type's variant already resolved");
-                            symbolic.variant = Some(SymbolicParserTypeVariant::PolyArg(poly_arg_idx));
+                            symbolic.variant = Some(SymbolicParserTypeVariant::PolyArg(type_definition_id, poly_arg_idx));
                             continue 'type_loop;
                         }
                     }

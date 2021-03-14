@@ -669,6 +669,11 @@ impl<'a> NamespacedIdentifierIter<'a> {
     pub(crate) fn num_remaining(&self) -> u8 {
         return self.num_total - self.num_returned
     }
+    pub(crate) fn returned_section(&self) -> &[u8] {
+        // Offset always includes the two trailing ':' characters
+        let end = if self.cur_offset >= 2 { self.cur_offset - 2 } else { self.cur_offset };
+        return &self.value[..end]
+    }
 }
 
 impl<'a> Iterator for NamespacedIdentifierIter<'a> {
@@ -777,7 +782,8 @@ pub struct SymbolicParserType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SymbolicParserTypeVariant {
     Definition(DefinitionId),
-    PolyArg(usize), // index of polyarg in the definition
+    // TODO: figure out if I need the DefinitionId here
+    PolyArg(DefinitionId, usize), // index of polyarg in the definition
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
