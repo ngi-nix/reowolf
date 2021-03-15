@@ -868,7 +868,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let parser_type_id = self.parser_type_buffer.pop().unwrap();
             let parser_type = &ctx.heap[parser_type_id];
 
-            let (symbolic_variant, num_inferred_to_allocate) = match &parser_type.variant {
+            let (symbolic_pos, symbolic_variant, num_inferred_to_allocate) = match &parser_type.variant {
                 PTV::Message | PTV::Bool |
                 PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
                 PTV::String |
@@ -909,7 +909,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     }
 
                     if let Some(symbolic_variant) = symbolic_variant {
-                        (symbolic_variant, 0)
+                        // Identifier points to a symbolic type
+                        (symbolic.identifier.position, symbolic_variant, 0)
                     } else {
                         // Must be a user-defined type, otherwise an error
                         let found_type = find_type_definition(
@@ -936,6 +937,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         if !found_type.poly_args.is_empty() && symbolic.poly_args.is_empty() {
                             // All inferred
                             (
+                                symbolic.identifier.position,
                                 SymbolicParserTypeVariant::Definition(found_type.ast_definition),
                                 found_type.poly_args.len()
                             )
@@ -954,7 +956,11 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                                 self.parser_type_buffer.push(*specified_poly_arg);
                             }
 
-                            (SymbolicParserTypeVariant::Definition(found_type.ast_definition), 0)
+                            (
+                                symbolic.identifier.position,
+                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
+                                0
+                            )
                         }
                     }
                 }
@@ -963,12 +969,26 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // If here then type is symbolic, perform a mutable borrow to set
             // the target of the symbolic type.
             for _ in 0..num_inferred_to_allocate {
+                // TODO: @hack, not very user friendly to manually allocate
+                //  `inferred` ParserTypes with the InputPosition of the
+                //  symbolic type's identifier.
+                // We reuse the `parser_type_buffer` to temporarily store these
+                // and we'll take them out later
                 self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
                     this,
-                    position:
-                }))
+                    pos: symbolic_pos,
+                    variant: ParserTypeVariant::Inferred,
+                }));
             }
-            if let PTV::Symbolic(symbolic) = 
+
+            if let PTV::Symbolic(symbolic) = &mut ctx.heap[id].variant {
+                for _ in 0..num_inferred_to_allocate {
+                    symbolic.poly_args.push(self.parser_type_buffer.pop().unwrap());
+                }
+                symbolic.variant = Some(symbolic_variant);
+            } else {
+                unreachable!();
+            }
         }
 
         Ok(())

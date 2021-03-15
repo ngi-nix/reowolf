@@ -55,15 +55,17 @@ impl From<ConcreteTypeVariant> for InferredPart {
 
 pub(crate) struct InferenceType {
     origin: ParserTypeId,
+    done: bool,
     inferred: Vec<InferredPart>,
 }
 
 impl InferenceType {
     fn new(inferred_type: ParserTypeId) -> Self {
-        Self{ origin: inferred_type, inferred: vec![InferredPart::Unknown] }
+        Self{ origin: inferred_type, done: false, inferred: vec![InferredPart::Unknown] }
     }
 
     fn assign_concrete(&mut self, concrete_type: &ConcreteType) {
+        self.done = true;
         self.inferred.clear();
         self.inferred.reserve(concrete_type.v.len());
         for variant in concrete_type.v {
@@ -98,8 +100,9 @@ pub(crate) struct TypeResolvingVisitor {
     expr_buffer: Vec<ExpressionId>,
 
     // If instantiating a monomorph of a polymorphic proctype, then we store the
-    // values of the polymorphic values here.
-    polyvars: Vec<(Identifier, ConcreteTypeVariant)>,
+    // values of the polymorphic values here. There should be as many, and in
+    // the same order as, in the definition's polyargs.
+    polyvars: Vec<ConcreteType>,
     // Mapping from parser type to inferred type. We attempt to continue to
     // specify these types until we're stuck or we've fully determined the type.
     infer_types: HashMap<ParserTypeId, InferenceType>,
@@ -112,6 +115,7 @@ impl TypeResolvingVisitor {
         TypeResolvingVisitor{
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expr_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
+            polyvars: Vec::new(),
             infer_types: HashMap::new(),
             var_types: HashMap::new(),
         }
@@ -180,13 +184,12 @@ impl Visitor2 for TypeResolvingVisitor {
 }
 
 impl TypeResolvingVisitor {
-    /// Checks if the `ParserType` contains any inferred variables. If so then
-    /// they will be inserted into the `infer_types` variable. Here we assume
-    /// we're parsing the body of a proctype, so any reference to polymorphic
-    /// variables must refer to the polymorphic arguments of the proctype's
-    /// definition.
-    /// TODO: @cleanup: The symbol_table -> type_table pattern appears quite
-    ///     a lot, will likely need to create some kind of function for this
+    // We have a function that traverses the types of variable expressions. If
+    // we do not know the type yet we insert it in the "infer types" list.
+    // If we do know the type then we can return it and assign it in the
+    // variable expression.
+    // Hence although the parser types are recursive structures with nested
+    // ParserType IDs, here we need to traverse the type all at once.
     fn insert_parser_type_if_needs_inference(
         &mut self, ctx: &mut Ctx, root_id: RootId, parser_type_id: ParserTypeId
     ) -> Result<(), ParseError2> {
@@ -195,9 +198,9 @@ impl TypeResolvingVisitor {
         let mut to_consider = vec![parser_type_id];
         while !to_consider.is_empty() {
             let parser_type_id = to_consider.pop().unwrap();
-            let parser_type = &mut ctx.heap[parser_type_id];
+            let parser_type = &ctx.heap[parser_type_id];
 
-            match &mut parser_type.variant {
+            match &parser_type.variant {
                 PTV::Inferred => {
                     self.env.insert(parser_type_id, InferenceType::new(parser_type_id));
                 },
@@ -205,86 +208,31 @@ impl TypeResolvingVisitor {
                 PTV::Input(subtype_id) => { to_consider.push(*subtype_id); },
                 PTV::Output(subtype_id) => { to_consider.push(*subtype_id); },
                 PTV::Symbolic(symbolic) => {
-                    // If not yet resolved, try to resolve
-                    if symbolic.variant.is_none() {
-                        let mut found = false;
-                        for (poly_idx, (poly_var, _)) in self.polyvars.iter().enumerate() {
-                            if symbolic.identifier.value == poly_var.value {
-                                // Found a match
-                                symbolic.variant = Some(SymbolicParserTypeVariant::PolyArg(poly_idx))
-                                found = true;
-                                break;
-                            }
-                        }
+                    // variant is resolved in type table if a type definition,
+                    // or in the linker phase if in a function body.
+                    debug_assert!(symbolic.variant.is_some());
 
-                        if !found {
-                            // Attempt to find in symbol/type table
-                            let symbol = ctx.symbols.resolve_namespaced_symbol(root_id, &symbolic.identifier);
-                            if symbol.is_none() {
-                                let module_source = &ctx.module.source;
-                                return Err(ParseError2::new_error(
-                                    module_source, symbolic.identifier.position,
-                                    "Could not resolve symbol to a type"
-                                ));
-                            }
+                    match symbolic.variant.unwrap() {
+                        SymbolicParserTypeVariant::PolyArg(_, arg_idx) => {
+                            // Points to polyarg, which is resolved by definition
+                            debug_assert!(arg_idx < self.polyvars.len());
+                            debug_assert!(symbolic.poly_args.is_empty()); // TODO: @hkt
 
-                            // Check if symbol was fully resolved
-                            let (symbol, ident_iter) = symbol.unwrap();
-                            if ident_iter.num_remaining() != 0 {
-                                let module_source = &ctx.module.source;
-                                ident_iter.
-                                return Err(ParseError2::new_error(
-                                    module_source, symbolic.identifier.position,
-                                    "Could not resolve symbol to a type"
-                                ).with_postfixed_info(
-                                    module_source, symbol.position,
-                                    "Could resolve part of the identifier to this symbol"
-                                ));
-                            }
+                            let mut inferred = InferenceType::new(parser_type_id);
+                            inferred.assign_concrete(&self.polyvars[arg_idx]);
 
-                            // Check if symbol resolves to struct/enum
-                            let definition_id = match symbol.symbol {
-                                Symbol::Namespace(_) => {
-                                    let module_source = &ctx.module.source;
-                                    return Err(ParseError2::new_error(
-                                        module_source, symbolic.identifier.position,
-                                        "Symbol resolved to a module instead of a type"
-                                    ));
-                                },
-                                Symbol::Definition((_, definition_id)) => definition_id
-                            };
-
-                            // Retrieve from type table and make sure it is a
-                            // reference to a struct/enum/union
-                            // TODO: @types Allow function pointers
-                            let def_type = ctx.types.get_base_definition(&definition_id);
-                            debug_assert!(def_type.is_some(), "Expected to resolve definition ID to type definition in type table");
-                            let def_type = def_type.unwrap();
-
-                            let def_type_class = def_type.definition.type_class();
-                            if !def_type_class.is_data_type() {
-                                return Err(ParseError2::new_error(
-                                    &ctx.module.source, symbolic.identifier.position,
-                                    &format!("Symbol refers to a {}, only data types are supported", def_type_class)
-                                ));
-                            }
-
-                            // Now that we're certain it is a datatype, make
-                            // sure that the number of polyargs in the symbolic
-                            // type matches that of the definition, or conclude
-                            // that all polyargs need to be inferred.
-                            if symbolic.poly_args.len() != def_type.poly_args.len() {
-                                if symbolic.poly_args.is_empty() {
-                                    // Modify ParserType to have auto-inferred
-                                    // polymorphic arguments
-                                    symbolic.poly_args.
-                                }
-                            }
+                            self.infer_types.insert(parser_type_id, inferred);
+                        },
+                        SymbolicParserTypeVariant::Definition(definition_id) => {
+                            // Points to a type definition, but if it has poly-
+                            // morphic arguments then these need to be inferred.
                         }
                     }
                 },
                 _ => {} // Builtin, doesn't require inference
             }
         }
+
+        Ok(())
     }
 }

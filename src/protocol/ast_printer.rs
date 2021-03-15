@@ -274,7 +274,26 @@ impl ASTWriter {
         match &heap[def_id] {
             Definition::Struct(_) => todo!("implement Definition::Struct"),
             Definition::Enum(_) => todo!("implement Definition::Enum"),
-            Definition::Function(_) => todo!("implement Definition::Function"),
+            Definition::Function(def) => {
+                self.kv(indent).with_id(PREFIX_FUNCTION_ID, def.this.0.index)
+                    .with_s_key("DefinitionFunction");
+
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                for poly_var_id in &def.poly_vars {
+                    self.kv(indent3).with_s_key("PolyVar");
+                    self.kv(indent4).with_s_key("Name").with_ascii_val(&poly_var_id.value);
+                }
+
+                self.kv(indent2).with_s_key("ReturnType").with_custom_val(|s| write_type(s, heap, &heap[def.return_type]));
+
+                self.kv(indent2).with_s_key("Parameters");
+                for param_id in &def.parameters {
+                    self.write_parameter(heap, *param_id, indent3);
+                }
+
+                self.kv(indent2).with_s_key("Body");
+                self.write_stmt(heap, def.body, indent3);
+            },
             Definition::Component(def) => {
                 self.kv(indent).with_id(PREFIX_COMPONENT_ID,def.this.0.index)
                     .with_s_key("DefinitionComponent");
@@ -282,20 +301,31 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
                 self.kv(indent2).with_s_key("Variant").with_debug_val(&def.variant);
 
+                self.kv(indent2).with_s_key("PolymorphicVariables");
+                for poly_var_id in &def.poly_vars {
+                    self.kv(indent3).with_s_key("PolyVar");
+                    self.kv(indent4).with_s_key("Name").with_ascii_val(&poly_var_id.value);
+                }
+
                 self.kv(indent2).with_s_key("Parameters");
                 for param_id in &def.parameters {
-                    let param = &heap[*param_id];
-                    self.kv(indent3).with_id(PREFIX_PARAMETER_ID, param_id.0.index)
-                        .with_s_key("Parameter");
-
-                    self.kv(indent4).with_s_key("Name").with_ascii_val(&param.identifier.value);
-                    self.kv(indent4).with_s_key("Type").with_custom_val(|w| write_type(w, heap, &heap[param.parser_type]));
+                    self.write_parameter(heap, *param_id, indent3)
                 }
 
                 self.kv(indent2).with_s_key("Body");
                 self.write_stmt(heap, def.body, indent3);
             }
         }
+    }
+
+    fn write_parameter(&mut self, heap: &Heap, param_id: ParameterId, indent: usize) {
+        let indent2 = indent + 1;
+        let param = &heap[param_id];
+
+        self.kv(indent).with_id(PREFIX_PARAMETER_ID, param_id.0.index)
+            .with_s_key("Parameter");
+        self.kv(indent2).with_s_key("Name").with_ascii_val(&param.identifier.value);
+        self.kv(indent2).with_s_key("Type").with_custom_val(|w| write_type(w, heap, &heap[param.parser_type]));
     }
 
     fn write_stmt(&mut self, heap: &Heap, stmt_id: StatementId, indent: usize) {
@@ -683,6 +713,17 @@ fn write_type(target: &mut String, heap: &Heap, t: &ParserType) {
         PTV::Inferred => { target.write_str("auto"); }
         PTV::Symbolic(symbolic) => {
             target.write_str(&String::from_utf8_lossy(&symbolic.identifier.value));
+            match symbolic.variant {
+                Some(SymbolicParserTypeVariant::PolyArg(def_id, idx)) => {
+                    target.write_str(&format!("{{def: {}, idx: {}}}", def_id.index, idx));
+                },
+                Some(SymbolicParserTypeVariant::Definition(def_id)) => {
+                    target.write_str(&format!("{{def: {}}}", def_id.index));
+                },
+                None => {
+                    target.write_str("{None}");
+                }
+            }
             embedded.extend(&symbolic.poly_args);
         }
     };

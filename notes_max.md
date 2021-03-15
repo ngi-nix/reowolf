@@ -128,3 +128,19 @@ Since memory statements have already been converted into variable declarations (
 
 - **variable expression**:
     Refers to some variable declared somewhere. Hence the return type is the same as the type of the variable.
+  
+## Type Inference - The Concrete Algorithmic Steps
+
+Lets start with places where the parser types (i.e. not the types assigned to the nodes in the expression trees) are actually specified:
+
+- Function and component arguments
+- Function return types
+- Local variable declarations (from both regular and channel variables)
+- Struct fields
+- Enum variants
+
+For now we do not consider struct/enum/union literals yet. We perform type inference in bodies of functions/components. Whenever we actually lay out a monomorphed proctype we already know the polymorphic arguments of that proctype. Hence, by definition, we know all the types of the proctype arguments and function return types of the proctype we're resolving.
+
+Hence we encounter:
+- Inferred types of variable declarations: These may be fully inferred, partially inferred, or depend on the polymorphic variables of the wrapping proctype's polymorphic arguments (which are determined). Hence if they're somehow inferred, then we mark them as such.
+- Inferred types of polyargs of called functions/components: Special case where we use the return type of the proctype and the expressions used as arguments to determine the polymorphic types. Once we know the polymorphic types we may determine other types, or the other way around. Now that I think about it, this seems like a special case of inference in the call/literal expression itself. So there seems to be no reason to pay particular attention to this.

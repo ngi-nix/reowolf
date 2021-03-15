@@ -1397,8 +1397,15 @@ fn eq_no_causality() {
             }
         }
     }
+    T some_function<T>(msg a, msg b) {
+        T something = a;
+        return something;
+    }
     primitive quick_test(in<msg> a, in<msg> b) {
-        msg ma = null;
+        // msg ma = null;
+        msg test1 = null;
+        msg test2 = null;
+        msg ma = some_function(test1, test2);
         while(true) synchronous {
             if (fires(a)) {
                 ma = get(a);
