@@ -2,7 +2,7 @@ mod depth_visitor;
 mod symbol_table;
 // mod type_table_old;
 mod type_table;
-// mod type_resolver;
+mod type_resolver;
 mod visitor;
 mod visitor_linker;
 mod utils;
