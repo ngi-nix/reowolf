@@ -1,5 +1,6 @@
-# TODO Documents
+# TODO Documents and notes
 todo_*.md
+notes_*.md
 
 # Build system
 Cargo.lock
@@ -26,3 +27,4 @@ examples/*/main
 # Logs
 logs/*
 logs/*/*
+
