@@ -12,7 +12,7 @@ use super::visitor::{
     VisitorResult
 };
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum InferredPart {
     // Unknown type, yet to be inferred
     Unknown,
@@ -215,6 +215,289 @@ impl InferenceType {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) enum InferenceTypePart2 {
+    // A marker with an identifier which we can use to seek subsections of the 
+    // inferred type
+    Marker(usize),
+    // Completely unknown type, needs to be inferred
+    Unknown,
+    // Partially known type, may be inferred to to be the appropriate related 
+    // type.
+    // IndexLike,      // index into array/slice
+    NumberLike,     // any kind of integer/float
+    IntegerLike,    // any kind of integer
+    ArrayLike,      // array or slice. Note that this must have a subtype
+    // Special types that cannot be instantiated by the user
+    Void, // For builtin functions that do not return anything
+    // Concrete types without subtypes
+    Message,
+    Bool,
+    Byte,
+    Short,
+    Int,
+    Long,
+    String,
+    // One subtype
+    Array,
+    Slice,
+    Input,
+    Output,
+    // A user-defined type with any number of subtypes
+    Instance(DefinitionId, usize)
+}
+
+impl InferenceTypePart2 {
+    fn is_concrete_number(&self) -> bool {
+        // TODO: @float
+        use InferenceTypePart2 as ITP;
+        match self {
+            ITP::Byte | ITP::Short | ITP::Int | ITP::Long => true,
+            _ => false,
+        }
+    }
+
+    fn is_concrete_int(&self) -> bool {
+        use InferenceTypePart2 as ITP;
+        match self {
+            ITP::Byte | ITP::Short | ITP::Int | ITP::Long => true,
+            _ => false,
+        }
+    }
+
+    fn is_concrete_array_or_slice(&self) -> bool {
+        use InferenceTypePart2 as ITP;
+        match self {
+            ITP::Array | ITP::Slice => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the change in "iteration depth" when traversing this particular
+    /// part. The iteration depth is used to traverse the tree in a linear 
+    /// fashion. It is basically `number_of_subtypes - 1`
+    fn depth_change(&self) -> i32 {
+        use InferenceTypePart2 as ITP;
+        match &self {
+            ITP::Unknown | ITP::NumberLike | ITP::IntegerLike |
+            ITP::Void | ITP::Message | ITP::Bool | 
+            ITP::Byte | ITP::Short | ITP::Int | ITP::Long | 
+            ITP::String => {
+                -1
+            },
+            ITP::Marker(_) | ITP::ArrayLike | ITP::Array | ITP::Slice | 
+            ITP::Input | ITP::Output => {
+                // One subtype, so do not modify depth
+                0
+            },
+            ITP::Instance(_, num_args) => {
+                (*num_args as i32) - 1
+            }
+        }
+    }
+}
+
+struct InferenceType2 {
+    parts: Vec<InferenceTypePart2>,
+}
+
+impl InferenceType2 {
+    fn new(parts: Vec<InferenceTypePart2>) -> Self {
+        Self{ parts }
+    }
+
+    /// Given that the `parts` are a depth-first serialized tree of types, this
+    /// function finds the subtree anchored at a specific node. The returned 
+    /// index is exclusive.
+    fn find_subtree_end_idx(parts: &[InferenceTypePart2], start_idx: usize) -> usize {
+        let mut depth = 1;
+        let mut idx = start_idx;
+
+        while idx < parts.len() {
+            depth += parts[idx].depth_change();
+            if depth == 0 {
+                return idx + 1;
+            }
+            idx += 1;
+        }
+
+        // If here, then the inference type is malformed
+        unreachable!();
+    }
+
+    /// Call that attempts to infer the part at `to_infer.parts[to_infer_idx]` 
+    /// using the subtree at `template.parts[template_idx]`. Will return 
+    /// `Some(depth_change_due_to_traversal)` if type inference has been 
+    /// applied. In this case the indices will also be modified to point to the 
+    /// next part in both templates. If type inference has not (or: could not) 
+    /// be applied then `None` will be returned. Note that this might mean that 
+    /// the types are incompatible.
+    ///
+    /// As this is a helper functions, some assumptions: the parts are not 
+    /// exactly equal, and neither of them contains a marker.
+    fn infer_part_for_single_type(
+        to_infer: &mut InferenceType2, to_infer_idx: &mut usize,
+        template_parts: &[InferenceTypePart2], template_idx: &mut usize,
+    ) -> Option<i32> {
+        use InferenceTypePart2 as ITP;
+
+        let to_infer_part = &to_infer.parts[*to_infer_idx];
+        let template_part = &template_parts[*template_idx];
+
+        // Check for programmer mistakes
+        if cfg!(debug_assertions) {
+            debug_assert_ne!(to_infer_part, template_part);
+            if let ITP::Marker(_) = to_infer_part {
+                debug_assert!(false, "marker encountered in 'infer part'");
+            }
+            if let ITP::Marker(_) = template_part {
+                debug_assert!(false, "marker encountered in 'infer part'");
+            }
+        }
+
+        // Inference of a somewhat-specified type
+        if (*to_infer_part == ITP::IntegerLike && template_part.is_concrete_int()) ||
+            (*to_infer_part == ITP::NumberLike && template_part.is_concrete_number())||
+            (*to_infer_part == ITP::ArrayLike && template_part.is_concrete_array_or_slice())
+        {
+            let depth_change = to_infer_part.depth_change();
+            debug_assert_eq!(depth_change, template_part.depth_change());
+            to_infer.parts[*to_infer_idx] = template_part.clone();
+            *to_infer_idx += 1;
+            *template_idx += 1;
+            return Some(depth_change);
+        }
+
+        // Inference of a completely unknown type
+        if *to_infer_part == ITP::Unknown {
+            // template part is different, so cannot be unknown, hence copy the
+            // entire subtree
+            let template_end_idx = Self::find_subtree_end_idx(template_parts, *template_idx);
+            to_infer.parts[*to_infer_idx] = template_part.clone();
+            *to_infer_idx += 1;
+            for insert_idx in (*template_idx + 1)..template_end_idx {
+                to_infer.parts.insert(*to_infer_idx, template_parts[insert_idx].clone());
+                *to_infer_idx += 1;
+            }
+            *template_idx = template_end_idx;
+
+            // Note: by definition the LHS was Unknown and the RHS traversed a 
+            // full subtree.
+            return Some(-1);
+        }
+
+        None
+    }
+
+    /// Attempts to infer types between two `InferenceType` instances. This 
+    /// function is unsafe as it accepts pointers to work around Rust's 
+    /// borrowing rules. The caller must ensure that the pointers are distinct.
+    unsafe fn infer_subtrees_for_both_types(
+        type_a: *mut InferenceType2, start_idx_a: usize,
+        type_b: *mut InferenceType2, start_idx_b: usize
+    ) -> InferenceResult {
+        use InferenceTypePart2 as ITP;
+
+        debug_assert!(!std::ptr::eq(type_a, type_b), "same inference types");
+        let type_a = &mut *type_a;
+        let type_b = &mut *type_b;
+
+        let mut modified_a = false;
+        let mut modified_b = false;
+        let mut idx_a = start_idx_a;
+        let mut idx_b = start_idx_b;
+        let mut depth = 1;
+
+        while depth > 0 {
+            // Advance indices if we encounter markers or equal parts
+            let part_a = &type_a.parts[idx_a];
+            let part_b = &type_b.parts[idx_b];
+            
+            if part_a == part_b {
+                depth += part_a.depth_change();
+                debug_assert_eq!(depth, part_b.depth_change());
+                idx_a += 1;
+                idx_b += 1;
+                continue;
+            }
+            if let ITP::Marker(_) = part_a { idx_a += 1; continue; }
+            if let ITP::Marker(_) = part_b { idx_b += 1; continue; }
+
+            // Types are not equal and are both not markers
+            if let Some(depth_change) = Self::infer_part_for_single_type(type_a, &mut idx_a, &type_b.parts, &mut idx_b) {
+                depth += depth_change;
+                modified_a = true;
+                continue;
+            }
+            if let Some(depth_change) = Self::infer_part_for_single_type(type_b, &mut idx_b, &type_a.parts, &mut idx_a) {
+                depth += depth_change;
+                modified_b = true;
+                continue;
+            }
+
+            // And can also not be inferred in any way: types must be incompatible
+            return InferenceResult::Incompatible;
+        }
+
+        // If here then we completely inferred the subtrees.
+        match (modified_a, modified_b) {
+            (false, false) => InferenceResult::Neither,
+            (false, true) => InferenceResult::Second,
+            (true, false) => InferenceResult::First,
+            (true, true) => InferenceResult::Both
+        }
+    }
+
+    /// Attempts to infer the first subtree based on the template.
+    fn infer_subtree_for_single_type(
+        to_infer: &mut InferenceType2, to_infer_idx: usize,
+        template: &[InferenceTypePart2], template_idx: usize,
+    ) {
+        let mut modified = false;
+        let mut idx = to_infer_idx;
+        let mut depth = 1;
+
+        while depth > 0 {
+            
+        }
+    }
+}
+
+struct InferenceTypeMarkerIter<'a> {
+    parts: &'a [InferenceTypePart2],
+    idx: usize,
+}
+
+impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
+    type Item = (usize, &'a [InferenceTypePart2]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Iterate until we find a marker
+        while self.idx < self.parts.len() {
+            if let InferenceTypePart2::Marker(marker) = self.parts[self.idx] {
+                // Found a marker, find the subtree end
+                let start_idx = self.idx + 1;
+                let end_idx = InferenceType2::find_subtree_end_idx(self.parts, start_idx);
+
+                // Modify internal index, then return items
+                self.idx = end_idx;
+                return Some((marker, &self.parts[start_idx..end_idx]))
+            }
+
+            self.idx += 1;
+        }
+
+        None
+    }
+}
+
+struct PolymorphInferenceType {
+    definition: DefinitionId,
+    poly_vars: Vec<InferenceType>,
+    arguments: Vec<InferenceType>,
+    return_type: InferenceType,
+}
+
 #[derive(PartialEq, Eq)]
 enum InferenceResult {
     Neither,        // neither argument is clarified
@@ -243,12 +526,6 @@ impl InferenceResult {
             _ => false
         }
     }
-}
-
-fn progress_inference_part_and_advance_idx(
-    a: &mut InferenceType, b: &mut InferenceType, iter_idx: &mut usize
-) -> Result<(), InferenceResult> {
-
 }
 
 // Attempts to infer types within two `InferenceType` instances. If they are
@@ -425,17 +702,6 @@ enum DefinitionType{
     Component(ComponentId),
     Function(FunctionId),
 }
-
-// TODO: @cleanup I will do a very dirty implementation first, because I have no idea
-//  what I am doing.
-// Very rough idea:
-//  - go through entire AST first, find all places where we have inferred types
-//      (which may be embedded) and store them in some kind of map.
-//  - go through entire AST and visit all expressions depth-first. We will
-//      attempt to resolve the return type of each expression. If we can't then
-//      we store them in another lookup map and link the dependency on an
-//      inferred variable to that expression.
-//  - keep iterating until we have completely resolved all variables.
 
 /// This particular visitor will recurse depth-first into the AST and ensures
 /// that all expressions have the appropriate types. At the moment this implies:
@@ -704,6 +970,19 @@ impl Visitor2 for TypeResolvingVisitor {
 
         self.progress_unary_expr(ctx, id)
     }
+
+    fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
+        let upcast_id = id.upcast();
+        self.insert_initial_expr_inference_type(ctx, upcast_id);
+
+        let call_expr = &ctx.heap[id];
+        // TODO: @performance
+        for arg_expr_id in call_expr.arguments.clone() {
+            self.visit_expr(ctx, arg_expr_id)?;
+        }
+
+        self.progress_call_expr(ctx, id)
+    }
 }
 
 // TODO: @cleanup Decide to use this where appropriate or to make templates for
@@ -839,7 +1118,7 @@ impl TypeResolvingVisitor {
             BO::Equality | BO::Inequality | BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
                 // Equal2 on args, forced boolean output
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
-                let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(ctx, upcast_id, arg1_id, arg2_id);
+                let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(ctx, upcast_id, arg1_id, arg2_id)?;
                 self.expr_type_is_of_type_class(ctx, arg1_id, TypeClass::Numeric)?;
 
                 (progress_expr, progress_arg1, progress_arg2)
@@ -902,11 +1181,20 @@ impl TypeResolvingVisitor {
         let progress_subject = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
         let progress_index = self.apply_forced_constraint(ctx, index_id, &INTEGERLIKE_TEMPLATE)?;
 
+        // TODO: Finish this
+        Ok(())
+    }
+
+    fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
+        let upcast_id = id.upcast();
+        let expr = &ctx.heap[id];
+
+
     }
 
     fn queue_expr_parent(&mut self, ctx: &Ctx, expr_id: ExpressionId) {
         if let ExpressionParent::Expression(parent_expr_id, _) = &ctx.heap[expr_id].parent() {
-            self.expr_queued.insert(*parent_expr_id)
+            self.expr_queued.insert(*parent_expr_id);
         }
     }
 
@@ -943,7 +1231,7 @@ impl TypeResolvingVisitor {
         let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
         let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
 
-        let infer_res = unsafe{ progress_inference_types(expr_idarg1_type, arg2_type) };
+        let infer_res = unsafe{ progress_inference_types(arg1_type, arg2_type) };
         if infer_res == InferenceResult::Incompatible {
             return Err(self.construct_arg_type_error(ctx, expr_id, arg1_id, arg2_id));
         }
