@@ -11,10 +11,14 @@ use super::visitor::{
     Visitor2,
     VisitorResult
 };
+use std::collections::hash_map::Entry;
 
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
+const INTEGERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::IntegerLike ];
+const ARRAY_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Array, InferenceTypePart::Unknown ];
 const ARRAYLIKE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::ArrayLike, InferenceTypePart::Unknown ];
+const PORTLIKE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::PortLike, InferenceTypePart::Unknown ];
 
 /// TODO: @performance Turn into PartialOrd+Ord to simplify checks
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -30,6 +34,7 @@ pub(crate) enum InferenceTypePart {
     NumberLike,     // any kind of integer/float
     IntegerLike,    // any kind of integer
     ArrayLike,      // array or slice. Note that this must have a subtype
+    PortLike,       // input or output port
     // Special types that cannot be instantiated by the user
     Void, // For builtin functions that do not return anything
     // Concrete types without subtypes
@@ -59,7 +64,7 @@ impl InferenceTypePart {
     fn is_concrete(&self) -> bool {
         use InferenceTypePart as ITP;
         match self {
-            ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | ITP::ArrayLike => false,
+            ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => false,
             _ => true
         }
     }
@@ -89,6 +94,14 @@ impl InferenceTypePart {
         }
     }
 
+    fn is_concrete_port(&self) -> bool {
+        use InferenceTypePart as ITP;
+        match self {
+            ITP::Input | ITP::Output => true,
+            _ => false,
+        }
+    }
+
     /// Returns the change in "iteration depth" when traversing this particular
     /// part. The iteration depth is used to traverse the tree in a linear 
     /// fashion. It is basically `number_of_subtypes - 1`
@@ -102,13 +115,35 @@ impl InferenceTypePart {
                 -1
             },
             ITP::Marker(_) | ITP::ArrayLike | ITP::Array | ITP::Slice | 
-            ITP::Input | ITP::Output => {
+            ITP::PortLike | ITP::Input | ITP::Output => {
                 // One subtype, so do not modify depth
                 0
             },
             ITP::Instance(_, num_args) => {
                 (*num_args as i32) - 1
             }
+        }
+    }
+}
+
+impl From<ConcreteTypeVariant> for InferenceTypePart {
+    fn from(v: ConcreteTypeVariant) -> InferenceTypePart {
+        use ConcreteTypeVariant as CTV;
+        use InferenceTypePart as ITP;
+
+        match v {
+            CTV::Message => ITP::Message,
+            CTV::Bool => ITP::Bool,
+            CTV::Byte => ITP::Byte,
+            CTV::Short => ITP::Short,
+            CTV::Int => ITP::Int,
+            CTV::Long => ITP::Long,
+            CTV::String => ITP::String,
+            CTV::Array => ITP::Array,
+            CTV::Slice => ITP::Slice,
+            CTV::Input => ITP::Input,
+            CTV::Output => ITP::Output,
+            CTV::Instance(id, num) => ITP::Instance(id, num),
         }
     }
 }
@@ -122,7 +157,7 @@ struct InferenceType {
 impl InferenceType {
     fn new(has_marker: bool, is_done: bool, parts: Vec<InferenceTypePart>) -> Self {
         if cfg!(debug_assertions) {
-            debug_assert(!parts.is_empty());
+            debug_assert!(!parts.is_empty());
             if !has_marker {
                 debug_assert!(parts.iter().all(|v| !v.is_marker()));
             }
@@ -135,7 +170,7 @@ impl InferenceType {
 
     // TODO: @performance, might all be done inline in the type inference methods
     fn recompute_is_done(&mut self) {
-        self.done = self.parts.iter().all(|v| v.is_concrete());
+        self.is_done = self.parts.iter().all(|v| v.is_concrete());
     }
 
     /// Checks if type is, or may be inferred as, a number
@@ -179,6 +214,10 @@ impl InferenceType {
             ITP::Unknown | ITP::Bool => true,
             _ => false
         }
+    }
+
+    fn marker_iter(&self) -> InferenceTypeMarkerIter {
+        InferenceTypeMarkerIter::new(&self.parts)
     }
 
     /// Given that the `parts` are a depth-first serialized tree of types, this
@@ -231,9 +270,11 @@ impl InferenceType {
         }
 
         // Inference of a somewhat-specified type
-        if (*to_infer_part == ITP::IntegerLike && template_part.is_concrete_int()) ||
-            (*to_infer_part == ITP::NumberLike && template_part.is_concrete_number())||
-            (*to_infer_part == ITP::ArrayLike && template_part.is_concrete_array_or_slice())
+        if (*to_infer_part == ITP::IntegerLike && template_part.is_concrete_integer()) ||
+            (*to_infer_part == ITP::NumberLike && template_part.is_concrete_number()) ||
+            (*to_infer_part == ITP::NumberLike && *template_part == ITP::IntegerLike) ||
+            (*to_infer_part == ITP::ArrayLike && template_part.is_concrete_array_or_slice()) ||
+            (*to_infer_part == ITP::PortLike && template_part.is_concrete_port())
         {
             let depth_change = to_infer_part.depth_change();
             debug_assert_eq!(depth_change, template_part.depth_change());
@@ -341,11 +382,11 @@ impl InferenceType {
 
         while depth > 0 {
             let to_infer_part = &to_infer.parts[to_infer_idx];
-            let template_part = &template.parts[template_idx];
+            let template_part = &template[template_idx];
 
-            if part_a == part_b {
+            if to_infer_part == template_part {
                 depth += to_infer_part.depth_change();
-                debug_assert!(depth, template_part.depth_change());
+                debug_assert_eq!(depth, template_part.depth_change());
                 to_infer_idx += 1;
                 template_idx += 1;
                 continue;
@@ -359,6 +400,24 @@ impl InferenceType {
             ) {
                 depth += depth_change;
                 modified = true;
+                continue;
+            }
+
+            // The template might contain partially known types, so check for
+            // these and allow them
+            if *template_part == ITP::Unknown {
+                to_infer_idx = Self::find_subtree_end_idx(&to_infer.parts, to_infer_idx);
+                template_idx += 1;
+                continue;
+            }
+
+            if (*template_part == ITP::NumberLike && (*to_infer_part == ITP::IntegerLike || to_infer_part.is_concrete_number())) ||
+                (*template_part == ITP::IntegerLike && to_infer_part.is_concrete_integer()) ||
+                (*template_part == ITP::ArrayLike && to_infer_part.is_concrete_array_or_slice()) ||
+                (*template_part == ITP::PortLike && (*to_infer_part == ITP::PortLike || to_infer_part.is_concrete_port()))
+            {
+                to_infer_idx += 1;
+                template_idx += 1;
                 continue;
             }
 
@@ -376,48 +435,56 @@ impl InferenceType {
     /// Returns a human-readable version of the type. Only use for debugging
     /// or returning errors (since it allocates a string).
     fn display_name(&self, heap: &Heap) -> String {
-        use InferredPart as IP;
+        use InferenceTypePart as ITP;
 
         fn write_recursive(v: &mut String, t: &InferenceType, h: &Heap, idx: &mut usize) {
             match &t.parts[*idx] {
-                IP::Unknown => v.push_str("?"),
-                IP::Void => v.push_str("void"),
-                IP::IntegerLike => v.push_str("int?"),
-                IP::Message => v.push_str("msg"),
-                IP::Bool => v.push_str("bool"),
-                IP::Byte => v.push_str("byte"),
-                IP::Short => v.push_str("short"),
-                IP::Int => v.push_str("int"),
-                IP::Long => v.push_str("long"),
-                IP::String => v.push_str("str"),
-                IP::ArrayLike => {
+                ITP::Marker(_) => {},
+                ITP::Unknown => v.push_str("?"),
+                ITP::NumberLike => v.push_str("num?"),
+                ITP::IntegerLike => v.push_str("int?"),
+                ITP::ArrayLike => {
                     *idx += 1;
                     write_recursive(v, t, h, idx);
                     v.push_str("[?]");
+                },
+                ITP::PortLike => {
+                    *idx += 1;
+                    v.push_str("port?<");
+                    write_recursive(v, t, h, idx);
+                    v.push('>');
                 }
-                IP::Array => {
+                ITP::Void => v.push_str("void"),
+                ITP::Message => v.push_str("msg"),
+                ITP::Bool => v.push_str("bool"),
+                ITP::Byte => v.push_str("byte"),
+                ITP::Short => v.push_str("short"),
+                ITP::Int => v.push_str("int"),
+                ITP::Long => v.push_str("long"),
+                ITP::String => v.push_str("str"),
+                ITP::Array => {
                     *idx += 1;
                     write_recursive(v, t, h, idx);
                     v.push_str("[]");
                 },
-                IP::Slice => {
+                ITP::Slice => {
                     *idx += 1;
                     write_recursive(v, t, h, idx);
                     v.push_str("[..]")
                 },
-                IP::Input => {
+                ITP::Input => {
                     *idx += 1;
                     v.push_str("in<");
                     write_recursive(v, t, h, idx);
                     v.push('>');
                 },
-                IP::Output => {
+                ITP::Output => {
                     *idx += 1;
                     v.push_str("out<");
                     write_recursive(v, t, h, idx);
                     v.push('>');
                 },
-                IP::Instance(definition_id, num_sub) => {
+                ITP::Instance(definition_id, num_sub) => {
                     let definition = &h[*definition_id];
                     v.push_str(&String::from_utf8_lossy(&definition.identifier().value));
                     if *num_sub > 0 {
@@ -450,6 +517,12 @@ struct InferenceTypeMarkerIter<'a> {
     idx: usize,
 }
 
+impl<'a> InferenceTypeMarkerIter<'a> {
+    fn new(parts: &'a [InferenceTypePart]) -> Self {
+        Self{ parts, idx: 0 }
+    }
+}
+
 impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
     type Item = (usize, &'a [InferenceTypePart]);
 
@@ -471,19 +544,6 @@ impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
 
         None
     }
-}
-
-/// Extra data needed to fully resolve polymorphic types. Each argument contains
-/// "markers" with an index corresponding to the polymorphic variable. Hence if
-/// we advance any of the inference types with markers then we need to compare
-/// them against the polymorph type. If the polymorph type is then progressed
-/// then we need to apply that to all arguments that contain that polymorphic
-/// type.
-struct PolymorphInferenceType {
-    definition: DefinitionId,
-    poly_vars: Vec<InferenceType>,
-    arguments: Vec<InferenceType>,
-    return_type: InferenceType,
 }
 
 #[derive(PartialEq, Eq)]
@@ -553,7 +613,17 @@ pub(crate) struct TypeResolvingVisitor {
     // specify these types until we're stuck or we've fully determined the type.
     infer_types: HashMap<VariableId, InferenceType>,
     expr_types: HashMap<ExpressionId, InferenceType>,
+    extra_data: HashMap<ExpressionId, ExtraData>,
     expr_queued: HashSet<ExpressionId>,
+}
+
+// TODO: @rename used for calls and struct literals, maybe union literals?
+struct ExtraData {
+    /// Progression of polymorphic variables (if any)
+    poly_vars: Vec<InferenceType>,
+    /// Progression of types of call arguments or struct members
+    embedded: Vec<InferenceType>,
+    returned: InferenceType,
 }
 
 impl TypeResolvingVisitor {
@@ -565,6 +635,7 @@ impl TypeResolvingVisitor {
             polyvars: Vec::new(),
             infer_types: HashMap::new(),
             expr_types: HashMap::new(),
+            extra_data: HashMap::new(),
             expr_queued: HashSet::new(),
         }
     }
@@ -591,8 +662,8 @@ impl Visitor2 for TypeResolvingVisitor {
 
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let infer_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type);
-            debug_assert!(infer_type.done, "expected component arguments to be concrete types");
+            let infer_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type, true);
+            debug_assert!(infer_type.is_done, "expected component arguments to be concrete types");
             self.infer_types.insert(param_id.upcast(), infer_type);
         }
 
@@ -609,8 +680,8 @@ impl Visitor2 for TypeResolvingVisitor {
 
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let infer_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type);
-            debug_assert!(infer_type.done, "expected function arguments to be concrete types");
+            let infer_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type, true);
+            debug_assert!(infer_type.is_done, "expected function arguments to be concrete types");
             self.infer_types.insert(param_id.upcast(), infer_type);
         }
 
@@ -635,7 +706,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let memory_stmt = &ctx.heap[id];
 
         let local = &ctx.heap[memory_stmt.variable];
-        let infer_type = self.determine_inference_type_from_parser_type(ctx, local.parser_type);
+        let infer_type = self.determine_inference_type_from_parser_type(ctx, local.parser_type, true);
         self.infer_types.insert(memory_stmt.variable.upcast(), infer_type);
 
         let expr_id = memory_stmt.initial;
@@ -648,11 +719,11 @@ impl Visitor2 for TypeResolvingVisitor {
         let channel_stmt = &ctx.heap[id];
 
         let from_local = &ctx.heap[channel_stmt.from];
-        let from_infer_type = self.determine_inference_type_from_parser_type(ctx, from_local.parser_type);
+        let from_infer_type = self.determine_inference_type_from_parser_type(ctx, from_local.parser_type, true);
         self.infer_types.insert(from_local.this.upcast(), from_infer_type);
 
         let to_local = &ctx.heap[channel_stmt.to];
-        let to_infer_type = self.determine_inference_type_from_parser_type(ctx, to_local.parser_type);
+        let to_infer_type = self.determine_inference_type_from_parser_type(ctx, to_local.parser_type, true);
         self.infer_types.insert(to_local.this.upcast(), to_infer_type);
 
         Ok(())
@@ -742,7 +813,7 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id);
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
         let assign_expr = &ctx.heap[id];
         let left_expr_id = assign_expr.left;
@@ -756,7 +827,7 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id);
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
         let conditional_expr = &ctx.heap[id];
         let test_expr_id = conditional_expr.test;
@@ -773,7 +844,7 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id);
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
         let binary_expr = &ctx.heap[id];
         let lhs_expr_id = binary_expr.left;
@@ -787,7 +858,7 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id);
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
         let unary_expr = &ctx.heap[id];
         let arg_expr_id = unary_expr.expression;
@@ -799,33 +870,16 @@ impl Visitor2 for TypeResolvingVisitor {
 
     fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id);
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
+        self.insert_initial_call_polymorph_data(ctx, id);
 
-        let call_expr = &ctx.heap[id];
         // TODO: @performance
+        let call_expr = &ctx.heap[id];
         for arg_expr_id in call_expr.arguments.clone() {
             self.visit_expr(ctx, arg_expr_id)?;
         }
 
         self.progress_call_expr(ctx, id)
-    }
-}
-
-// TODO: @cleanup Decide to use this where appropriate or to make templates for
-//  everything
-enum TypeClass {
-    Numeric, // int and float
-    Integer, // only ints
-    Boolean, // only boolean
-}
-
-impl std::fmt::Display for TypeClass {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            TypeClass::Numeric => "numeric",
-            TypeClass::Integer => "integer",
-            TypeClass::Boolean => "boolean",
-        })
     }
 }
 
@@ -862,31 +916,26 @@ impl TypeResolvingVisitor {
         use AssignmentOperator as AO;
 
         // TODO: Assignable check
-        let (type_class, arg1_expr_id, arg2_expr_id) = {
-            let expr = &ctx.heap[id];
-            let type_class = match expr.operation {
-                AO::Set =>
-                    None,
-                AO::Multiplied | AO::Divided | AO::Added | AO::Subtracted =>
-                    Some(TypeClass::Numeric),
-                AO::Remained | AO::ShiftedLeft | AO::ShiftedRight |
-                AO::BitwiseAnded | AO::BitwiseXored | AO::BitwiseOred =>
-                    Some(TypeClass::Integer),
-            };
+        let upcast_id = id.upcast();
+        let expr = &ctx.heap[id];
+        let arg1_expr_id = expr.left;
+        let arg2_expr_id = expr.right;
 
-            (type_class, expr.left, expr.right)
+        let progress_base = match expr.operation {
+            AO::Set =>
+                false,
+            AO::Multiplied | AO::Divided | AO::Added | AO::Subtracted =>
+                self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?,
+            AO::Remained | AO::ShiftedLeft | AO::ShiftedRight |
+            AO::BitwiseAnded | AO::BitwiseXored | AO::BitwiseOred =>
+                self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?,
         };
 
-        let upcast_id = id.upcast();
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
-            ctx, upcast_id, arg1_expr_id, arg2_expr_id
+            ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
 
-        if let Some(type_class) = type_class {
-            self.expr_type_is_of_type_class(ctx, id.upcast(), type_class)?
-        }
-
-        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(arg1_expr_id); }
         if progress_arg2 { self.queue_expr(arg2_expr_id); }
 
@@ -901,7 +950,7 @@ impl TypeResolvingVisitor {
         let arg2_expr_id = expr.false_expression;
 
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
-            ctx, upcast_id, arg1_expr_id, arg2_expr_id
+            ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
@@ -923,35 +972,49 @@ impl TypeResolvingVisitor {
 
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
-                // Arguments may be arrays/slices with the same subtype. Output
-                // is always an array with that subtype
-                (false, false, false)
+                // Arguments may be arrays/slices, output is always an array
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
+                let progress_arg1 = self.apply_forced_constraint(ctx, arg1_id, &ARRAYLIKE_TEMPLATE)?;
+                let progress_arg2 = self.apply_forced_constraint(ctx, arg2_id, &ARRAYLIKE_TEMPLATE)?;
+
+                // If they're all arraylike, then we want the subtype to match
+                let (subtype_expr, subtype_arg1, subtype_arg2) =
+                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 1)?;
+
+                (progress_expr || subtype_expr, progress_arg1 || subtype_arg1, progress_arg2 || subtype_arg2)
             },
             BO::LogicalOr | BO::LogicalAnd => {
                 // Forced boolean on all
-                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, BOOL_TEMPLATE.as_slice())?;
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let progress_arg1 = self.apply_forced_constraint(ctx, arg1_id, &BOOL_TEMPLATE)?;
                 let progress_arg2 = self.apply_forced_constraint(ctx, arg2_id, &BOOL_TEMPLATE)?;
 
                 (progress_expr, progress_arg1, progress_arg2)
             },
             BO::BitwiseOr | BO::BitwiseXor | BO::BitwiseAnd | BO::Remainder | BO::ShiftLeft | BO::ShiftRight => {
-                let result = self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id)?;
-                self.expr_type_is_of_type_class(ctx, upcast_id, TypeClass::Integer)?;
-                result
+                // All equal of integer type
+                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
+                let (progress_expr, progress_arg1, progress_arg2) =
+                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
+
+                (progress_base || progress_expr, progress_base || progress_arg1, progress_base || progress_arg2)
             },
             BO::Equality | BO::Inequality | BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
                 // Equal2 on args, forced boolean output
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
-                let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(ctx, upcast_id, arg1_id, arg2_id)?;
-                self.expr_type_is_of_type_class(ctx, arg1_id, TypeClass::Numeric)?;
+                let progress_arg_base = self.apply_forced_constraint(ctx, arg1_id, &NUMBERLIKE_TEMPLATE)?;
+                let (progress_arg1, progress_arg2) =
+                    self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
 
-                (progress_expr, progress_arg1, progress_arg2)
+                (progress_expr, progress_arg_base || progress_arg1, progress_arg_base || progress_arg2)
             },
             BO::Add | BO::Subtract | BO::Multiply | BO::Divide => {
-                let result = self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id)?;
-                self.expr_type_is_of_type_class(ctx, upcast_id, TypeClass::Numeric)?;
-                result
+                // All equal of number type
+                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
+                let (progress_expr, progress_arg1, progress_arg2) =
+                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
+
+                (progress_base || progress_expr, progress_base || progress_arg1, progress_base || progress_arg2)
             },
         };
 
@@ -972,15 +1035,19 @@ impl TypeResolvingVisitor {
         let (progress_expr, progress_arg) = match expr.operation {
             UO::Positive | UO::Negative => {
                 // Equal types of numeric class
-                let progress = self.apply_equal2_constraint(ctx, upcast_id, upcast_id, arg_id)?;
-                self.expr_type_is_of_type_class(ctx, upcast_id, TypeClass::Numeric)?;
-                progress
+                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
+                let (progress_expr, progress_arg) =
+                    self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, arg_id, 0)?;
+
+                (progress_base || progress_expr, progress_base || progress_arg)
             },
             UO::BitwiseNot | UO::PreIncrement | UO::PreDecrement | UO::PostIncrement | UO::PostDecrement => {
                 // Equal types of integer class
-                let progress = self.apply_equal2_constraint(ctx, upcast_id, upcast_id, arg_id)?;
-                self.expr_type_is_of_type_class(ctx, upcast_id, TypeClass::Integer)?;
-                progress
+                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
+                let (progress_expr, progress_arg) =
+                    self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, arg_id, 0)?;
+
+                (progress_base || progress_expr, progress_base || progress_arg)
             },
             UO::LogicalNot => {
                 // Both booleans
@@ -997,25 +1064,86 @@ impl TypeResolvingVisitor {
     }
 
     fn progress_indexing_expr(&mut self, ctx: &mut Ctx, id: IndexingExpressionId) -> Result<(), ParseError2> {
-        // TODO: Indexable check
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let subject_id = expr.subject;
         let index_id = expr.index;
 
-        let progress_subject = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
+        // Make sure subject is arraylike and index is integerlike
+        let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
         let progress_index = self.apply_forced_constraint(ctx, index_id, &INTEGERLIKE_TEMPLATE)?;
 
-        // TODO: Finish this
+        // Make sure if output is of T then subject is Array<T>
+        let (progress_expr, progress_subject) =
+            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
+
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
+        if progress_index { self.queue_expr(index_id); }
+
+        Ok(())
+    }
+
+    fn progress_slicing_expr(&mut self, ctx: &mut Ctx, id: SlicingExpressionId) -> Result<(), ParseError2> {
+        let upcast_id = id.upcast();
+        let expr = &ctx.heap[id];
+        let subject_id = expr.subject;
+        let from_id = expr.from_index;
+        let to_id = expr.to_index;
+
+        // Make sure subject is arraylike and indices are of equal integerlike
+        let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
+        let progress_idx_base = self.apply_forced_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
+        let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, from_id, 0, to_id, 0)?;
+
+        // Make sure if output is of T then subject is Array<T>
+        let (progress_expr, progress_subject) =
+            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
+
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
+        if progress_idx_base || progress_from { self.queue_expr(from_id); }
+        if progress_idx_base || progress_to { self.queue_expr(to_id); }
+
         Ok(())
     }
 
     fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
-        let
-            upcast_id = id.upcast();
+        let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
+        let extra = self.extra_data.get_mut(&upcast_id).unwrap();
 
+        // Check if we can make progress using the arguments and/or return types
+        // while keeping track of the polyvars we've extended
+        let mut poly_progress = HashSet::new();
+        debug_assert_eq!(extra.embedded.len(), expr.arguments.len());
+        for (arg_idx, arg_id) in expr.arguments.clone().into_iter().enumerate() {
+            let extra_type: *mut _ = &mut extra.embedded[arg_idx];
+            let (progress_expr, progress_extra) = self.apply_arglike_equal2_constraint(ctx, arg_id, extra_type)?;
 
+            if progress_expr { self.queue_expr(arg_id); }
+            if progress_extra {
+                unsafe {
+                    // Try to advance each polymorphic variable
+                    debug_assert!((*extra_type).has_marker);
+                    let mut marker_iter = unsafe { (*extra_type).marker_iter() };
+                    for (marker_idx, section) in marker_iter {
+                        let poly_type: *mut _ = &mut extra.poly_vars[marker_idx];
+                        match InferenceType::infer_subtree_for_single_type(&mut *poly_type, 0, section, 0) {
+                            SingleInferenceResult::Unmodified => {},
+                            SingleInferenceResult::Modified => {
+                                poly_progress.insert(marker_idx);
+                            },
+                            SingleInferenceResult::Incompatible => {
+                                todo!("Decent error message, and how?");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn queue_expr_parent(&mut self, ctx: &Ctx, expr_id: ExpressionId) {
@@ -1038,9 +1166,9 @@ impl TypeResolvingVisitor {
         debug_assert_expr_ids_unique_and_known!(self, expr_id);
         let expr_type = self.expr_types.get_mut(&expr_id).unwrap();
         match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0) {
-            InferenceTemplateResult::Modified => Ok(true),
-            InferenceTemplateResult::Unmodified => Ok(false),
-            InferenceTemplateResult::Incompatible => Err(
+            SingleInferenceResult::Modified => Ok(true),
+            SingleInferenceResult::Unmodified => Ok(false),
+            SingleInferenceResult::Incompatible => Err(
                 self.construct_template_type_error(ctx, expr_id, template)
             )
         }
@@ -1051,15 +1179,45 @@ impl TypeResolvingVisitor {
     /// is successful then the composition of all types are made equal.
     /// The "parent" `expr_id` is provided to construct errors.
     fn apply_equal2_constraint(
-        &mut self, ctx: &mut Ctx, expr_id: ExpressionId, arg1_id: ExpressionId, arg2_id: ExpressionId
+        &mut self, ctx: &Ctx, expr_id: ExpressionId,
+        arg1_id: ExpressionId, arg1_start_idx: usize,
+        arg2_id: ExpressionId, arg2_start_idx: usize
     ) -> Result<(bool, bool), ParseError2> {
         debug_assert_expr_ids_unique_and_known!(self, arg1_id, arg2_id);
         let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
         let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
 
-        let infer_res = unsafe{ InferenceType::infer_subtrees_for_both_types(arg1_type, 0, arg2_type, 0) };
+        let infer_res = unsafe{ InferenceType::infer_subtrees_for_both_types(
+            arg1_type, arg1_start_idx,
+            arg2_type, arg2_start_idx
+        ) };
         if infer_res == DualInferenceResult::Incompatible {
             return Err(self.construct_arg_type_error(ctx, expr_id, arg1_id, arg2_id));
+        }
+
+        Ok((infer_res.modified_lhs(), infer_res.modified_rhs()))
+    }
+
+    // TODO: @cleanup Bit of a hack, but borrowing rules are really annoying here. Maybe not pack
+    //  `ExtraData` together, but keep as a HashMap with very specific keys? e.g. ReturnType(ExprId)
+    fn apply_arglike_equal2_constraint(
+        &mut self, ctx: &Ctx, expr_id: ExpressionId,
+        direct_type: *mut InferenceType
+    ) -> Result<(bool, bool), ParseError2> {
+        let expr_type: *mut _ = self.expr_types.get_mut(&expr_id).unwrap();
+        let infer_res = unsafe{
+            InferenceType::infer_subtrees_for_both_types(expr_type, 0, direct_type, 0)
+        };
+        if infer_res == DualInferenceResult::Incompatible {
+            let expr_type = unsafe{ &*expr_type };
+            let direct_type = unsafe{ &*direct_type };
+            return Err(ParseError2::new_error(
+                &ctx.module.source, ctx.heap[expr_id].position(),
+                &format!(
+                    "Expected type '{}' but got '{}'",
+                    direct_type.display_name(ctx.heap), expr_type.display_name(ctx.heap)
+                )
+            ));
         }
 
         Ok((infer_res.modified_lhs(), infer_res.modified_rhs()))
@@ -1070,8 +1228,9 @@ impl TypeResolvingVisitor {
     /// attempt to do so. If the call is successful then the composition of all
     /// types is made equal.
     fn apply_equal3_constraint(
-        &mut self, ctx: &mut Ctx, expr_id: ExpressionId,
-        arg1_id: ExpressionId, arg2_id: ExpressionId
+        &mut self, ctx: &Ctx, expr_id: ExpressionId,
+        arg1_id: ExpressionId, arg2_id: ExpressionId,
+        start_idx: usize
     ) -> Result<(bool, bool, bool), ParseError2> {
         // Safety: all expression IDs are always distinct, and we do not modify
         //  the container
@@ -1080,12 +1239,15 @@ impl TypeResolvingVisitor {
         let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
         let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
 
-        let expr_res = unsafe{ InferenceType::infer_subtrees_for_both_types(expr_type, 0, arg1_type, 0) };
+        let expr_res = unsafe{
+            InferenceType::infer_subtrees_for_both_types(expr_type, start_idx, arg1_type, start_idx)
+        };
         if expr_res == DualInferenceResult::Incompatible {
             return Err(self.construct_expr_type_error(ctx, expr_id, arg1_id));
         }
 
-        let args_res = unsafe{ InferenceType::infer_subtrees_for_both_types(arg1_type, 0, arg2_type, 0) };
+        let args_res = unsafe{
+            InferenceType::infer_subtrees_for_both_types(arg1_type, start_idx, arg2_type, start_idx) };
         if args_res == DualInferenceResult::Incompatible {
             return Err(self.construct_arg_type_error(ctx, expr_id, arg1_id, arg2_id));
         }
@@ -1098,35 +1260,14 @@ impl TypeResolvingVisitor {
 
         if args_res.modified_lhs() { 
             unsafe {
-                (*expr_type).parts.clear();
-                (*expr_type).parts.extend((*arg2_type).parts.iter());
+                (*expr_type).parts.drain(start_idx..);
+                (*expr_type).parts.extend_from_slice(&((*arg2_type).parts[start_idx..]));
             }
             progress_expr = true;
             progress_arg1 = true;
         }
 
         Ok((progress_expr, progress_arg1, progress_arg2))
-    }
-
-    /// Applies a typeclass constraint: checks if the type is of a particular
-    /// class or not
-    fn expr_type_is_of_type_class(
-        &mut self, ctx: &mut Ctx, expr_id: ExpressionId, type_class: TypeClass
-    ) -> Result<(), ParseError2> {
-        debug_assert_expr_ids_unique_and_known!(self, expr_id);
-        let expr_type = self.expr_types.get(&expr_id).unwrap();
-
-        let is_ok = match type_class {
-            TypeClass::Numeric => expr_type.might_be_numeric(),
-            TypeClass::Integer => expr_type.might_be_integer(),
-            TypeClass::Boolean => expr_type.might_be_boolean(),
-        };
-
-        if is_ok {
-            Ok(())
-        } else {
-            Err(self.construct_type_class_error(ctx, expr_id, type_class))
-        }
     }
 
     /// Determines the `InferenceType` for the expression based on the
@@ -1137,11 +1278,9 @@ impl TypeResolvingVisitor {
     /// anything.
     fn insert_initial_expr_inference_type(
         &mut self, ctx: &mut Ctx, expr_id: ExpressionId
-    ) {
-        // TODO: @cleanup Concept of "parent expression" can be removed, the
-        //  type inferer/checker can set this upon the initial pass
+    ) -> Result<(), ParseError2> {
         use ExpressionParent as EP;
-        if self.expr_types.contains_key(&expr_id) { return; }
+        use InferenceTypePart as ITP;
 
         let expr = &ctx.heap[expr_id];
         let inference_type = match expr.parent() {
@@ -1150,15 +1289,15 @@ impl TypeResolvingVisitor {
                 unreachable!(),
             EP::Memory(_) | EP::ExpressionStmt(_) | EP::Expression(_, _) =>
                 // Determined during type inference
-                InferenceType::new(false, false, vec![InferredPart::Unknown]),
+                InferenceType::new(false, false, vec![ITP::Unknown]),
             EP::If(_) | EP::While(_) | EP::Assert(_) =>
                 // Must be a boolean
-                InferenceType::new(false, true, vec![InferredPart::Bool]),
+                InferenceType::new(false, true, vec![ITP::Bool]),
             EP::Return(_) =>
                 // Must match the return type of the function
                 if let DefinitionType::Function(func_id) = self.definition_type {
                     let return_parser_type_id = ctx.heap[func_id].return_type;
-                    self.determine_inference_type_from_parser_type(ctx, return_parser_type_id)
+                    self.determine_inference_type_from_parser_type(ctx, return_parser_type_id, true)
                 } else {
                     // Cannot happen: definition always set upon body traversal
                     // and "return" calls in components are illegal.
@@ -1167,60 +1306,177 @@ impl TypeResolvingVisitor {
             EP::New(_) =>
                 // Must be a component call, which we assign a "Void" return
                 // type
-                InferenceType::new(false, true, vec![InferredPart::Void]),
+                InferenceType::new(false, true, vec![ITP::Void]),
             EP::Put(_, 0) =>
                 // TODO: Change put to be a builtin function
                 // port of "put" call
-                InferenceType::new(false, false, vec![InferredPart::Output, InferredPart::Unknown]),
+                InferenceType::new(false, false, vec![ITP::Output, ITP::Unknown]),
             EP::Put(_, 1) =>
                 // TODO: Change put to be a builtin function
                 // message of "put" call
-                InferenceType::new(false, true, vec![InferredPart::Message]),
+                InferenceType::new(false, true, vec![ITP::Message]),
             EP::Put(_, _) =>
                 unreachable!()
         };
 
-        self.expr_types.insert(expr_id, inference_type);
+        match self.expr_types.entry(expr_id) {
+            Entry::Vacant(vacant) => {
+                vacant.insert(inference_type);
+            },
+            Entry::Occupied(mut preexisting) => {
+                // We already have an entry, this happens if our parent fixed
+                // our type (e.g. we're used in a conditional expression's test)
+                // but we have a different type.
+                // TODO: Is this ever called? Seems like it can't
+                debug_assert!(false, "I am actually called, my ID is {}", expr_id.index);
+                let old_type = preexisting.get_mut();
+                if let SingleInferenceResult::Incompatible = InferenceType::infer_subtree_for_single_type(
+                    old_type, 0, &inference_type.parts, 0
+                ) {
+                    return Err(self.construct_expr_type_error(ctx, expr_id, expr_id))
+                }
+            }
+        }
+
+        Ok(())
     }
 
+    fn insert_initial_call_polymorph_data(
+        &mut self, ctx: &mut Ctx, call_id: CallExpressionId
+    ) {
+        use InferenceTypePart as ITP;
+
+        // Note: the polymorph variables may be partially specified and may
+        // contain references to the wrapping definition's (i.e. the proctype
+        // we are currently visiting) polymorphic arguments.
+        //
+        // The arguments of the call may refer to polymorphic variables in the
+        // definition of the function we're calling, not of the wrapping
+        // definition. We insert markers in these inferred types to be able to
+        // map them back and forth to the polymorphic arguments of the function
+        // we are calling.
+        let call = &ctx.heap[call_id];
+        debug_assert!(!call.poly_args.is_empty());
+
+        // Handle the polymorphic variables themselves
+        let mut poly_vars = Vec::with_capacity(call.poly_args.len());
+        for poly_arg_type_id in call.poly_args.clone() { // TODO: @performance
+            poly_vars.push(self.determine_inference_type_from_parser_type(ctx, poly_arg_type_id, true));
+        }
+
+        // Handle the arguments
+        // TODO: @cleanup: Maybe factor this out for reuse in the validator/linker, should also
+        //  make the code slightly more robust.
+        let (embedded_types, return_type) = match &call.method {
+            Method::Create => {
+                // Not polymorphic
+                unreachable!("insert initial polymorph data for builtin 'create()' call")
+            },
+            Method::Fires => {
+                // bool fires<T>(PortLike<T> arg)
+                (
+                    vec![InferenceType::new(true, false, vec![ITP::PortLike, ITP::Marker(0), ITP::Unknown])],
+                    InferenceType::new(false, true, vec![ITP::Bool])
+                )
+            },
+            Method::Get => {
+                // T get<T>(input<T> arg)
+                (
+                    vec![InferenceType::new(true, false, vec![ITP::Input, ITP::Marker(0), ITP::Unknown])],
+                    InferenceType::new(true, false, vec![ITP::Marker(0), ITP::Unknown])
+                )
+            },
+            Method::Symbolic(symbolic) => {
+                let definition = &ctx.heap[symbolic.definition.unwrap()];
+
+                match definition {
+                    Definition::Component(definition) => {
+                        let mut parameter_types = Vec::with_capacity(definition.parameters.len());
+                        for param_id in definition.parameters.clone() {
+                            let param = &ctx.heap[param_id];
+                            let param_parser_type_id = param.parser_type;
+                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, param_parser_type_id, false));
+                        }
+
+                        (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Unknown]))
+                    },
+                    Definition::Function(definition) => {
+                        let mut parameter_types = Vec::with_capacity(definition.parameters.len());
+                        for param_id in definition.parameters.clone() {
+                            let param = &ctx.heap[param_id];
+                            let param_parser_type_id = param.parser_type;
+                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, param_parser_type_id, false));
+                        }
+
+                        let return_type = self.determine_inference_type_from_parser_type(ctx, definition.return_type, false);
+                        (parameter_types, return_type)
+                    },
+                    Definition::Struct(_) | Definition::Enum(_) => {
+                        unreachable!("insert initial polymorph data for struct/enum");
+                    }
+                }
+            }
+        };
+
+        self.extra_data.insert(call_id.upcast(), ExtraData {
+            poly_vars,
+            embedded: embedded_types,
+            returned: return_type
+        });
+    }
+
+    /// Determines the initial InferenceType from the provided ParserType. This
+    /// may be called with two kinds of intentions:
+    /// 1. To resolve a ParserType within the body of a function, or on
+    ///     polymorphic arguments to calls/instantiations within that body. This
+    ///     means that the polymorphic variables are known and can be replaced
+    ///     with the monomorph we're instantiating.
+    /// 2. To resolve a ParserType on a called function's definition or on
+    ///     an instantiated datatype's members. This means that the polymorphic
+    ///     arguments inside those ParserTypes refer to the polymorphic
+    ///     variables in the called/instantiated type's definition.
+    /// In the second case we place InferenceTypePart::Marker instances such
+    /// that we can perform type inference on the polymorphic variables.
     fn determine_inference_type_from_parser_type(
-        &mut self, ctx: &mut Ctx, parser_type_id: ParserTypeId
+        &mut self, ctx: &Ctx, parser_type_id: ParserTypeId,
+        parser_type_in_body: bool
     ) -> InferenceType {
         use ParserTypeVariant as PTV;
-        use InferredPart as IP;
+        use InferenceTypePart as ITP;
 
         let mut to_consider = VecDeque::with_capacity(16);
         to_consider.push_back(parser_type_id);
 
         let mut infer_type = Vec::new();
         let mut has_inferred = false;
+        let mut has_markers = false;
 
         while !to_consider.is_empty() {
             let parser_type_id = to_consider.pop_front().unwrap();
             let parser_type = &ctx.heap[parser_type_id];
             match &parser_type.variant {
-                PTV::Message => { infer_type.push(IP::Message); },
-                PTV::Bool => { infer_type.push(IP::Bool); },
-                PTV::Byte => { infer_type.push(IP::Byte); },
-                PTV::Short => { infer_type.push(IP::Short); },
-                PTV::Int => { infer_type.push(IP::Int); },
-                PTV::Long => { infer_type.push(IP::Long); },
-                PTV::String => { infer_type.push(IP::String); },
+                PTV::Message => { infer_type.push(ITP::Message); },
+                PTV::Bool => { infer_type.push(ITP::Bool); },
+                PTV::Byte => { infer_type.push(ITP::Byte); },
+                PTV::Short => { infer_type.push(ITP::Short); },
+                PTV::Int => { infer_type.push(ITP::Int); },
+                PTV::Long => { infer_type.push(ITP::Long); },
+                PTV::String => { infer_type.push(ITP::String); },
                 PTV::IntegerLiteral => { unreachable!("integer literal type on variable type"); },
                 PTV::Inferred => {
-                    infer_type.push(IP::Unknown);
+                    infer_type.push(ITP::Unknown);
                     has_inferred = true;
                 },
                 PTV::Array(subtype_id) => {
-                    infer_type.push(IP::Array);
+                    infer_type.push(ITP::Array);
                     to_consider.push_front(*subtype_id);
                 },
                 PTV::Input(subtype_id) => {
-                    infer_type.push(IP::Input);
+                    infer_type.push(ITP::Input);
                     to_consider.push_front(*subtype_id);
                 },
                 PTV::Output(subtype_id) => {
-                    infer_type.push(IP::Output);
+                    infer_type.push(ITP::Output);
                     to_consider.push_front(*subtype_id);
                 },
                 PTV::Symbolic(symbolic) => {
@@ -1230,9 +1486,16 @@ impl TypeResolvingVisitor {
                             // Retrieve concrete type of argument and add it to
                             // the inference type.
                             debug_assert!(symbolic.poly_args.is_empty()); // TODO: @hkt
-                            debug_assert!(arg_idx < self.polyvars.len());
-                            for concrete_part in &self.polyvars[arg_idx].v {
-                                infer_type.push(IP::from(*concrete_part));
+
+                            if parser_type_in_body {
+                                debug_assert!(arg_idx < self.polyvars.len());
+                                for concrete_part in &self.polyvars[arg_idx].v {
+                                    infer_type.push(ITP::from(*concrete_part));
+                                }
+                            } else {
+                                has_markers = true;
+                                infer_type.push(ITP::Marker(arg_idx));
+                                infer_type.push(ITP::Unknown);
                             }
                         },
                         SymbolicParserTypeVariant::Definition(definition_id) => {
@@ -1248,7 +1511,7 @@ impl TypeResolvingVisitor {
                                 debug_assert_eq!(symbolic.poly_args.len(), num_poly);
                             }
 
-                            infer_type.push(IP::Instance(definition_id, symbolic.poly_args.len()));
+                            infer_type.push(ITP::Instance(definition_id, symbolic.poly_args.len()));
                             let mut poly_arg_idx = symbolic.poly_args.len();
                             while poly_arg_idx > 0 {
                                 poly_arg_idx -= 1;
@@ -1260,7 +1523,7 @@ impl TypeResolvingVisitor {
             }
         }
 
-        InferenceType::new(false, !has_inferred, infer_type)
+        InferenceType::new(has_markers, !has_inferred, infer_type)
     }
 
     /// Construct an error when an expression's type does not match. This
@@ -1321,23 +1584,8 @@ impl TypeResolvingVisitor {
         )
     }
 
-    fn construct_type_class_error(
-        &self, ctx: &Ctx, expr_id: ExpressionId, type_class: TypeClass
-    ) -> ParseError2 {
-        let expr = &ctx.heap[expr_id];
-        let expr_type = self.expr_types.get(&expr_id).unwrap();
-
-        return ParseError2::new_error(
-            &ctx.module.source, expr.position(),
-            &format!(
-                "Incompatible types: got a '{}' but expected a {} type",
-                expr_type.display_name(&ctx.heap), type_class
-            )
-        )
-    }
-
     fn construct_template_type_error(
-        &self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceType]
+        &self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
     ) -> ParseError2 {
         // TODO: @cleanup
         let fake = InferenceType::new(false, false, Vec::from(template));

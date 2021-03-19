@@ -15,6 +15,7 @@ pub(crate) enum FindTypeResult<'t, 'i> {
     SymbolNamespace{ident_pos: InputPosition, symbol_pos: InputPosition},
 }
 
+// TODO: @cleanup Find other uses of this pattern
 impl<'t, 'i> FindTypeResult<'t, 'i> {
     /// Utility function to transform the `FindTypeResult` into a `Result` where
     /// `Ok` contains the resolved type, and `Err` contains a `ParseError` which

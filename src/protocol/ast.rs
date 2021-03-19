@@ -2271,6 +2271,7 @@ pub struct CallExpression {
     pub position: InputPosition,
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
+    pub poly_args: Vec<ParserTypeId>,
     // Phase 2: linker
     pub parent: ExpressionParent,
 }

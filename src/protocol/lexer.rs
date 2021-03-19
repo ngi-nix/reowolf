@@ -347,6 +347,7 @@ impl Lexer<'_> {
         let mut ns_ident = self.consume_ident()?;
         let mut num_namespaces = 1;
         while self.has_string(b"::") {
+            self.consume_string(b"::");
             if num_namespaces >= MAX_NAMESPACES {
                 return Err(self.error_at_pos("Too many namespaces in identifier"));
             }
@@ -361,6 +362,20 @@ impl Lexer<'_> {
             value: ns_ident,
             num_namespaces,
         })
+    }
+    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError2> {
+        // TODO: @performance
+        if self.has_reserved() {
+            return Err(self.error_at_pos("Encountered reserved keyword"));
+        }
+
+        self.consume_ident()?;
+        while self.has_string(b"::") {
+            self.consume_string(b"::")?;
+            self.consume_ident()?;
+        }
+
+        Ok(())
     }
 
     // Types and type annotations
@@ -510,67 +525,72 @@ impl Lexer<'_> {
         Ok(parser_type_id)
     }
 
-    /// Consumes things that look like types. If everything seems to look like
-    /// a type then `true` will be returned and the input position will be
-    /// placed after the type. If it doesn't appear to be a type then `false`
-    /// will be returned.
-    /// TODO: @cleanup, this is not particularly pretty or robust, methinks
+    /// Attempts to consume a type without returning it. If it doesn't encounter
+    /// a well-formed type, then the input position is left at a "random"
+    /// position.
+    fn maybe_consume_type_spilled_without_pos_recovery(&mut self) -> bool {
+        // Consume type identifier
+        if self.has_type_keyword() {
+            self.consume_any_chars();
+        } else {
+            let ident = self.consume_namespaced_identifier();
+            if ident.is_err() { return false; }
+        }
+
+        // Consume any polymorphic arguments that follow the type identifier
+        if self.consume_whitespace(false).is_err() { return false; }
+        if !self.maybe_consume_poly_args_spilled_without_pos_recovery() { return false; }
+
+        // Consume any array specifiers. Make sure we always leave the input
+        // position at the end of the last array specifier if we do find a
+        // valid type
+        let mut backup_pos = self.source.pos();
+        if self.consume_whitespace(false).is_err() { return false; }
+        while let Some(b'[') = self.source.next() {
+            self.source.consume();
+            if self.consume_whitespace(false).is_err() { return false; }
+            if self.source.next() != Some(b']') { return false; }
+            self.source.consume();
+            backup_pos = self.source.pos();
+            if self.consume_whitespace(false).is_err() { return false; }
+        }
+
+        self.source.seek(backup_pos);
+        return true;
+    }
+
     fn maybe_consume_type_spilled(&mut self) -> bool {
-        // Spilling polymorphic args. Don't care about the input position
-        fn maybe_consume_polymorphic_args(v: &mut Lexer) -> bool {
-            if v.consume_whitespace(false).is_err() { return false; }
-            if let Some(b'<') = v.source.next() {
-                v.source.consume();
-                if v.consume_whitespace(false).is_err() { return false; }
-                loop {
-                    if !maybe_consume_type_inner(v) { return false; }
-                    if v.consume_whitespace(false).is_err() { return false; }
-                    let has_comma = v.source.next() == Some(b',');
-                    if has_comma {
-                        v.source.consume();
-                        if v.consume_whitespace(false).is_err() { return false; }
-                    }
-                    if let Some(b'>') = v.source.next() {
-                        v.source.consume();
-                        break;
-                    } else if !has_comma {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-
-        // Inner recursive type parser. This method simply advances the lexer
-        // and does not store the backup position in case parsing fails
-        fn maybe_consume_type_inner(v: &mut Lexer) -> bool {
-            // Consume type identifier and optional polymorphic args
-            if v.has_type_keyword() {
-                v.consume_any_chars()
-            } else {
-                let ident = v.consume_namespaced_identifier();
-                if ident.is_err() { return false }
-            }
-
-            if !maybe_consume_polymorphic_args(v) { return false; }
-
-            // Check if wrapped in array
-            if v.consume_whitespace(false).is_err() { return false }
-            while let Some(b'[') = v.source.next() {
-                v.source.consume();
-                if v.consume_whitespace(false).is_err() { return false; }
-                if Some(b']') != v.source.next() { return false; }
-                v.source.consume();
-            }
-
-            return true;
-        }
-
         let backup_pos = self.source.pos();
-        if !maybe_consume_type_inner(self) {
-            // Not a type
+        if !self.maybe_consume_type_spilled_without_pos_recovery() {
             self.source.seek(backup_pos);
             return false;
+        }
+
+        return true;
+    }
+
+    /// Attempts to consume polymorphic arguments without returning them. If it
+    /// doesn't encounter well-formed polymorphic arguments, then the input
+    /// position is left at a "random" position.
+    fn maybe_consume_poly_args_spilled_without_pos_recovery(&mut self) -> bool {
+        if let Some(b'<') = self.source.next() {
+            self.source.consume();
+            if self.consume_whitespace(false).is_err() { return false; }
+            loop {
+                if !self.maybe_consume_type_spilled_without_pos_recovery() { return false; }
+                if self.consume_whitespace(false).is_err() { return false; }
+                let has_comma = self.source.next() == Some(b',');
+                if has_comma {
+                    self.source.consume();
+                    if self.consume_whitespace(false).is_err() { return false; }
+                }
+                if let Some(b'>') = self.source.next() {
+                    self.source.consume();
+                    break;
+                } else if !has_comma {
+                    return false;
+                }
+            }
         }
 
         return true;
@@ -1383,28 +1403,31 @@ impl Lexer<'_> {
         }))
     }
     fn has_call_expression(&mut self) -> bool {
-        /* We prevent ambiguity with variables, by looking ahead
-        the identifier to see if we can find an opening
-        parenthesis: this signals a call expression. */
+        // We need to prevent ambiguity with various operators (because we may
+        // be specifying polymorphic variables) and variables.
         if self.has_builtin_keyword() {
             return true;
         }
+
         let backup_pos = self.source.pos();
         let mut result = false;
-        match self.consume_identifier_spilled() {
-            Ok(_) => match self.consume_whitespace(false) {
-                Ok(_) => {
-                    result = self.has_string(b"(");
-                }
-                Err(_) => {}
-            },
-            Err(_) => {}
+
+        if self.consume_namespaced_identifier_spilled().is_ok() &&
+            self.consume_whitespace(false).is_ok() &&
+            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
+            self.consume_whitespace(false).is_ok() &&
+            self.source.next() == Some(b'(') {
+            // Seems like we have a function call or an enum literal
+            result = true;
         }
+
         self.source.seek(backup_pos);
         return result;
     }
     fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError2> {
         let position = self.source.pos();
+
+        // Consume method identifier
         let method;
         if self.has_keyword(b"get") {
             self.consume_keyword(b"get")?;
@@ -1422,11 +1445,18 @@ impl Lexer<'_> {
                 definition: None
             })
         }
+
+        // Consume polymorphic arguments
+        self.consume_whitespace(false)?;
+        let poly_args = self.consume_polymorphic_args(h, true)?;
+
+        // Consume arguments to call
         self.consume_whitespace(false)?;
         let mut arguments = Vec::new();
         self.consume_string(b"(")?;
         self.consume_whitespace(false)?;
         if !self.has_string(b")") {
+            // TODO: allow trailing comma
             while self.source.next().is_some() {
                 arguments.push(self.consume_expression(h)?);
                 self.consume_whitespace(false)?;
@@ -1443,6 +1473,7 @@ impl Lexer<'_> {
             position,
             method,
             arguments,
+            poly_args,
             parent: ExpressionParent::None,
         }))
     }
@@ -1565,9 +1596,9 @@ impl Lexer<'_> {
         }
         let backup_pos = self.source.pos();
         let mut result = false;
-        if self.maybe_consume_type_spilled() {
+        if self.maybe_consume_type_spilled_without_pos_recovery() {
             // We seem to have a valid type, do we now have an identifier?
-            if self.consume_whitespace(false).is_ok() {
+            if self.consume_whitespace(true).is_ok() {
                 result = self.has_identifier();
             }
         }

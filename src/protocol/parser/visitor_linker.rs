@@ -113,6 +113,15 @@ impl ValidityAndLinkerVisitor {
         self.parser_type_buffer.clear();
         self.insert_buffer.clear();
     }
+
+    /// Debug call to ensure that we didn't make any mistakes in any of the
+    /// employed buffers
+    fn check_post_definition_state(&self) {
+        debug_assert!(self.statement_buffer.is_empty());
+        debug_assert!(self.expression_buffer.is_empty());
+        debug_assert!(self.parser_type_buffer.is_empty());
+        debug_assert!(self.insert_buffer.is_empty());
+    }
 }
 
 impl Visitor2 for ValidityAndLinkerVisitor {
@@ -151,7 +160,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         self.performing_breadth_pass = true;
         self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
-        self.visit_stmt(ctx, body_id)
+        self.visit_stmt(ctx, body_id)?;
+
+        self.check_post_definition_state();
+        Ok(())
     }
 
     fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionId) -> VisitorResult {
@@ -184,7 +196,10 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         self.performing_breadth_pass = true;
         self.visit_stmt(ctx, body_id)?;
         self.performing_breadth_pass = false;
-        self.visit_stmt(ctx, body_id)
+        self.visit_stmt(ctx, body_id)?;
+
+        self.check_post_definition_state();
+        Ok(())
     }
 
     //--------------------------------------------------------------------------
@@ -767,8 +782,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
         // Resolve the method to the appropriate definition and check the
         // legality of the particular method call.
+        // TODO: @cleanup Unify in some kind of signature call, see similar
+        //  cleanup comments with this `match` format.
+        let num_args;
         match &mut call_expr.method {
-            Method::Create => {},
+            Method::Create => {
+                num_args = 1;
+            },
             Method::Fires => {
                 if !self.def_type.is_primitive() {
                     return Err(ParseError2::new_error(
@@ -776,6 +796,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         "A call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
+                num_args = 1;
             },
             Method::Get => {
                 if !self.def_type.is_primitive() {
@@ -784,6 +805,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         "A call to 'get' may only occur in primitive component definitions"
                     ));
                 }
+                num_args = 1;
             },
             Method::Symbolic(symbolic) => {
                 // Find symbolic method
@@ -808,11 +830,29 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 };
 
                 symbolic.definition = Some(definition_id);
+                match ctx.types.get_base_definition(&definition_id).unwrap() {
+                    Definition::Function(definition) => {
+                        num_args = definition.parameters.len();
+                    },
+                    _ => unreachable!(),
+                }
             }
         }
 
-        // Parse all the arguments in the depth pass as well. Note that we check
-        // the number of arguments in the type checker.
+        // Check the poly args and the number of variables in the call
+        // expression
+        self.visit_call_poly_args(ctx, id)?;
+        if call_expr.arguments.len() != num_args {
+            return Err(ParseError2::new_error(
+                &ctx.module.source, call_expr.position,
+                &format!(
+                    "This call expects {} arguments, but {} were provided",
+                    num_args, call_expr.arguments.len()
+                )
+            ));
+        }
+
+        // Recurse into all of the arguments and set the expression's parent
         let call_expr = &mut ctx.heap[id];
         let upcast_id = id.upcast();
 
@@ -852,146 +892,17 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     //--------------------------------------------------------------------------
 
     fn visit_parser_type(&mut self, ctx: &mut Ctx, id: ParserTypeId) -> VisitorResult {
-        // We visit a particular type rooted in a non-ParserType node in the
-        // AST. Within this function we set up a buffer to visit all nested
-        // ParserType nodes.
-        // The goal is to link symbolic ParserType instances to the appropriate
-        // definition or symbolic type. Alternatively to throw an error if we
-        // cannot resolve the ParserType to either of these (polymorphic) types.
-        use ParserTypeVariant as PTV;
-        debug_assert!(!self.performing_breadth_pass);
-
-        let init_num_types = self.parser_type_buffer.len();
-        self.parser_type_buffer.push(id);
-
-        'resolve_loop: while self.parser_type_buffer.len() > init_num_types {
-            let parser_type_id = self.parser_type_buffer.pop().unwrap();
-            let parser_type = &ctx.heap[parser_type_id];
-
-            let (symbolic_pos, symbolic_variant, num_inferred_to_allocate) = match &parser_type.variant {
-                PTV::Message | PTV::Bool |
-                PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
-                PTV::String |
-                PTV::IntegerLiteral | PTV::Inferred => {
-                    // Builtin types or types that do not require recursion
-                    continue 'resolve_loop;
-                },
-                PTV::Array(subtype_id) |
-                PTV::Input(subtype_id) |
-                PTV::Output(subtype_id) => {
-                    // Requires recursing
-                    self.parser_type_buffer.push(*subtype_id);
-                    continue 'resolve_loop;
-                },
-                PTV::Symbolic(symbolic) => {
-                    // Retrieve poly_vars from function/component definition to
-                    // match against.
-                    let (definition_id, poly_vars) = match self.def_type {
-                        DefinitionType::None => unreachable!(),
-                        DefinitionType::Primitive(id) => (id.upcast(), &ctx.heap[id].poly_vars),
-                        DefinitionType::Composite(id) => (id.upcast(), &ctx.heap[id].poly_vars),
-                        DefinitionType::Function(id) => (id.upcast(), &ctx.heap[id].poly_vars),
-                    };
-
-                    let mut symbolic_variant = None;
-                    for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
-                        if symbolic.identifier.value == poly_var.value {
-                            // Type refers to a polymorphic variable.
-                            // TODO: @hkt Maybe allow higher-kinded types?
-                            if !symbolic.poly_args.is_empty() {
-                                return Err(ParseError2::new_error(
-                                    &ctx.module.source, symbolic.identifier.position, 
-                                    "Polymorphic arguments to a polymorphic variable (higher-kinded types) are not allowed (yet)"
-                                ));
-                            }
-                            symbolic_variant = Some(SymbolicParserTypeVariant::PolyArg(definition_id, poly_var_idx));
-                        }
-                    }
-
-                    if let Some(symbolic_variant) = symbolic_variant {
-                        // Identifier points to a symbolic type
-                        (symbolic.identifier.position, symbolic_variant, 0)
-                    } else {
-                        // Must be a user-defined type, otherwise an error
-                        let found_type = find_type_definition(
-                            &ctx.symbols, &ctx.types, ctx.module.root_id, &symbolic.identifier
-                        ).as_parse_error(&ctx.module.source)?;
-                        symbolic_variant = Some(SymbolicParserTypeVariant::Definition(found_type.ast_definition));
-
-                        // TODO: @function_ptrs: Allow function pointers at some
-                        //  point in the future
-                        if found_type.definition.type_class().is_proc_type() {
-                            return Err(ParseError2::new_error(
-                                &ctx.module.source, symbolic.identifier.position,
-                                &format!(
-                                    "This identifier points to a {} type, expected a datatype",
-                                    found_type.definition.type_class()
-                                )
-                            ));
-                        }
-
-                        // If the type is polymorphic then we have two cases: if
-                        // the programmer did not specify the polyargs then we 
-                        // assume we're going to infer all of them. Otherwise we
-                        // make sure that they match in count.
-                        if !found_type.poly_args.is_empty() && symbolic.poly_args.is_empty() {
-                            // All inferred
-                            (
-                                symbolic.identifier.position,
-                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
-                                found_type.poly_args.len()
-                            )
-                        } else if symbolic.poly_args.len() != found_type.poly_args.len() {
-                            return Err(ParseError2::new_error(
-                                &ctx.module.source, symbolic.identifier.position,
-                                &format!(
-                                    "Expected {} polymorpic arguments (or none, to infer them), but {} were specified",
-                                    found_type.poly_args.len(), symbolic.poly_args.len()
-                                )
-                            ))
-                        } else {
-                            // If here then the type is not polymorphic, or all 
-                            // types are properly specified by the user.
-                            for specified_poly_arg in &symbolic.poly_args {
-                                self.parser_type_buffer.push(*specified_poly_arg);
-                            }
-
-                            (
-                                symbolic.identifier.position,
-                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
-                                0
-                            )
-                        }
-                    }
-                }
-            };
-
-            // If here then type is symbolic, perform a mutable borrow to set
-            // the target of the symbolic type.
-            for _ in 0..num_inferred_to_allocate {
-                // TODO: @hack, not very user friendly to manually allocate
-                //  `inferred` ParserTypes with the InputPosition of the
-                //  symbolic type's identifier.
-                // We reuse the `parser_type_buffer` to temporarily store these
-                // and we'll take them out later
-                self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
-                    this,
-                    pos: symbolic_pos,
-                    variant: ParserTypeVariant::Inferred,
-                }));
-            }
-
-            if let PTV::Symbolic(symbolic) = &mut ctx.heap[id].variant {
-                for _ in 0..num_inferred_to_allocate {
-                    symbolic.poly_args.push(self.parser_type_buffer.pop().unwrap());
-                }
-                symbolic.variant = Some(symbolic_variant);
-            } else {
-                unreachable!();
+        let old_num_types = self.parser_type_buffer.len();
+        match self.visit_parser_type_without_buffer_cleanup(ctx, id) {
+            Ok(_) => {
+                debug_assert_eq!(self.parser_type_buffer.len(), old_num_types);
+                Ok(())
+            },
+            Err(err) => {
+                self.parser_type_buffer.truncate(old_num_types);
+                Err(err)
             }
         }
-
-        Ok(())
     }
 }
 
@@ -1080,6 +991,147 @@ impl ValidityAndLinkerVisitor {
         // Pop statement buffer
         debug_assert!(self.insert_buffer.is_empty(), "insert buffer not empty after depth pass");
         self.statement_buffer.truncate(old_num_stmts);
+
+        Ok(())
+    }
+
+    /// Visits a particular ParserType in the AST and resolves temporary and
+    /// implicitly inferred types into the appropriate tree. Note that a
+    /// ParserType node is a tree. Only call this function on the root node of
+    /// that tree to prevent doing work more than once.
+    fn visit_parser_type_without_buffer_cleanup(&mut self, ctx: &mut Ctx, id: ParserTypeId) -> VisitorResult {
+        use ParserTypeVariant as PTV;
+        debug_assert!(!self.performing_breadth_pass);
+
+        let init_num_types = self.parser_type_buffer.len();
+        self.parser_type_buffer.push(id);
+
+        'resolve_loop: while self.parser_type_buffer.len() > init_num_types {
+            let parser_type_id = self.parser_type_buffer.pop().unwrap();
+            let parser_type = &ctx.heap[parser_type_id];
+
+            let (symbolic_pos, symbolic_variant, num_inferred_to_allocate) = match &parser_type.variant {
+                PTV::Message | PTV::Bool |
+                PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
+                PTV::String |
+                PTV::IntegerLiteral | PTV::Inferred => {
+                    // Builtin types or types that do not require recursion
+                    continue 'resolve_loop;
+                },
+                PTV::Array(subtype_id) |
+                PTV::Input(subtype_id) |
+                PTV::Output(subtype_id) => {
+                    // Requires recursing
+                    self.parser_type_buffer.push(*subtype_id);
+                    continue 'resolve_loop;
+                },
+                PTV::Symbolic(symbolic) => {
+                    // Retrieve poly_vars from function/component definition to
+                    // match against.
+                    let (definition_id, poly_vars) = match self.def_type {
+                        DefinitionType::None => unreachable!(),
+                        DefinitionType::Primitive(id) => (id.upcast(), &ctx.heap[id].poly_vars),
+                        DefinitionType::Composite(id) => (id.upcast(), &ctx.heap[id].poly_vars),
+                        DefinitionType::Function(id) => (id.upcast(), &ctx.heap[id].poly_vars),
+                    };
+
+                    let mut symbolic_variant = None;
+                    for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+                        if symbolic.identifier.value == poly_var.value {
+                            // Type refers to a polymorphic variable.
+                            // TODO: @hkt Maybe allow higher-kinded types?
+                            if !symbolic.poly_args.is_empty() {
+                                return Err(ParseError2::new_error(
+                                    &ctx.module.source, symbolic.identifier.position,
+                                    "Polymorphic arguments to a polymorphic variable (higher-kinded types) are not allowed (yet)"
+                                ));
+                            }
+                            symbolic_variant = Some(SymbolicParserTypeVariant::PolyArg(definition_id, poly_var_idx));
+                        }
+                    }
+
+                    if let Some(symbolic_variant) = symbolic_variant {
+                        // Identifier points to a symbolic type
+                        (symbolic.identifier.position, symbolic_variant, 0)
+                    } else {
+                        // Must be a user-defined type, otherwise an error
+                        let found_type = find_type_definition(
+                            &ctx.symbols, &ctx.types, ctx.module.root_id, &symbolic.identifier
+                        ).as_parse_error(&ctx.module.source)?;
+                        symbolic_variant = Some(SymbolicParserTypeVariant::Definition(found_type.ast_definition));
+
+                        // TODO: @function_ptrs: Allow function pointers at some
+                        //  point in the future
+                        if found_type.definition.type_class().is_proc_type() {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                &format!(
+                                    "This identifier points to a {} type, expected a datatype",
+                                    found_type.definition.type_class()
+                                )
+                            ));
+                        }
+
+                        // If the type is polymorphic then we have two cases: if
+                        // the programmer did not specify the polyargs then we
+                        // assume we're going to infer all of them. Otherwise we
+                        // make sure that they match in count.
+                        if !found_type.poly_args.is_empty() && symbolic.poly_args.is_empty() {
+                            // All inferred
+                            (
+                                symbolic.identifier.position,
+                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
+                                found_type.poly_args.len()
+                            )
+                        } else if symbolic.poly_args.len() != found_type.poly_args.len() {
+                            return Err(ParseError2::new_error(
+                                &ctx.module.source, symbolic.identifier.position,
+                                &format!(
+                                    "Expected {} polymorphic arguments (or none, to infer them), but {} were specified",
+                                    found_type.poly_args.len(), symbolic.poly_args.len()
+                                )
+                            ))
+                        } else {
+                            // If here then the type is not polymorphic, or all
+                            // types are properly specified by the user.
+                            for specified_poly_arg in &symbolic.poly_args {
+                                self.parser_type_buffer.push(*specified_poly_arg);
+                            }
+
+                            (
+                                symbolic.identifier.position,
+                                SymbolicParserTypeVariant::Definition(found_type.ast_definition),
+                                0
+                            )
+                        }
+                    }
+                }
+            };
+
+            // If here then type is symbolic, perform a mutable borrow to set
+            // the target of the symbolic type.
+            for _ in 0..num_inferred_to_allocate {
+                // TODO: @hack, not very user friendly to manually allocate
+                //  `inferred` ParserTypes with the InputPosition of the
+                //  symbolic type's identifier.
+                // We reuse the `parser_type_buffer` to temporarily store these
+                // and we'll take them out later
+                self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
+                    this,
+                    pos: symbolic_pos,
+                    variant: ParserTypeVariant::Inferred,
+                }));
+            }
+
+            if let PTV::Symbolic(symbolic) = &mut ctx.heap[id].variant {
+                for _ in 0..num_inferred_to_allocate {
+                    symbolic.poly_args.push(self.parser_type_buffer.pop().unwrap());
+                }
+                symbolic.variant = Some(symbolic_variant);
+            } else {
+                unreachable!();
+            }
+        }
 
         Ok(())
     }
@@ -1410,5 +1462,74 @@ impl ValidityAndLinkerVisitor {
         }
 
         Ok(target)
+    }
+
+    fn visit_call_poly_args(&mut self, ctx: &mut Ctx, call_id: CallExpressionId) -> VisitorResult {
+        let call_expr = &ctx.heap[call_id];
+
+        // Determine the polyarg signature
+        let num_expected_poly_args = match &call_expr.method {
+            Method::Create => {
+                0
+            },
+            Method::Fires => {
+                1
+            },
+            Method::Get => {
+                1
+            },
+            Method::Symbolic(symbolic) => {
+                let definition = &ctx.heap[symbolic.definition.unwrap()];
+                if let Definition::Function(definition) = definition {
+                    definition.poly_vars.len()
+                } else {
+                    debug_assert!(false, "expected function while visiting call poly args");
+                    unreachable!();
+                }
+            }
+        };
+
+        // We allow zero polyargs to imply all args are inferred. Otherwise the
+        // number of arguments must be equal
+        if call_expr.poly_args.is_empty() {
+            if num_expected_poly_args != 0 {
+                // Infer all polyargs
+                // TODO: @cleanup Not nice to use method position as implicitly
+                //  inferred parser type pos.
+                let pos = call_expr.position();
+                for _ in 0..num_expected_poly_args {
+                    self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType {
+                        this,
+                        pos,
+                        variant: ParserTypeVariant::Inferred,
+                    }));
+                }
+
+                let call_expr = &mut ctx.heap[call_id];
+                call_expr.poly_args.reserve(num_expected_poly_args);
+                for _ in 0..num_expected_poly_args {
+                    call_expr.poly_args.push(self.parser_type_buffer.pop().unwrap());
+                }
+            }
+            Ok(())
+        } else if call_expr.poly_args.len() == num_expected_poly_args {
+            // Number of args is not 0, so parse all the specified ParserTypes
+            let old_num_types = self.parser_type_buffer.len();
+            self.parser_type_buffer.extend(&call_expr.poly_args);
+            while self.parser_type_buffer.len() > old_num_types {
+                let parser_type_id = self.parser_type_buffer.pop().unwrap();
+                self.visit_parser_type(ctx, parser_type_id);
+            }
+            self.parser_type_buffer.truncate(old_num_types);
+            Ok(())
+        } else {
+            return Err(ParseError2::new_error(
+                &ctx.module.source, call_expr.position,
+                &format!(
+                    "Expected {} polymorphic arguments (or none, to infer them), but {} were specified",
+                    num_expected_poly_args, call_expr.poly_args.len()
+                )
+            ));
+        }
     }
 }
