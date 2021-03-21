@@ -583,7 +583,7 @@ impl InferenceType {
 }
 
 /// Iterator over the subtrees that follow a marker in an `InferenceType`
-/// instance
+/// instance.
 struct InferenceTypeMarkerIter<'a> {
     parts: &'a [InferenceTypePart],
     idx: usize,
@@ -1192,6 +1192,9 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
+    // TODO: @cleanup, see how this can be cleaned up once I implement
+    //  polymorphic struct/enum/union literals. These likely follow the same
+    //  pattern as here.
     fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
@@ -1256,21 +1259,21 @@ impl TypeResolvingVisitor {
             self.queue_expr_parent(ctx, upcast_id);
         }
 
-        // If we did not have an error in the polymorph progression (in the 
-        // current inefficient implementation), then this means that all types
-        // still agree on the polymorphic variables.
-        //
-        // If we did have an error, then this means that a pair of (argument,
-        // return type) did not agree on the inferred value of a single 
-        // polymorphic variable. Since this is an error case we do not care
-        // about efficiency for now, we loop over all expressions, retrieve the
-        // subtrees for the markers and see which ones differ (at least one pair
-        // must differ!)
+        // If we had an error in the polymorphic variable's inference, then we
+        // need to provide a human readable error: find a pair of inference
+        // types in the arguments/return type that do not agree on the
+        // polymorphic variable's type
+        if poly_infer_error { return Err(self.construct_poly_arg_error(ctx, id)) }
 
-        // If we did not have an error, but we did expand the polymorphic 
-        // variables, then we need to re-expand these by insertion.
-        let mut v = Vec::new();
-        
+        // If we did not have an error in the polymorph inference above, then
+        // reapplying the polymorph type to each argument type and the return
+        // type should always succeed.
+        // TODO: @performance If the algorithm is changed to be more "on demand
+        //  argument re-evaluation", instead of "all-argument re-evaluation",
+        //  then this is no longer valid
+        for poly_idx in poly_progress.into_iter() {
+
+        }
 
         Ok(())
     }
@@ -1540,7 +1543,7 @@ impl TypeResolvingVisitor {
                             parameter_types.push(self.determine_inference_type_from_parser_type(ctx, param_parser_type_id, false));
                         }
 
-                        (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Unknown]))
+                        (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Void]))
                     },
                     Definition::Function(definition) => {
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
@@ -1740,5 +1743,157 @@ impl TypeResolvingVisitor {
                 InferenceType::partial_display_name(&ctx.heap, template)
             )
         )
+    }
+
+    /// Constructs a human interpretable error in the case that type inference
+    /// on a polymorphic variable to a function call failed. This may only be
+    /// caused by a pair of inference types (which may come from arguments or
+    /// the return type) having two different inferred values for that
+    /// polymorphic variable.
+    ///
+    /// So we find this pair (which may be a argument type or return type
+    /// conflicting with itself) and construct the error using it.
+    fn construct_poly_arg_error(
+        &self, ctx: &Ctx, call_id: CallExpressionId
+    ) -> ParseError2 {
+        // Helper function to check for polymorph mismatch between two inference
+        // types.
+        fn has_poly_mismatch<'a>(type_a: &'a InferenceType, type_b: &'a InferenceType) -> Option<(usize, &'a [InferenceTypePart], &'a [InferenceTypePart])> {
+            if !type_a.has_marker || !type_b.has_marker {
+                return None
+            }
+
+            for (marker_a, section_a) in type_a.marker_iter() {
+                for (marker_b, section_b) in type_b.marker_iter() {
+                    if marker_a != marker_b {
+                        // Not the same polymorphic variable
+                        continue;
+                    }
+
+                    if !InferenceType::check_subtrees(section_a, 0, section_b, 0) {
+                        // Not compatible
+                        return Some((marker_a, section_a, section_b))
+                    }
+                }
+            }
+
+            None
+        }
+
+        // Helpers function to retrieve polyvar name and function name
+        fn get_poly_var_and_func_name(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> (String, String) {
+            let expr = &ctx.heap[call_id];
+            match &expr.method {
+                Method::Create => unreachable!(),
+                Method::Fires => (String::from('T'), String::from("fires")),
+                Method::Get => (String::from('T'), String::from("get")),
+                Method::Symbolic(symbolic) => {
+                    let definition = &ctx.heap[symbolic.definition.unwrap()];
+                    let poly_var = match definition {
+                        Definition::Struct(_) | Definition::Enum(_) => unreachable!(),
+                        Definition::Function(definition) => {
+                            String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string()
+                        },
+                        Definition::Component(definition) => {
+                            String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string()
+                        }
+                    };
+                    let func_name = String::from_utf8_lossy(&symbolic.identifier.value).to_string();
+                    (poly_var, func_name)
+                }
+            }
+        }
+
+        // Helper function to construct initial error
+        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> ParseError2 {
+            let (poly_var, func_name) = get_poly_var_and_func_name(ctx, poly_var_idx, expr);
+            return ParseError2::new_error(
+                &ctx.module.source, expr.position(),
+                &format!(
+                    "Conflicting type for polymorphic variable '{}' of '{}'",
+                    poly_var, func_name
+                )
+            )
+        }
+
+        // Actual checking
+        let extra = self.extra_data.get(&call_id.upcast()).unwrap();
+        let expr = &ctx.heap[call_id];
+
+        // - check return type with itself
+        if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(&extra.returned, &extra.returned) {
+            return construct_main_error(ctx, poly_idx, expr)
+                .with_postfixed_info(
+                    &ctx.module.source, expr.position(),
+                    &format!(
+                        "The return type inferred the conflicting types '{}' and '{}'",
+                        InferenceType::partial_display_name(heap, section_a),
+                        InferenceType::partial_display_name(heap, section_b)
+                    )
+                )
+        }
+
+        // - check arguments with each other argument and with return type
+        for (arg_a_idx, arg_a) in extra.embedded.iter().enumerate() {
+            for (arg_b_idx, arg_b) in extra.embedded.iter().enumerate() {
+                if arg_b_idx > arg_a_idx {
+                    break;
+                }
+
+                if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(&arg_a, &arg_b) {
+                    let error = construct_main_error(ctx, poly_idx, expr);
+                    if arg_a_idx == arg_b_idx {
+                        // Same argument
+                        let arg = &ctx.heap[expr.arguments[arg_a_idx]];
+                        return error.with_postfixed_info(
+                            &ctx.module.source, arg.position(),
+                            &format!(
+                                "This argument inferred the conflicting types '{}' and '{}'",
+                                InferenceType::partial_display_name(heap, section_a),
+                                InferenceType::partial_display_name(heap, section_b)
+                            )
+                        )
+                    } else {
+                        let arg_a = &ctx.heap[expr.arguments[arg_a_idx]];
+                        let arg_b = &ctx.heap[expr.arguments[arg_b_idx]];
+                        return error.with_postfixed_info(
+                            &ctx.module.source, arg_a.position(),
+                            &format!(
+                                "This argument inferred it to '{}'",
+                                InferenceType::partial_display_name(heap, section_a)
+                            )
+                        ).with_postfixed_info(
+                            &ctx.module.source, arg_b.position(),
+                            &format!(
+                                "While this argument inferred it to '{}'",
+                                InferenceType::partial_display_name(heap, section_b)
+                            )
+                        )
+                    }
+                }
+            }
+
+            // Check with return type
+            if let Some((poly_idx, section_arg, section_ret)) = has_poly_mismatch(arg_a, &extra.returned) {
+                let arg = &ctx.heap[expr.arguments[arg_a_idx]];
+                return construct_main_error(ctx, poly_idx, expr)
+                    .with_postfixed_info(
+                        &ctx.module.source, arg.position(),
+                        &format!(
+                            "This argument inferred it to '{}'",
+                            InferenceType::partial_display_name(heap, section_arg)
+                        )
+                    )
+                    .with_postfixed_info(
+                        &ctx.module.source, expr.position,
+                        &format!(
+                            "While the return type inferred it to '{}'",
+                            InferenceType::partial_display_name(heap, section_ret)
+                        )
+                    )
+            }
+        }
+
+        unreachable!("construct_poly_arg_error without actual error found?")
     }
 }
