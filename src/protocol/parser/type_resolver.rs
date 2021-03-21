@@ -233,6 +233,23 @@ impl InferenceType {
         InferenceTypeMarkerIter::new(&self.parts)
     }
 
+    fn find_subtree_idx_for_marker(&self, marker: usize, mut idx: usize) -> Option<(usize, usize)> {
+        // Seek ahead to find a marker
+        let marker = InferenceTypePart::Marker(marker);
+        while idx < self.parts.len() {
+            if marker == self.parts[idx] {
+                // Found the marker
+                let start_idx = idx + 1;
+                let end_idx = Self::find_subtree_end_idx(&self.parts, start_idx);
+                return Some((start_idx, end_idx))
+            }
+
+            idx += 1;
+        }
+
+        None
+    }
+
     /// Given that the `parts` are a depth-first serialized tree of types, this
     /// function finds the subtree anchored at a specific node. The returned 
     /// index is exclusive.
@@ -583,7 +600,7 @@ impl InferenceType {
 }
 
 /// Iterator over the subtrees that follow a marker in an `InferenceType`
-/// instance.
+/// instance. Returns immutable slices over the internal parts
 struct InferenceTypeMarkerIter<'a> {
     parts: &'a [InferenceTypePart],
     idx: usize,
@@ -1220,7 +1237,7 @@ impl TypeResolvingVisitor {
                 for (poly_idx, poly_section) in signature_type.marker_iter() {
                     let polymorph_type = &mut extra.poly_vars[poly_idx];
                     match Self::apply_forced_constraint_types(
-                        ctx, upcast_id, polymorph_type, 0, poly_section, 0
+                        polymorph_type, 0, poly_section, 0
                     ) {
                         Ok(true) => { poly_progress.insert(poly_idx); },
                         Ok(false) => {},
@@ -1247,7 +1264,7 @@ impl TypeResolvingVisitor {
             for (poly_idx, poly_section) in signature_type.marker_iter() {
                 let polymorph_type = &mut extra.poly_vars[poly_idx];
                 match Self::apply_forced_constraint_types(
-                    ctx, upcast_id, polymorph_type, 0, poly_section, 0
+                    polymorph_type, 0, poly_section, 0
                 ) {
                     Ok(true) => { poly_progress.insert(poly_idx); },
                     Ok(false) => {},
@@ -1270,9 +1287,30 @@ impl TypeResolvingVisitor {
         // type should always succeed.
         // TODO: @performance If the algorithm is changed to be more "on demand
         //  argument re-evaluation", instead of "all-argument re-evaluation",
-        //  then this is no longer valid
+        //  then this is no longer true
         for poly_idx in poly_progress.into_iter() {
+            // For each polymorphic argument: first extend the signature type,
+            // then reapply the equal2 constraint to the expressions
+            let poly_type = &extra.poly_vars[poly_idx];
+            for (arg_idx, arg_type) in extra.embedded.iter_mut().enumerate() {
+                let mut seek_idx = 0;
+                let mut modified_sig = false;
+                while let Some((start_idx, end_idx)) = arg_type.find_subtree_idx_for_marker(poly_idx, seek_idx) {
+                    let modified_at_marker = Self::apply_forced_constraint_types(
+                        arg_type, start_idx, &poly_type.parts, 0
+                    ).unwrap();
+                    modified_sig = modified_sig || modified_at_marker;
+                    seek_idx = end_idx;
+                }
 
+                if !modified_sig { continue; }
+
+                // Part of signature was modified, so update expression used as
+                // argument as well
+                let arg_expr_id = expr.arguments[arg_idx];
+                let arg_type = self.expr_types.get_mut(arg_expr_id).unwrap();
+                Self::apply_equal2_constraint_types(ctx, arg_expr_id, )
+            }
         }
 
         Ok(())
@@ -1307,7 +1345,6 @@ impl TypeResolvingVisitor {
     }
 
     fn apply_forced_constraint_types(
-        ctx: &Ctx, expr_id: ExpressionId,
         to_infer: *mut InferenceType, to_infer_start_idx: usize,
         template: &[InferenceTypePart], template_start_idx: usize
     ) -> Result<bool, ()> {
@@ -1782,7 +1819,6 @@ impl TypeResolvingVisitor {
 
         // Helpers function to retrieve polyvar name and function name
         fn get_poly_var_and_func_name(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> (String, String) {
-            let expr = &ctx.heap[call_id];
             match &expr.method {
                 Method::Create => unreachable!(),
                 Method::Fires => (String::from('T'), String::from("fires")),
@@ -1827,8 +1863,8 @@ impl TypeResolvingVisitor {
                     &ctx.module.source, expr.position(),
                     &format!(
                         "The return type inferred the conflicting types '{}' and '{}'",
-                        InferenceType::partial_display_name(heap, section_a),
-                        InferenceType::partial_display_name(heap, section_b)
+                        InferenceType::partial_display_name(&ctx.heap, section_a),
+                        InferenceType::partial_display_name(&ctx.heap, section_b)
                     )
                 )
         }
@@ -1849,8 +1885,8 @@ impl TypeResolvingVisitor {
                             &ctx.module.source, arg.position(),
                             &format!(
                                 "This argument inferred the conflicting types '{}' and '{}'",
-                                InferenceType::partial_display_name(heap, section_a),
-                                InferenceType::partial_display_name(heap, section_b)
+                                InferenceType::partial_display_name(&ctx.heap, section_a),
+                                InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
                         )
                     } else {
@@ -1860,13 +1896,13 @@ impl TypeResolvingVisitor {
                             &ctx.module.source, arg_a.position(),
                             &format!(
                                 "This argument inferred it to '{}'",
-                                InferenceType::partial_display_name(heap, section_a)
+                                InferenceType::partial_display_name(&ctx.heap, section_a)
                             )
                         ).with_postfixed_info(
                             &ctx.module.source, arg_b.position(),
                             &format!(
                                 "While this argument inferred it to '{}'",
-                                InferenceType::partial_display_name(heap, section_b)
+                                InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
                         )
                     }
@@ -1881,14 +1917,14 @@ impl TypeResolvingVisitor {
                         &ctx.module.source, arg.position(),
                         &format!(
                             "This argument inferred it to '{}'",
-                            InferenceType::partial_display_name(heap, section_arg)
+                            InferenceType::partial_display_name(&ctx.heap, section_arg)
                         )
                     )
                     .with_postfixed_info(
                         &ctx.module.source, expr.position,
                         &format!(
                             "While the return type inferred it to '{}'",
-                            InferenceType::partial_display_name(heap, section_ret)
+                            InferenceType::partial_display_name(&ctx.heap, section_ret)
                         )
                     )
             }
