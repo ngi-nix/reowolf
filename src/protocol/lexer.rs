@@ -1414,7 +1414,7 @@ impl Lexer<'_> {
 
         if self.consume_namespaced_identifier_spilled().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
-            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
+            self.maybe_consume_poly_args_spilled_without_pos_recovery() &&
             self.consume_whitespace(false).is_ok() &&
             self.source.next() == Some(b'(') {
             // Seems like we have a function call or an enum literal
@@ -1432,6 +1432,9 @@ impl Lexer<'_> {
         if self.has_keyword(b"get") {
             self.consume_keyword(b"get")?;
             method = Method::Get;
+        } else if self.has_keyword(b"put") {
+            self.consume_keyword(b"put")?;
+            method = Method::Put;
         } else if self.has_keyword(b"fires") {
             self.consume_keyword(b"fires")?;
             method = Method::Fires;
@@ -1553,8 +1556,6 @@ impl Lexer<'_> {
             self.consume_goto_statement(h)?.upcast()
         } else if self.has_keyword(b"new") {
             self.consume_new_statement(h)?.upcast()
-        } else if self.has_keyword(b"put") {
-            self.consume_put_statement(h)?.upcast()
         } else if self.has_label() {
             self.consume_labeled_statement(h)?.upcast()
         } else {
@@ -1898,22 +1899,6 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_new_statement(|this| NewStatement { this, position, expression, next: None }))
-    }
-    fn consume_put_statement(&mut self, h: &mut Heap) -> Result<PutStatementId, ParseError2> {
-        let position = self.source.pos();
-        self.consume_keyword(b"put")?;
-        self.consume_whitespace(false)?;
-        self.consume_string(b"(")?;
-        let port = self.consume_expression(h)?;
-        self.consume_whitespace(false)?;
-        self.consume_string(b",")?;
-        self.consume_whitespace(false)?;
-        let message = self.consume_expression(h)?;
-        self.consume_whitespace(false)?;
-        self.consume_string(b")")?;
-        self.consume_whitespace(false)?;
-        self.consume_string(b";")?;
-        Ok(h.alloc_put_statement(|this| PutStatement { this, position, port, message, next: None }))
     }
     fn consume_expression_statement(
         &mut self,

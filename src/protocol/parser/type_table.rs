@@ -181,8 +181,8 @@ pub struct StructField {
 }
 
 pub struct FunctionType {
-    return_type: ParserTypeId,
-    arguments: Vec<FunctionArgument>
+    pub return_type: ParserTypeId,
+    pub arguments: Vec<FunctionArgument>
 }
 
 pub struct ComponentType {
@@ -641,7 +641,8 @@ impl TypeTable {
 
         // Construct polymorphic arguments
         let mut poly_args = self.create_initial_poly_args(&definition.poly_vars);
-        self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, definition.return_type)?;
+        let return_type_id = definition.return_type;
+        self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, return_type_id)?;
         for argument in &arguments {
             self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, argument.parser_type)?;
         }

@@ -134,10 +134,6 @@ pub(crate) trait Visitor2 {
                 let this = stmt.this;
                 self.visit_new_stmt(ctx, this)
             },
-            Statement::Put(stmt) => {
-                let this = stmt.this;
-                self.visit_put_stmt(ctx, this)
-            },
             Statement::Expression(stmt) => {
                 let this = stmt.this;
                 self.visit_expr_stmt(ctx, this)
@@ -173,7 +169,6 @@ pub(crate) trait Visitor2 {
     fn visit_assert_stmt(&mut self, _ctx: &mut Ctx, _id: AssertStatementId) -> VisitorResult { Ok(()) }
     fn visit_goto_stmt(&mut self, _ctx: &mut Ctx, _id: GotoStatementId) -> VisitorResult { Ok(()) }
     fn visit_new_stmt(&mut self, _ctx: &mut Ctx, _id: NewStatementId) -> VisitorResult { Ok(()) }
-    fn visit_put_stmt(&mut self, _ctx: &mut Ctx, _id: PutStatementId) -> VisitorResult { Ok(()) }
     fn visit_expr_stmt(&mut self, _ctx: &mut Ctx, _id: ExpressionStatementId) -> VisitorResult { Ok(()) }
 
     // Expressions

@@ -561,32 +561,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         Ok(())
     }
 
-    fn visit_put_stmt(&mut self, ctx: &mut Ctx, id: PutStatementId) -> VisitorResult {
-        // TODO: Make `put` an expression. Perhaps silly, but much easier to
-        //  perform typechecking
-        if self.performing_breadth_pass {
-            let put_stmt = &ctx.heap[id];
-            if self.in_sync.is_none() {
-                return Err(ParseError2::new_error(
-                    &ctx.module.source, put_stmt.position, "Put must be called in a synchronous block"
-                ));
-            }
-        } else {
-            let put_stmt = &ctx.heap[id];
-            let port = put_stmt.port;
-            let message = put_stmt.message;
-
-            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
-            self.expr_parent = ExpressionParent::Put(id, 0);
-            self.visit_expr(ctx, port)?;
-            self.expr_parent = ExpressionParent::Put(id, 1);
-            self.visit_expr(ctx, message)?;
-            self.expr_parent = ExpressionParent::None;
-        }
-
-        Ok(())
-    }
-
     fn visit_expr_stmt(&mut self, ctx: &mut Ctx, id: ExpressionStatementId) -> VisitorResult {
         if !self.performing_breadth_pass {
             let expr_id = ctx.heap[id].expression;
@@ -779,15 +753,16 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         let call_expr = &mut ctx.heap[id];
+        let num_expr_args = call_expr.arguments.len();
 
         // Resolve the method to the appropriate definition and check the
         // legality of the particular method call.
         // TODO: @cleanup Unify in some kind of signature call, see similar
         //  cleanup comments with this `match` format.
-        let num_args;
+        let num_definition_args;
         match &mut call_expr.method {
             Method::Create => {
-                num_args = 1;
+                num_definition_args = 1;
             },
             Method::Fires => {
                 if !self.def_type.is_primitive() {
@@ -796,7 +771,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         "A call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
-                num_args = 1;
+                if self.in_sync.is_none() {
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, call_expr.position,
+                        "A call to 'fires' may only occur inside synchronous blocks"
+                    ));
+                }
+                num_definition_args = 1;
             },
             Method::Get => {
                 if !self.def_type.is_primitive() {
@@ -805,8 +786,29 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         "A call to 'get' may only occur in primitive component definitions"
                     ));
                 }
-                num_args = 1;
+                if self.in_sync.is_none() {
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, call_expr.position,
+                        "A call to 'get' may only occur inside synchronous blocks"
+                    ));
+                }
+                num_definition_args = 1;
             },
+            Method::Put => {
+                if !self.def_type.is_primitive() {
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, call_expr.position,
+                        "A call to 'put' may only occur in primitive component definitions"
+                    ));
+                }
+                if self.in_sync.is_none() {
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, call_expr.position,
+                        "A call to 'put' may only occur inside synchronous blocks"
+                    ));
+                }
+                num_definition_args = 2;
+            }
             Method::Symbolic(symbolic) => {
                 // Find symbolic method
                 let found_symbol = self.find_symbol_of_type(
@@ -830,9 +832,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 };
 
                 symbolic.definition = Some(definition_id);
-                match ctx.types.get_base_definition(&definition_id).unwrap() {
-                    Definition::Function(definition) => {
-                        num_args = definition.parameters.len();
+                match &ctx.types.get_base_definition(&definition_id).unwrap().definition {
+                    DefinedTypeVariant::Function(definition) => {
+                        num_definition_args = definition.arguments.len();
                     },
                     _ => unreachable!(),
                 }
@@ -842,18 +844,18 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         // Check the poly args and the number of variables in the call
         // expression
         self.visit_call_poly_args(ctx, id)?;
-        if call_expr.arguments.len() != num_args {
+        let call_expr = &mut ctx.heap[id];
+        if num_expr_args != num_definition_args {
             return Err(ParseError2::new_error(
                 &ctx.module.source, call_expr.position,
                 &format!(
                     "This call expects {} arguments, but {} were provided",
-                    num_args, call_expr.arguments.len()
+                    num_definition_args, num_expr_args
                 )
             ));
         }
 
         // Recurse into all of the arguments and set the expression's parent
-        let call_expr = &mut ctx.heap[id];
         let upcast_id = id.upcast();
 
         let old_num_exprs = self.expression_buffer.len();
@@ -1478,6 +1480,9 @@ impl ValidityAndLinkerVisitor {
             Method::Get => {
                 1
             },
+            Method::Put => {
+                1
+            }
             Method::Symbolic(symbolic) => {
                 let definition = &ctx.heap[symbolic.definition.unwrap()];
                 if let Definition::Function(definition) = definition {

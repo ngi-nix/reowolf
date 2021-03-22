@@ -118,9 +118,6 @@ pub(crate) trait Visitor: Sized {
     fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
         recursive_new_statement(self, h, stmt)
     }
-    fn visit_put_statement(&mut self, h: &mut Heap, stmt: PutStatementId) -> VisitorResult {
-        recursive_put_statement(self, h, stmt)
-    }
     fn visit_expression_statement(
         &mut self,
         h: &mut Heap,
@@ -320,7 +317,6 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
         Statement::Assert(stmt) => this.visit_assert_statement(h, stmt.this),
         Statement::Goto(stmt) => this.visit_goto_statement(h, stmt.this),
         Statement::New(stmt) => this.visit_new_statement(h, stmt.this),
-        Statement::Put(stmt) => this.visit_put_statement(h, stmt.this),
         Statement::Expression(stmt) => this.visit_expression_statement(h, stmt.this),
         Statement::EndSynchronous(stmt) => this.visit_end_synchronous_statement(h, stmt.this),
         Statement::EndWhile(stmt) => this.visit_end_while_statement(h, stmt.this),
@@ -422,15 +418,6 @@ fn recursive_new_statement<T: Visitor>(
     stmt: NewStatementId,
 ) -> VisitorResult {
     recursive_call_expression_as_expression(this, h, h[stmt].expression)
-}
-
-fn recursive_put_statement<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    stmt: PutStatementId,
-) -> VisitorResult {
-    this.visit_expression(h, h[stmt].port)?;
-    this.visit_expression(h, h[stmt].message)
 }
 
 fn recursive_expression_statement<T: Visitor>(
@@ -966,10 +953,6 @@ impl Visitor for LinkStatements {
         Ok(())
     }
     fn visit_new_statement(&mut self, _h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
-        self.prev = Some(UniqueStatementId(stmt.upcast()));
-        Ok(())
-    }
-    fn visit_put_statement(&mut self, _h: &mut Heap, stmt: PutStatementId) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
         Ok(())
     }

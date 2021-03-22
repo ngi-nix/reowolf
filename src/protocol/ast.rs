@@ -110,7 +110,6 @@ define_new_ast_id!(ReturnStatementId, StatementId, ReturnStatement, Statement::R
 define_new_ast_id!(AssertStatementId, StatementId, AssertStatement, Statement::Assert, statements);
 define_new_ast_id!(GotoStatementId, StatementId, GotoStatement, Statement::Goto, statements);
 define_new_ast_id!(NewStatementId, StatementId, NewStatement, Statement::New, statements);
-define_new_ast_id!(PutStatementId, StatementId, PutStatement, Statement::Put, statements);
 define_new_ast_id!(ExpressionStatementId, StatementId, ExpressionStatement, Statement::Expression, statements);
 
 define_aliased_ast_id!(ExpressionId, Id<Expression>, Expression, expressions);
@@ -419,14 +418,6 @@ impl Heap {
     ) -> NewStatementId {
         NewStatementId(
             self.statements.alloc_with_id(|id| Statement::New(f(NewStatementId(id)))),
-        )
-    }
-    pub fn alloc_put_statement(
-        &mut self,
-        f: impl FnOnce(PutStatementId) -> PutStatement,
-    ) -> PutStatementId {
-        PutStatementId(
-            self.statements.alloc_with_id(|id| Statement::Put(f(PutStatementId(id)))),
         )
     }
     pub fn alloc_labeled_statement(
@@ -908,6 +899,7 @@ pub enum Constant {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Method {
     Get,
+    Put,
     Fires,
     Create,
     Symbolic(MethodSymbolic)
@@ -1271,7 +1263,6 @@ pub enum Statement {
     Assert(AssertStatement),
     Goto(GotoStatement),
     New(NewStatement),
-    Put(PutStatement),
     Expression(ExpressionStatement),
 }
 
@@ -1432,12 +1423,6 @@ impl Statement {
             _ => panic!("Unable to cast `Statement` to `NewStatement`"),
         }
     }
-    pub fn as_put(&self) -> &PutStatement {
-        match self {
-            Statement::Put(result) => result,
-            _ => panic!("Unable to cast `Statement` to `PutStatement`"),
-        }
-    }
     pub fn as_expression(&self) -> &ExpressionStatement {
         match self {
             Statement::Expression(result) => result,
@@ -1457,7 +1442,6 @@ impl Statement {
             Statement::EndSynchronous(stmt) => stmt.next = Some(next),
             Statement::Assert(stmt) => stmt.next = Some(next),
             Statement::New(stmt) => stmt.next = Some(next),
-            Statement::Put(stmt) => stmt.next = Some(next),
             Statement::Expression(stmt) => stmt.next = Some(next),
             Statement::Return(_)
             | Statement::Break(_)
@@ -1490,7 +1474,6 @@ impl SyntaxElement for Statement {
             Statement::Assert(stmt) => stmt.position(),
             Statement::Goto(stmt) => stmt.position(),
             Statement::New(stmt) => stmt.position(),
-            Statement::Put(stmt) => stmt.position(),
             Statement::Expression(stmt) => stmt.position(),
         }
     }
@@ -1884,23 +1867,6 @@ impl SyntaxElement for NewStatement {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PutStatement {
-    pub this: PutStatementId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub port: ExpressionId,
-    pub message: ExpressionId,
-    // Phase 2: linker
-    pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for PutStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExpressionStatement {
     pub this: ExpressionStatementId,
     // Phase 1: parser
@@ -1925,7 +1891,6 @@ pub enum ExpressionParent {
     Return(ReturnStatementId),
     Assert(AssertStatementId),
     New(NewStatementId),
-    Put(PutStatementId, u32), // index of arg
     ExpressionStmt(ExpressionStatementId),
     Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)
 }
@@ -2038,6 +2003,13 @@ impl Expression {
             Expression::Constant(expr) => &expr.parent,
             Expression::Call(expr) => &expr.parent,
             Expression::Variable(expr) => &expr.parent,
+        }
+    }
+    pub fn parent_expr_id(&self) -> Option<ExpressionId> {
+        if let ExpressionParent::Expression(id, _) = self.parent() {
+            Some(*id)
+        } else {
+            None
         }
     }
     pub fn set_parent(&mut self, parent: ExpressionParent) {

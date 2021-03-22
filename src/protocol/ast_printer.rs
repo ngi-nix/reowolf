@@ -485,16 +485,6 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Next")
                     .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
             },
-            Statement::Put(stmt) => {
-                self.kv(indent).with_id(PREFIX_PUT_STMT_ID, stmt.this.0.index)
-                    .with_s_key("Put");
-                self.kv(indent2).with_s_key("Port");
-                self.write_expr(heap, stmt.port, indent3);
-                self.kv(indent2).with_s_key("Message");
-                self.write_expr(heap, stmt.message, indent3);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
-            },
             Statement::Expression(stmt) => {
                 self.kv(indent).with_id(PREFIX_EXPR_STMT_ID, stmt.this.0.index)
                     .with_s_key("ExpressionStatement");
@@ -628,6 +618,7 @@ impl ASTWriter {
                 let method = self.kv(indent2).with_s_key("Method");
                 match &expr.method {
                     Method::Get => { method.with_s_val("get"); },
+                    Method::Put => { method.with_s_val("put"); },
                     Method::Fires => { method.with_s_val("fires"); },
                     Method::Create => { method.with_s_val("create"); },
                     Method::Symbolic(symbolic) => {
@@ -749,7 +740,6 @@ fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
         EP::Return(id) => format!("ReturnStmt({})", id.0.index),
         EP::Assert(id) => format!("AssertStmt({})", id.0.index),
         EP::New(id) => format!("NewStmt({})", id.0.index),
-        EP::Put(id, idx) => format!("PutStmt({}, {})", id.0.index, idx),
         EP::ExpressionStmt(id) => format!("ExprStmt({})", id.0.index),
         EP::Expression(id, idx) => format!("Expr({}, {})", id.index, idx)
     };

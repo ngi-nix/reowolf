@@ -1499,10 +1499,24 @@ impl Store {
             }
             Expression::Constant(expr) => Ok(Value::from_constant(&expr.value)),
             Expression::Call(expr) => match &expr.method {
-                Method::Create => {
+                Method::Get => {
                     assert_eq!(1, expr.arguments.len());
-                    let length = self.eval(h, ctx, expr.arguments[0])?;
-                    Ok(Value::create_message(length))
+                    let value = self.eval(h, ctx, expr.arguments[0])?;
+                    match ctx.get(value.clone()) {
+                        None => Err(EvalContinuation::BlockGet(value)),
+                        Some(result) => Ok(result),
+                    }
+                }
+                Method::Put => {
+                    assert_eq!(2, expr.arguments.len());
+                    let port_value = self.eval(h, ctx, expr.arguments[0])?;
+                    let msg_value = self.eval(h, ctx, expr.arguments[1])?;
+                    if ctx.did_put(port_value.clone()) {
+                        // Return bogus, replacing this at some point anyway
+                        Ok(Value::Message(MessageValue(None)))
+                    } else {
+                        Err(EvalContinuation::Put(port_value, msg_value))
+                    }
                 }
                 Method::Fires => {
                     assert_eq!(1, expr.arguments.len());
@@ -1512,13 +1526,10 @@ impl Store {
                         Some(result) => Ok(result),
                     }
                 }
-                Method::Get => {
+                Method::Create => {
                     assert_eq!(1, expr.arguments.len());
-                    let value = self.eval(h, ctx, expr.arguments[0])?;
-                    match ctx.get(value.clone()) {
-                        None => Err(EvalContinuation::BlockGet(value)),
-                        Some(result) => Ok(result),
-                    }
+                    let length = self.eval(h, ctx, expr.arguments[0])?;
+                    Ok(Value::create_message(length))
                 }
                 Method::Symbolic(_symbol) => unimplemented!(),
             },
@@ -1695,15 +1706,6 @@ impl Prompt {
                     },
                     _ => unreachable!("not a symbolic call expression")
                 }
-            }
-            Statement::Put(stmt) => {
-                // Evaluate port and message
-                let port = self.store.eval(h, ctx, stmt.port)?;
-                let message = self.store.eval(h, ctx, stmt.message)?;
-                // Continue to next statement
-                self.position = stmt.next;
-                // Signal the put upwards
-                Err(EvalContinuation::Put(port, message))
             }
             Statement::Expression(stmt) => {
                 // Evaluate expression
