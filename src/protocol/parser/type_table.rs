@@ -106,12 +106,14 @@ impl std::fmt::Display for TypeClass {
 /// field, enum variant, etc.). Otherwise the polymorphic argument is just a
 /// marker and does not influence the bytesize of the type.
 pub struct DefinedType {
+    pub(crate) ast_root: RootId,
     pub(crate) ast_definition: DefinitionId,
     pub(crate) definition: DefinedTypeVariant,
     pub(crate) poly_args: Vec<PolyArg>,
     pub(crate) is_polymorph: bool,
     pub(crate) is_pointerlike: bool,
-    pub(crate) monomorphs: Vec<u32>, // TODO: ?
+    // TODO: @optimize
+    pub(crate) monomorphs: Vec<Vec<ConcreteType>>,
 }
 
 pub enum DefinedTypeVariant {
@@ -236,31 +238,6 @@ impl TypeIterator {
     }
 }
 
-#[derive(Copy, Clone)]
-pub(crate) enum ConcreteTypeVariant {
-    // No subtypes
-    Message,
-    Bool,
-    Byte,
-    Short,
-    Int,
-    Long,
-    String,
-    // One subtype
-    Array,
-    Slice,
-    Input,
-    Output,
-    // Multiple subtypes (definition of thing and number of poly args)
-    Instance(DefinitionId, usize)
-}
-
-pub(crate) struct ConcreteType {
-    // serialized version (interpret as serialized depth-first tree, with
-    // variant indicating the number of children (subtypes))
-    pub(crate) v: Vec<ConcreteTypeVariant>
-}
-
 /// Result from attempting to resolve a `ParserType` using the symbol table and
 /// the type table.
 enum ResolveResult {
@@ -343,6 +320,22 @@ impl TypeTable {
     /// an option anyway
     pub(crate) fn get_base_definition(&self, definition_id: &DefinitionId) -> Option<&DefinedType> {
         self.lookup.get(&definition_id)
+    }
+
+    /// Instantiates a monomorph for a given base definition.
+    pub(crate) fn instantiate_monomorph(&mut self, definition_id: &DefinitionId, monomorph: &Vec<ConcreteType>) {
+        debug_assert!(
+            self.lookup.contains_key(definition_id),
+            "attempting to instantiate monomorph of definition unknown to type table"
+        );
+        let definition = self.lookup.get_mut(definition_id).unwrap();
+        debug_assert_eq!(
+            monomorph.len(), definition.poly_args.len(),
+            "attempting to instantiate monomorph with {} types, but definition requires {}",
+            monomorph.len(), definition.poly_args.len()
+        );
+
+        definition.monomorphs.push(monomorph.clone())
     }
 
     /// This function will resolve just the basic definition of the type, it
@@ -474,6 +467,7 @@ impl TypeTable {
 
             // Insert base definition in type table
             self.lookup.insert(definition_id, DefinedType {
+                ast_root: root_id,
                 ast_definition: definition_id,
                 definition: DefinedTypeVariant::Union(UnionType{
                     variants,
@@ -525,6 +519,7 @@ impl TypeTable {
             // polymorphic variables, they might still be present as tokens
             let definition_id = definition.this.upcast();
             self.lookup.insert(definition_id, DefinedType {
+                ast_root: root_id,
                 ast_definition: definition_id,
                 definition: DefinedTypeVariant::Enum(EnumType{
                     variants,
@@ -581,6 +576,7 @@ impl TypeTable {
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
 
         self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Struct(StructType{
                 fields,
@@ -651,6 +647,7 @@ impl TypeTable {
 
         // Construct entry in type table
         self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Function(FunctionType{
                 return_type,
@@ -712,6 +709,7 @@ impl TypeTable {
 
         // Construct entry in type table
         self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Component(ComponentType{
                 variant: component_variant,

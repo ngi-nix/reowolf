@@ -217,7 +217,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         } else {
             let variable_id = ctx.heap[id].variable;
             let parser_type_id = ctx.heap[variable_id].parser_type;
-            self.visit_parser_type(ctx, parser_type_id);
+            self.visit_parser_type(ctx, parser_type_id)?;
 
             debug_assert_eq!(self.expr_parent, ExpressionParent::None);
             self.expr_parent = ExpressionParent::Memory(id);
@@ -1523,7 +1523,7 @@ impl ValidityAndLinkerVisitor {
             self.parser_type_buffer.extend(&call_expr.poly_args);
             while self.parser_type_buffer.len() > old_num_types {
                 let parser_type_id = self.parser_type_buffer.pop().unwrap();
-                self.visit_parser_type(ctx, parser_type_id);
+                self.visit_parser_type(ctx, parser_type_id)?;
             }
             self.parser_type_buffer.truncate(old_num_types);
             Ok(())

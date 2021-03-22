@@ -280,7 +280,6 @@ impl Lexer<'_> {
             || self.has_keyword(b"assert")
             || self.has_keyword(b"goto")
             || self.has_keyword(b"new")
-            || self.has_keyword(b"put") // TODO: @fix, should be a function, even though it has sideeffects
     }
     fn has_type_keyword(&self) -> bool {
         self.has_keyword(b"in")
@@ -538,13 +537,13 @@ impl Lexer<'_> {
         }
 
         // Consume any polymorphic arguments that follow the type identifier
+        let mut backup_pos = self.source.pos();
         if self.consume_whitespace(false).is_err() { return false; }
         if !self.maybe_consume_poly_args_spilled_without_pos_recovery() { return false; }
-
         // Consume any array specifiers. Make sure we always leave the input
         // position at the end of the last array specifier if we do find a
         // valid type
-        let mut backup_pos = self.source.pos();
+
         if self.consume_whitespace(false).is_err() { return false; }
         while let Some(b'[') = self.source.next() {
             self.source.consume();
@@ -764,6 +763,7 @@ impl Lexer<'_> {
                 operation,
                 right,
                 parent: ExpressionParent::None,
+                concrete_type: ConcreteType::default(),
             })
             .upcast())
         } else {
@@ -841,6 +841,7 @@ impl Lexer<'_> {
                 true_expression,
                 false_expression,
                 parent: ExpressionParent::None,
+                concrete_type: ConcreteType::default(),
             })
             .upcast())
         } else {
@@ -866,6 +867,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -890,6 +892,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -914,6 +917,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -938,6 +942,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -962,6 +967,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -986,6 +992,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1016,6 +1023,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1056,6 +1064,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1088,6 +1097,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1120,6 +1130,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1156,6 +1167,7 @@ impl Lexer<'_> {
                     operation,
                     right,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast();
         }
@@ -1207,6 +1219,7 @@ impl Lexer<'_> {
                     operation,
                     expression,
                     parent: ExpressionParent::None,
+                    concrete_type: ConcreteType::default(),
                 })
                 .upcast());
         }
@@ -1233,6 +1246,7 @@ impl Lexer<'_> {
                         operation,
                         expression,
                         parent: ExpressionParent::None,
+                        concrete_type: ConcreteType::default(),
                     })
                     .upcast();
             } else if self.has_string(b"--") {
@@ -1247,6 +1261,7 @@ impl Lexer<'_> {
                         operation,
                         expression,
                         parent: ExpressionParent::None,
+                        concrete_type: ConcreteType::default(),
                     })
                     .upcast();
             } else if self.has_string(b"[") {
@@ -1273,6 +1288,7 @@ impl Lexer<'_> {
                             from_index: index,
                             to_index,
                             parent: ExpressionParent::None,
+                            concrete_type: ConcreteType::default(),
                         })
                         .upcast();
                 } else {
@@ -1283,6 +1299,7 @@ impl Lexer<'_> {
                             subject,
                             index,
                             parent: ExpressionParent::None,
+                            concrete_type: ConcreteType::default(),
                         })
                         .upcast();
                 }
@@ -1307,6 +1324,7 @@ impl Lexer<'_> {
                         subject,
                         field,
                         parent: ExpressionParent::None,
+                        concrete_type: ConcreteType::default(),
                     })
                     .upcast();
             }
@@ -1354,6 +1372,7 @@ impl Lexer<'_> {
             position,
             elements,
             parent: ExpressionParent::None,
+            concrete_type: ConcreteType::default(),
         }))
     }
     fn has_constant(&self) -> bool {
@@ -1400,6 +1419,7 @@ impl Lexer<'_> {
             position,
             value,
             parent: ExpressionParent::None,
+            concrete_type: ConcreteType::default(),
         }))
     }
     fn has_call_expression(&mut self) -> bool {
@@ -1478,6 +1498,7 @@ impl Lexer<'_> {
             arguments,
             poly_args,
             parent: ExpressionParent::None,
+            concrete_type: ConcreteType::default(),
         }))
     }
     fn consume_variable_expression(
@@ -1492,6 +1513,7 @@ impl Lexer<'_> {
             identifier,
             declaration: None,
             parent: ExpressionParent::None,
+            concrete_type: ConcreteType::default(),
         }))
     }
 

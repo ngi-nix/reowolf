@@ -148,28 +148,30 @@ impl InferenceTypePart {
     }
 }
 
-impl From<ConcreteTypeVariant> for InferenceTypePart {
-    fn from(v: ConcreteTypeVariant) -> InferenceTypePart {
-        use ConcreteTypeVariant as CTV;
+impl From<ConcreteTypePart> for InferenceTypePart {
+    fn from(v: ConcreteTypePart) -> InferenceTypePart {
+        use ConcreteTypePart as CTP;
         use InferenceTypePart as ITP;
 
         match v {
-            CTV::Message => ITP::Message,
-            CTV::Bool => ITP::Bool,
-            CTV::Byte => ITP::Byte,
-            CTV::Short => ITP::Short,
-            CTV::Int => ITP::Int,
-            CTV::Long => ITP::Long,
-            CTV::String => ITP::String,
-            CTV::Array => ITP::Array,
-            CTV::Slice => ITP::Slice,
-            CTV::Input => ITP::Input,
-            CTV::Output => ITP::Output,
-            CTV::Instance(id, num) => ITP::Instance(id, num),
+            CTP::Void => ITP::Void,
+            CTP::Message => ITP::Message,
+            CTP::Bool => ITP::Bool,
+            CTP::Byte => ITP::Byte,
+            CTP::Short => ITP::Short,
+            CTP::Int => ITP::Int,
+            CTP::Long => ITP::Long,
+            CTP::String => ITP::String,
+            CTP::Array => ITP::Array,
+            CTP::Slice => ITP::Slice,
+            CTP::Input => ITP::Input,
+            CTP::Output => ITP::Output,
+            CTP::Instance(id, num) => ITP::Instance(id, num),
         }
     }
 }
 
+#[derive(Debug)]
 struct InferenceType {
     has_marker: bool,
     is_done: bool,
@@ -409,8 +411,9 @@ impl InferenceType {
             let part_b = &type_b.parts[idx_b];
             
             if part_a == part_b {
-                depth += part_a.depth_change();
-                debug_assert_eq!(depth, part_b.depth_change());
+                let depth_change = part_a.depth_change();
+                depth += depth_change;
+                debug_assert_eq!(depth_change, part_b.depth_change());
                 idx_a += 1;
                 idx_b += 1;
                 continue;
@@ -462,8 +465,9 @@ impl InferenceType {
             let template_part = &template[template_idx];
 
             if to_infer_part == template_part {
-                depth += to_infer_part.depth_change();
-                debug_assert_eq!(depth, template_part.depth_change());
+                let depth_change = to_infer_part.depth_change();
+                depth += depth_change;
+                debug_assert_eq!(depth_change, template_part.depth_change());
                 to_infer_idx += 1;
                 template_idx += 1;
                 continue;
@@ -515,8 +519,9 @@ impl InferenceType {
             let part_b = &type_parts_b[idx_b];
 
             if part_a == part_b {
-                depth += part_a.depth_change();
-                debug_assert_eq!(depth, part_b.depth_change());
+                let depth_change = part_a.depth_change();
+                depth += depth_change;
+                debug_assert_eq!(depth_change, part_b.depth_change());
                 idx_a += 1;
                 idx_b += 1;
                 continue;
@@ -544,15 +549,52 @@ impl InferenceType {
         true
     }
 
-    /// Returns a human-readable version of the type. Only use for debugging
-    /// or returning errors (since it allocates a string).
+    /// Performs the conversion of the inference type into a concrete type.
+    /// By calling this function you must make sure that no unspecified types
+    /// (e.g. Unknown or IntegerLike) exist in the type.
+    fn write_concrete_type(&self, concrete_type: &mut ConcreteType) {
+        use InferenceTypePart as ITP;
+        use ConcreteTypePart as CTP;
+
+        debug_assert!(concrete_type.parts.is_empty());
+        concrete_type.parts.reserve(self.parts.len());
+
+        for part in &self.parts {
+            let converted_part = match part {
+                ITP::Marker(_) => { continue; },
+                ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => {
+                    debug_assert!(false, "Attempted to convert inference type part {:?} into concrete type", part);
+                    unreachable!();
+                },
+                ITP::Void => CTP::Void,
+                ITP::Message => CTP::Message,
+                ITP::Bool => CTP::Bool,
+                ITP::Byte => CTP::Byte,
+                ITP::Short => CTP::Short,
+                ITP::Int => CTP::Int,
+                ITP::Long => CTP::Long,
+                ITP::String => CTP::String,
+                ITP::Array => CTP::Array,
+                ITP::Slice => CTP::Slice,
+                ITP::Input => CTP::Input,
+                ITP::Output => CTP::Output,
+                ITP::Instance(id, num) => CTP::Instance(*id, *num),
+            };
+            concrete_type.parts.push(converted_part);
+        }
+    }
+
+    /// Writes a human-readable version of the type to a string. Mostly a
+    /// function for interior use.
     fn write_display_name(
         buffer: &mut String, heap: &Heap, parts: &[InferenceTypePart], mut idx: usize
     ) -> usize {
         use InferenceTypePart as ITP;
 
         match &parts[idx] {
-            ITP::Marker(_) => {},
+            ITP::Marker(_) => {
+                idx = Self::write_display_name(buffer, heap, parts, idx + 1)
+            },
             ITP::Unknown => buffer.push_str("?"),
             ITP::NumberLike => buffer.push_str("num?"),
             ITP::IntegerLike => buffer.push_str("int?"),
@@ -609,12 +651,15 @@ impl InferenceType {
         idx
     }
 
+    /// Returns the display name of a (part of) the type tree. Will allocate a
+    /// string.
     fn partial_display_name(heap: &Heap, parts: &[InferenceTypePart]) -> String {
         let mut buffer = String::with_capacity(parts.len() * 6);
         Self::write_display_name(&mut buffer, heap, parts, 0);
         buffer
     }
 
+    /// Returns the display name of the full type tree. Will allocate a string.
     fn display_name(&self, heap: &Heap) -> String {
         Self::partial_display_name(heap, &self.parts)
     }
@@ -656,7 +701,7 @@ impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum DualInferenceResult {
     Neither,        // neither argument is clarified
     First,          // first argument is clarified using the second one
@@ -686,7 +731,7 @@ impl DualInferenceResult {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum SingleInferenceResult {
     Unmodified,
     Modified,
@@ -699,32 +744,30 @@ enum DefinitionType{
     Function(FunctionId),
 }
 
+pub(crate) struct ResolveQueueElement {
+    pub(crate) root_id: RootId,
+    pub(crate) definition_id: DefinitionId,
+    pub(crate) monomorph_types: Vec<ConcreteType>,
+}
+
+pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
+
 /// This particular visitor will recurse depth-first into the AST and ensures
-/// that all expressions have the appropriate types. At the moment this implies:
-///
-///     - Type checking arguments to unary and binary operators.
-///     - Type checking assignment, indexing, slicing and select expressions.
-///     - Checking arguments to functions and component instantiations.
-///
-/// This will be achieved by slowly descending into the AST. At any given
-/// expression we may depend on
+/// that all expressions have the appropriate types.
 pub(crate) struct TypeResolvingVisitor {
+    // Current definition we're typechecking.
     definition_type: DefinitionType,
+    poly_vars: Vec<ConcreteType>,
 
     // Buffers for iteration over substatements and subexpressions
     stmt_buffer: Vec<StatementId>,
     expr_buffer: Vec<ExpressionId>,
 
-    // If instantiating a monomorph of a polymorphic proctype, then we store the
-    // values of the polymorphic values here. There should be as many, and in
-    // the same order as, in the definition's polyargs.
-    polyvars: Vec<ConcreteType>,
     // Mapping from parser type to inferred type. We attempt to continue to
     // specify these types until we're stuck or we've fully determined the type.
     var_types: HashMap<VariableId, VarData>,      // types of variables
     expr_types: HashMap<ExpressionId, InferenceType>,   // types of expressions
     extra_data: HashMap<ExpressionId, ExtraData>,       // data for function call inference
-
     // Keeping track of which expressions need to be reinferred because the
     // expressions they're linked to made progression on an associated type
     expr_queued: HashSet<ExpressionId>,
@@ -748,9 +791,9 @@ impl TypeResolvingVisitor {
     pub(crate) fn new() -> Self {
         TypeResolvingVisitor{
             definition_type: DefinitionType::None,
+            poly_vars: Vec::new(),
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expr_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
-            polyvars: Vec::new(),
             var_types: HashMap::new(),
             expr_types: HashMap::new(),
             extra_data: HashMap::new(),
@@ -758,13 +801,58 @@ impl TypeResolvingVisitor {
         }
     }
 
+    // TODO: @cleanup Unsure about this, maybe a pattern will arise after
+    //  a while.
+    pub(crate) fn queue_module_definitions(ctx: &Ctx, queue: &mut ResolveQueue) {
+        let root_id = ctx.module.root_id;
+        let root = &ctx.heap.protocol_descriptions[root_id];
+        for definition_id in &root.definitions {
+            let definition = &ctx.heap[*definition_id];
+            match definition {
+                Definition::Function(definition) => {
+                    if definition.poly_vars.is_empty() {
+                        queue.push(ResolveQueueElement{
+                            root_id,
+                            definition_id: *definition_id,
+                            monomorph_types: Vec::new(),
+                        })
+                    }
+                },
+                Definition::Component(definition) => {
+                    if definition.poly_vars.is_empty() {
+                        queue.push(ResolveQueueElement{
+                            root_id,
+                            definition_id: *definition_id,
+                            monomorph_types: Vec::new(),
+                        })
+                    }
+                },
+                Definition::Enum(_) | Definition::Struct(_) => {},
+            }
+        }
+    }
+
+    pub(crate) fn handle_module_definition(
+        &mut self, ctx: &mut Ctx, queue: &mut ResolveQueue, element: ResolveQueueElement
+    ) -> VisitorResult {
+        // Visit the definition
+        debug_assert_eq!(ctx.module.root_id, element.root_id);
+        self.visit_definition(ctx, element.definition_id)?;
+
+        // Keep resolving types
+        self.resolve_types(ctx, queue)?;
+        Ok(())
+    }
+
     fn reset(&mut self) {
         self.definition_type = DefinitionType::None;
+        self.poly_vars.clear();
         self.stmt_buffer.clear();
         self.expr_buffer.clear();
-        self.polyvars.clear();
         self.var_types.clear();
         self.expr_types.clear();
+        self.extra_data.clear();
+        self.expr_queued.clear();
     }
 }
 
@@ -776,7 +864,7 @@ impl Visitor2 for TypeResolvingVisitor {
         self.definition_type = DefinitionType::Component(id);
 
         let comp_def = &ctx.heap[id];
-        debug_assert_eq!(comp_def.poly_vars.len(), self.polyvars.len(), "component polyvars do not match imposed polyvars");
+        debug_assert_eq!(comp_def.poly_vars.len(), self.poly_vars.len(), "component polyvars do not match imposed polyvars");
 
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
@@ -794,7 +882,7 @@ impl Visitor2 for TypeResolvingVisitor {
         self.definition_type = DefinitionType::Function(id);
 
         let func_def = &ctx.heap[id];
-        debug_assert_eq!(func_def.poly_vars.len(), self.polyvars.len(), "function polyvars do not match imposed polyvars");
+        debug_assert_eq!(func_def.poly_vars.len(), self.poly_vars.len(), "function polyvars do not match imposed polyvars");
 
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
@@ -814,7 +902,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let block = &ctx.heap[id];
 
         for stmt_id in block.statements.clone() {
-            self.visit_stmt(ctx, stmt_id);
+            self.visit_stmt(ctx, stmt_id)?;
         }
 
         Ok(())
@@ -1094,14 +1182,149 @@ macro_rules! debug_assert_ptrs_distinct {
     };
 }
 
-enum TypeConstraintResult {
-    Progress, // Success: Made progress in applying constraints
-    NoProgess, // Success: But did not make any progress in applying constraints
-    ErrExprType, // Error: Expression type did not match the argument(s) of the expression type
-    ErrArgType, // Error: Expression argument types did not match
-}
-
 impl TypeResolvingVisitor {
+    fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError2> {
+        // Keep inferring until we can no longer make any progress
+        println!("DEBUG: Resolve queue is {:?}", &self.expr_queued);
+        while let Some(next_expr_id) = self.expr_queued.iter().next() {
+            let next_expr_id = *next_expr_id;
+            self.expr_queued.remove(&next_expr_id);
+            self.progress_expr(ctx, next_expr_id)?;
+        }
+
+        // Should have inferred everything
+        for (expr_id, expr_type) in self.expr_types.iter() {
+            if !expr_type.is_done {
+                let mut buffer = std::fs::File::create("type_debug.txt").unwrap();
+                use crate::protocol::ast_printer::ASTWriter;
+                let mut w = ASTWriter::new();
+                w.write_ast(&mut buffer, &ctx.heap);
+                // TODO: Auto-inference of integerlike types
+                let expr = &ctx.heap[*expr_id];
+                return Err(ParseError2::new_error(
+                    &ctx.module.source, expr.position(),
+                    &format!(
+                        "Could not fully infer the type of this expression (got '{}')",
+                        expr_type.display_name(&ctx.heap)
+                    )
+                ))
+            }
+
+            let concrete_type = ctx.heap[*expr_id].get_type_mut();
+            expr_type.write_concrete_type(concrete_type);
+        }
+
+        // Check all things we need to monomorphize
+        // TODO: Struct/enum/union monomorphization
+        for (call_expr_id, extra_data) in self.extra_data.iter() {
+            if extra_data.poly_vars.is_empty() { continue; }
+
+            // We have a polymorph
+            let mut monomorph_types = Vec::with_capacity(extra_data.poly_vars.len());
+            for (poly_idx, poly_type) in extra_data.poly_vars.iter().enumerate() {
+                if !poly_type.is_done {
+                    // TODO: Single clean function for function signatures and polyvars.
+                    // TODO: Better error message
+                    let expr = &ctx.heap[*call_expr_id];
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, expr.position(),
+                        &format!(
+                            "Could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
+                            poly_idx, poly_type.display_name(&ctx.heap)
+                        )
+                    ))
+                }
+
+                let mut concrete_type = ConcreteType::default();
+                poly_type.write_concrete_type(&mut concrete_type);
+                monomorph_types.insert(poly_idx, concrete_type);
+            }
+
+            // Resolve to call expression's definition
+            let call_expr = if let Expression::Call(call_expr) = &ctx.heap[*call_expr_id] {
+                call_expr
+            } else {
+                todo!("implement different kinds of polymorph expressions");
+            };
+
+            if let Method::Symbolic(symbolic) = &call_expr.method {
+                let definition_id = symbolic.definition.unwrap();
+                let root_id = ctx.types
+                    .get_base_definition(&definition_id)
+                    .unwrap()
+                    .ast_root;
+
+                queue.push(ResolveQueueElement{
+                    root_id,
+                    definition_id,
+                    monomorph_types,
+                })
+            }
+        }
+
+        // Finally, if the currently resolved definition is a monomoprh, then we
+        // add it to the type table
+        if !self.poly_vars.is_empty() {
+            let definition_id = match &self.definition_type {
+                DefinitionType::None => unreachable!(),
+                DefinitionType::Function(id) => id.upcast(),
+                DefinitionType::Component(id) => id.upcast(),
+            };
+            ctx.types.instantiate_monomorph(&definition_id, &self.poly_vars)
+        }
+
+        Ok(())
+    }
+
+    fn progress_expr(&mut self, ctx: &mut Ctx, id: ExpressionId) -> Result<(), ParseError2> {
+        match &ctx.heap[id] {
+            Expression::Assignment(expr) => {
+                let id = expr.this;
+                self.progress_assignment_expr(ctx, id)
+            },
+            Expression::Conditional(expr) => {
+                let id = expr.this;
+                self.progress_conditional_expr(ctx, id)
+            },
+            Expression::Binary(expr) => {
+                let id = expr.this;
+                self.progress_binary_expr(ctx, id)
+            },
+            Expression::Unary(expr) => {
+                let id = expr.this;
+                self.progress_unary_expr(ctx, id)
+            },
+            Expression::Indexing(expr) => {
+                let id = expr.this;
+                self.progress_indexing_expr(ctx, id)
+            },
+            Expression::Slicing(expr) => {
+                let id = expr.this;
+                self.progress_slicing_expr(ctx, id)
+            },
+            Expression::Select(expr) => {
+                let id = expr.this;
+                self.progress_select_expr(ctx, id)
+            },
+            Expression::Array(expr) => {
+                let id = expr.this;
+                self.progress_array_expr(ctx, id)
+            },
+            Expression::Constant(expr) => {
+                let id = expr.this;
+                self.progress_constant_expr(ctx, id)
+            },
+            Expression::Call(expr) => {
+                let id = expr.this;
+                self.progress_call_expr(ctx, id)
+            },
+            Expression::Variable(expr) => {
+                let id = expr.this;
+                self.progress_variable_expr(ctx, id)
+            }
+        }
+    }
+
     fn progress_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> Result<(), ParseError2> {
         use AssignmentOperator as AO;
 
@@ -1347,6 +1570,7 @@ impl TypeResolvingVisitor {
 
             // Note that if the array type progressed the type of the arguments,
             // then we should enqueue this progression function again
+            // TODO: @fix Make apply_equal_n accept a start idx as well
             if arg_progress { self.queue_expr(upcast_id); }
         }
 
@@ -1375,6 +1599,7 @@ impl TypeResolvingVisitor {
     //  polymorphic struct/enum/union literals. These likely follow the same
     //  pattern as here.
     fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
+        println!("DEBUG: Processing call {}", id.0.index);
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let extra = self.extra_data.get_mut(&upcast_id).unwrap();
@@ -1392,6 +1617,8 @@ impl TypeResolvingVisitor {
                 ctx, upcast_id, signature_type, 0, argument_type, 0
             )?;
 
+            println!("DEBUG Arg  {}: {} <--> {}", arg_idx, signature_type.display_name(&ctx.heap), unsafe{&*argument_type}.display_name(&ctx.heap));
+
             if progress_sig {
                 // Progressed signature, so also apply inference to the 
                 // polymorph types using the markers 
@@ -1405,6 +1632,7 @@ impl TypeResolvingVisitor {
                         Ok(false) => {},
                         Err(()) => { poly_infer_error = true; }
                     }
+                    println!("DEBUG Poly {}: {} <--> {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
                 }
             }
             if progress_arg {
@@ -1420,6 +1648,8 @@ impl TypeResolvingVisitor {
             ctx, upcast_id, signature_type, 0, expr_type, 0
         )?;
 
+        println!("DEBUG Ret  {} <--> {}", signature_type.display_name(&ctx.heap), unsafe{&*expr_type}.display_name(&ctx.heap));
+
         if progress_sig {
             // As above: apply inference to polyargs as well
             debug_assert!(signature_type.has_marker, "progress on signature return type without markers");
@@ -1432,6 +1662,7 @@ impl TypeResolvingVisitor {
                     Ok(false) => {},
                     Err(()) => { poly_infer_error = true; }
                 }
+                println!("DEBUG Poly {}: {} <--> {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
             }
         }
         if progress_expr {
@@ -1967,12 +2198,13 @@ impl TypeResolvingVisitor {
                             debug_assert!(symbolic.poly_args.is_empty()); // TODO: @hkt
 
                             if parser_type_in_body {
-                                debug_assert!(arg_idx < self.polyvars.len());
-                                for concrete_part in &self.polyvars[arg_idx].v {
+                                debug_assert!(arg_idx < self.poly_vars.len());
+                                for concrete_part in &self.poly_vars[arg_idx].parts {
                                     infer_type.push(ITP::from(*concrete_part));
                                 }
                             } else {
                                 has_markers = true;
+                                has_inferred = true;
                                 infer_type.push(ITP::Marker(arg_idx));
                                 infer_type.push(ITP::Unknown);
                             }
@@ -2229,5 +2461,75 @@ impl TypeResolvingVisitor {
         }
 
         unreachable!("construct_poly_arg_error without actual error found?")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::arena::Id;
+    use InferenceTypePart as ITP;
+    use InferenceType as IT;
+
+    #[test]
+    fn test_single_part_inference() {
+        // lhs argument inferred from rhs
+        let pairs = [
+            (ITP::NumberLike, ITP::Byte),
+            (ITP::IntegerLike, ITP::Int),
+            (ITP::Unknown, ITP::Message),
+            (ITP::Unknown, ITP::String)
+        ];
+        for (lhs, rhs) in pairs.iter() {
+            // Using infer-both
+            let mut lhs_type = IT::new(false, false, vec![lhs.clone()]);
+            let mut rhs_type = IT::new(false, true, vec![rhs.clone()]);
+            let result = unsafe{ IT::infer_subtrees_for_both_types(
+                &mut lhs_type, 0, &mut rhs_type, 0
+            ) };
+            assert_eq!(DualInferenceResult::First, result);
+            assert_eq!(lhs_type.parts, rhs_type.parts);
+
+            // Using infer-single
+            let mut lhs_type = IT::new(false, false, vec![lhs.clone()]);
+            let mut rhs_type = IT::new(false, true, vec![rhs.clone()]);
+            let result = unsafe{ IT::infer_subtree_for_single_type(
+                &mut lhs_type, 0, &rhs_type.parts, 0
+            ) };
+            assert_eq!(SingleInferenceResult::Modified, result);
+            assert_eq!(lhs_type.parts, rhs_type.parts);
+        }
+    }
+
+    #[test]
+    fn test_multi_part_inference() {
+        let pairs = [
+            (vec![ITP::ArrayLike, ITP::NumberLike], vec![ITP::Slice, ITP::Byte]),
+            (vec![ITP::Unknown], vec![ITP::Input, ITP::Array, ITP::String]),
+            (vec![ITP::PortLike, ITP::Int], vec![ITP::Input, ITP::Int]),
+            (vec![ITP::Unknown], vec![ITP::Output, ITP::Int]),
+            (
+                vec![ITP::Instance(Id::new(0), 2), ITP::Input, ITP::Unknown, ITP::Output, ITP::Unknown],
+                vec![ITP::Instance(Id::new(0), 2), ITP::Input, ITP::Array, ITP::Int, ITP::Output, ITP::Int]
+            )
+        ];
+
+        for (lhs, rhs) in pairs.iter() {
+            let mut lhs_type = IT::new(false, false, lhs.clone());
+            let mut rhs_type = IT::new(false, false, rhs.clone());
+            let result = unsafe{ IT::infer_subtrees_for_both_types(
+                &mut lhs_type, 0, &mut rhs_type, 0
+            ) };
+            assert_eq!(DualInferenceResult::First, result);
+            assert_eq!(lhs_type.parts, rhs_type.parts);
+
+            let mut lhs_type = IT::new(false, false, lhs.clone());
+            let mut rhs_type = IT::new(false, false, rhs.clone());
+            let result = unsafe{ IT::infer_subtree_for_single_type(
+                &mut lhs_type, 0, &rhs_type.parts, 0
+            ) };
+            assert_eq!(SingleInferenceResult::Modified, result);
+            assert_eq!(lhs_type.parts, rhs_type.parts)
+        }
     }
 }

@@ -7,6 +7,13 @@ pub struct Id<T> {
     pub(crate) index: u32,
     _phantom: PhantomData<T>,
 }
+
+impl<T> Id<T> {
+    pub(crate) fn new(index: u32) -> Self {
+        Self{ index, _phantom: Default::default() }
+    }
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Arena<T> {
     store: Vec<T>,
@@ -42,18 +49,12 @@ impl<T> Arena<T> {
     }
     pub fn alloc_with_id(&mut self, f: impl FnOnce(Id<T>) -> T) -> Id<T> {
         use std::convert::TryFrom;
-        let id = Id {
-            index: u32::try_from(self.store.len()).expect("Out of capacity!"),
-            _phantom: Default::default(),
-        };
+        let id = Id::new(u32::try_from(self.store.len()).expect("Out of capacity!"));
         self.store.push(f(id));
         id
     }
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.store.iter()
-    }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.store.iter_mut()
     }
     pub fn len(&self) -> usize {
         self.store.len()

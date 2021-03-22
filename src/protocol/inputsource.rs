@@ -212,7 +212,6 @@ pub struct ParseErrorStatement {
 impl ParseErrorStatement {
     fn from_source(error_type: ParseErrorType, source: &InputSource, position: InputPosition, msg: &str) -> Self {
         // Seek line start and end
-        debug_assert!(position.column < position.offset);
         let line_start = position.offset - (position.column - 1);
         let mut line_end = position.offset;
         while line_end < source.input.len() && source.input[line_end] != b'\n' {
@@ -241,7 +240,7 @@ impl fmt::Display for ParseErrorStatement {
             ParseErrorType::Info => write!(f, " INFO: ")?,
             ParseErrorType::Error => write!(f, "ERROR: ")?,
         }
-        writeln!(f, "{}", &self.message);
+        writeln!(f, "{}", &self.message)?;
 
         // Write originating file/line/column
         if self.filename.is_empty() {

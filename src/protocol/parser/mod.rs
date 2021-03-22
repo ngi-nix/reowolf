@@ -11,6 +11,7 @@ use depth_visitor::*;
 use symbol_table::SymbolTable;
 use visitor::Visitor2;
 use visitor_linker::ValidityAndLinkerVisitor;
+use type_resolver::{TypeResolvingVisitor, ResolveQueue};
 use type_table::{TypeTable, TypeCtx};
 
 use crate::protocol::ast::*;
@@ -211,6 +212,14 @@ impl Parser {
         };
         let mut visit = ValidityAndLinkerVisitor::new();
         visit.visit_module(&mut ctx)?;
+        let mut type_visit = TypeResolvingVisitor::new();
+        let mut queue = ResolveQueue::new();
+        TypeResolvingVisitor::queue_module_definitions(&ctx, &mut queue);
+        while !queue.is_empty() {
+            let top = queue.pop().unwrap();
+            println!("Resolving root={}, def={}, mono={:?}", top.root_id.index, top.definition_id.index, top.monomorph_types);
+            type_visit.handle_module_definition(&mut ctx, &mut queue, top)?;
+        }
 
         if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
             return Err(ParseError2::new_error(&self.modules[0].source, position, &message))

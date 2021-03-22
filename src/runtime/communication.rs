@@ -1416,6 +1416,10 @@ impl SyncProtoContext<'_> {
         self.predicate.query(var).map(SpecVal::is_firing)
     }
 
+    pub(crate) fn did_put_or_get(&mut self, port: PortId) -> bool {
+        self.branch_inner.did_put_or_get.contains(&port)
+    }
+
     // The component calls the runtime back, trying to inspect a port's message
     pub(crate) fn read_msg(&mut self, port: PortId) -> Option<&Payload> {
         let maybe_msg = self.branch_inner.inbox.get(&port);

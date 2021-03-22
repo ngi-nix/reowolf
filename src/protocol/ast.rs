@@ -704,9 +704,6 @@ impl Display for Identifier {
     }
 }
 
-/// TODO: @cleanup Maybe handle this differently, preallocate in heap? The
-///     reason I'm handling it like this now is so we don't allocate types in
-///     the `Arena` structure if they're the common types defined here.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParserTypeVariant {
     // Basic builtin
@@ -775,6 +772,40 @@ pub enum SymbolicParserTypeVariant {
     Definition(DefinitionId),
     // TODO: figure out if I need the DefinitionId here
     PolyArg(DefinitionId, usize), // index of polyarg in the definition
+}
+
+/// ConcreteType is the representation of a type after resolving symbolic types
+/// and performing type inference
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum ConcreteTypePart {
+    // Special types (cannot be explicitly constructed by the programmer)
+    Void,
+    // Builtin types without nested types
+    Message,
+    Bool,
+    Byte,
+    Short,
+    Int,
+    Long,
+    String,
+    // Builtin types with one nested type
+    Array,
+    Slice,
+    Input,
+    Output,
+    // User defined type with any number of nested types
+    Instance(DefinitionId, usize),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConcreteType {
+    pub(crate) parts: Vec<ConcreteTypePart>
+}
+
+impl Default for ConcreteType {
+    fn default() -> Self {
+        Self{ parts: Vec::new() }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -2005,6 +2036,7 @@ impl Expression {
             Expression::Variable(expr) => &expr.parent,
         }
     }
+    // TODO: @cleanup
     pub fn parent_expr_id(&self) -> Option<ExpressionId> {
         if let ExpressionParent::Expression(id, _) = self.parent() {
             Some(*id)
@@ -2012,6 +2044,7 @@ impl Expression {
             None
         }
     }
+    // TODO: @cleanup
     pub fn set_parent(&mut self, parent: ExpressionParent) {
         match self {
             Expression::Assignment(expr) => expr.parent = parent,
@@ -2025,6 +2058,22 @@ impl Expression {
             Expression::Constant(expr) => expr.parent = parent,
             Expression::Call(expr) => expr.parent = parent,
             Expression::Variable(expr) => expr.parent = parent,
+        }
+    }
+    // TODO: @cleanup
+    pub fn get_type_mut(&mut self) -> &mut ConcreteType {
+        match self {
+            Expression::Assignment(expr) => &mut expr.concrete_type,
+            Expression::Conditional(expr) => &mut expr.concrete_type,
+            Expression::Binary(expr) => &mut expr.concrete_type,
+            Expression::Unary(expr) => &mut expr.concrete_type,
+            Expression::Indexing(expr) => &mut expr.concrete_type,
+            Expression::Slicing(expr) => &mut expr.concrete_type,
+            Expression::Select(expr) => &mut expr.concrete_type,
+            Expression::Array(expr) => &mut expr.concrete_type,
+            Expression::Constant(expr) => &mut expr.concrete_type,
+            Expression::Call(expr) => &mut expr.concrete_type,
+            Expression::Variable(expr) => &mut expr.concrete_type,
         }
     }
 }
@@ -2072,6 +2121,8 @@ pub struct AssignmentExpression {
     pub right: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for AssignmentExpression {
@@ -2090,6 +2141,8 @@ pub struct ConditionalExpression {
     pub false_expression: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for ConditionalExpression {
@@ -2131,6 +2184,8 @@ pub struct BinaryExpression {
     pub right: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for BinaryExpression {
@@ -2160,6 +2215,8 @@ pub struct UnaryExpression {
     pub expression: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for UnaryExpression {
@@ -2177,6 +2234,8 @@ pub struct IndexingExpression {
     pub index: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for IndexingExpression {
@@ -2195,6 +2254,8 @@ pub struct SlicingExpression {
     pub to_index: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for SlicingExpression {
@@ -2212,6 +2273,8 @@ pub struct SelectExpression {
     pub field: Field,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for SelectExpression {
@@ -2228,6 +2291,8 @@ pub struct ArrayExpression {
     pub elements: Vec<ExpressionId>,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for ArrayExpression {
@@ -2246,6 +2311,8 @@ pub struct CallExpression {
     pub poly_args: Vec<ParserTypeId>,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for CallExpression {
@@ -2262,6 +2329,8 @@ pub struct ConstantExpression {
     pub value: Constant,
     // Phase 2: linker
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for ConstantExpression {
@@ -2279,6 +2348,8 @@ pub struct VariableExpression {
     // Phase 2: linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 impl SyntaxElement for VariableExpression {

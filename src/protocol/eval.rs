@@ -1511,10 +1511,13 @@ impl Store {
                     assert_eq!(2, expr.arguments.len());
                     let port_value = self.eval(h, ctx, expr.arguments[0])?;
                     let msg_value = self.eval(h, ctx, expr.arguments[1])?;
+                    println!("DEBUG: Handiling put({:?}, {:?})", port_value, msg_value);
                     if ctx.did_put(port_value.clone()) {
+                        println!("DEBUG: Already put...");
                         // Return bogus, replacing this at some point anyway
                         Ok(Value::Message(MessageValue(None)))
                     } else {
+                        println!("DEBUG: Did not yet put...");
                         Err(EvalContinuation::Put(port_value, msg_value))
                     }
                 }

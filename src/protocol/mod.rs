@@ -299,7 +299,7 @@ impl EvalContext<'_> {
             EvalContext::Nonsync(_) => unreachable!("did_put in nonsync context"),
             EvalContext::Sync(context) => match port {
                 Value::Output(OutputValue(port)) => {
-                    context.is_firing(port).unwrap_or(false)
+                    context.did_put_or_get(port)
                 },
                 Value::Input(_) => unreachable!("did_put on input port"),
                 _ => unreachable!("did_put on non-port value")

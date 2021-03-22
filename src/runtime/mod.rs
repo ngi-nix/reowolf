@@ -847,7 +847,7 @@ impl RoundCtx {
             self.getter_push(getter, msg);
         } else {
             log!(cu.logger(), "Putter {:?} has no known peer!", putter);
-            panic!("Putter {:?} has no known peer!");
+            panic!("Putter {:?} has no known peer!", putter);
         }
     }
 }
