@@ -1397,7 +1397,7 @@ fn eq_no_causality() {
             }
         }
     }
-    T some_function<T>(msg a, msg b) {
+    T some_function<T>(int a, int b) {
         T something = a;
         return something;
     }

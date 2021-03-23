@@ -32,6 +32,7 @@ trait ValueImpl {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Value {
+    Unassigned,
     Input(InputValue),
     Output(OutputValue),
     Message(MessageValue),
@@ -824,6 +825,7 @@ impl From<&Value> for i64 {
 impl ValueImpl for Value {
     fn exact_type(&self) -> Type {
         match self {
+            Value::Unassigned => Type::UNASSIGNED,
             Value::Input(val) => val.exact_type(),
             Value::Output(val) => val.exact_type(),
             Value::Message(val) => val.exact_type(),
@@ -844,6 +846,7 @@ impl ValueImpl for Value {
     }
     fn is_type_compatible(&self, h: &Heap, t: &ParserType) -> bool {
         match self {
+            Value::Unassigned => true,
             Value::Input(_) => InputValue::is_type_compatible_hack(h, t),
             Value::Output(_) => OutputValue::is_type_compatible_hack(h, t),
             Value::Message(_) => MessageValue::is_type_compatible_hack(h, t),
@@ -869,6 +872,7 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let disp: &dyn Display;
         match self {
+            Value::Unassigned => disp = &Type::UNASSIGNED,
             Value::Input(val) => disp = val,
             Value::Output(val) => disp = val,
             Value::Message(val) => disp = val,
@@ -1594,10 +1598,8 @@ impl Prompt {
             Statement::Local(stmt) => {
                 match stmt {
                     LocalStatement::Memory(stmt) => {
-                        // Evaluate initial expression
-                        let value = self.store.eval(h, ctx, stmt.initial)?;
                         // Update store
-                        self.store.initialize(h, stmt.variable.upcast(), value);
+                        self.store.initialize(h, stmt.variable.upcast(), Value::Unassigned);
                     }
                     LocalStatement::Channel(stmt) => {
                         let [from, to] = ctx.new_channel();

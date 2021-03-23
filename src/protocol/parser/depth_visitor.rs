@@ -56,7 +56,7 @@ pub(crate) trait Visitor: Sized {
         recursive_local_statement(self, h, stmt)
     }
     fn visit_memory_statement(&mut self, h: &mut Heap, stmt: MemoryStatementId) -> VisitorResult {
-        recursive_memory_statement(self, h, stmt)
+        Ok(())
     }
     fn visit_channel_statement(
         &mut self,
@@ -347,14 +347,6 @@ fn recursive_local_statement<T: Visitor>(
         LocalStatement::Channel(stmt) => this.visit_channel_statement(h, stmt.this),
         LocalStatement::Memory(stmt) => this.visit_memory_statement(h, stmt.this),
     }
-}
-
-fn recursive_memory_statement<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    stmt: MemoryStatementId,
-) -> VisitorResult {
-    this.visit_expression(h, h[stmt].initial)
 }
 
 fn recursive_labeled_statement<T: Visitor>(

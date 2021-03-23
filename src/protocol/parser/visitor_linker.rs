@@ -220,9 +220,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             self.visit_parser_type(ctx, parser_type_id)?;
 
             debug_assert_eq!(self.expr_parent, ExpressionParent::None);
-            self.expr_parent = ExpressionParent::Memory(id);
-            self.visit_expr(ctx, ctx.heap[id].initial)?;
-            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())

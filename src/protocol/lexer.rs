@@ -655,7 +655,6 @@ impl Lexer<'_> {
     /// present then an empty vector will be returned.
     fn consume_polymorphic_vars(&mut self) -> Result<Vec<Identifier>, ParseError2> {
         let backup_pos = self.source.pos();
-        self.consume_whitespace(false)?;
         if let Some(b'<') = self.source.next() {
             // Found the opening delimiter, we want at least one polyvar
             self.source.consume();
@@ -1635,7 +1634,11 @@ impl Lexer<'_> {
         self.consume_string(b"{")?;
         self.consume_whitespace(false)?;
         while self.has_local_statement() {
-            statements.push(self.consume_local_statement(h)?.upcast());
+            let (local_id, stmt_id) = self.consume_local_statement(h)?;
+            statements.push(local_id.upcast());
+            if let Some(stmt_id) = stmt_id {
+                statements.push(stmt_id.upcast());
+            }
             self.consume_whitespace(false)?;
         }
         while !self.has_string(b"}") {
@@ -1658,11 +1661,13 @@ impl Lexer<'_> {
             .upcast())
         }
     }
-    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<LocalStatementId, ParseError2> {
+    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<(LocalStatementId, Option<ExpressionStatementId>), ParseError2> {
         if self.has_keyword(b"channel") {
-            Ok(self.consume_channel_statement(h)?.upcast())
+            let local_id = self.consume_channel_statement(h)?.upcast();
+            Ok((local_id, None))
         } else {
-            Ok(self.consume_memory_statement(h)?.upcast())
+            let (memory_id, stmt_id) = self.consume_memory_statement(h)?;
+            Ok((memory_id.upcast(), Some(stmt_id)))
         }
     }
     fn consume_channel_statement(
@@ -1728,12 +1733,13 @@ impl Lexer<'_> {
             next: None,
         }))
     }
-    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<MemoryStatementId, ParseError2> {
+    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<(MemoryStatementId, ExpressionStatementId), ParseError2> {
         let position = self.source.pos();
         let parser_type = self.consume_type2(h, true)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
+        let assignment_position = self.source.pos();
         self.consume_string(b"=")?;
         self.consume_whitespace(false)?;
         let initial = self.consume_expression(h)?;
@@ -1741,18 +1747,47 @@ impl Lexer<'_> {
             this,
             position,
             parser_type,
-            identifier,
+            identifier: identifier.clone(),
             relative_pos_in_block: 0
         });
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
-        Ok(h.alloc_memory_statement(|this| MemoryStatement {
+
+        // Transform into the variable declaration, followed by an assignment
+        let memory_stmt_id = h.alloc_memory_statement(|this| MemoryStatement {
             this,
             position,
             variable,
-            initial,
             next: None,
-        }))
+        });
+        let variable_expr_id = h.alloc_variable_expression(|this| VariableExpression{
+            this,
+            position: identifier.position.clone(),
+            identifier: NamespacedIdentifier {
+                position: identifier.position.clone(),
+                num_namespaces: 1,
+                value: identifier.value.clone(),
+            },
+            declaration: None,
+            parent: ExpressionParent::None,
+            concrete_type: Default::default()
+        });
+        let assignment_expr_id = h.alloc_assignment_expression(|this| AssignmentExpression{
+            this,
+            position: assignment_position,
+            left: variable_expr_id.upcast(),
+            operation: AssignmentOperator::Set,
+            right: initial,
+            parent: ExpressionParent::None,
+            concrete_type: Default::default()
+        });
+        let assignment_stmt_id = h.alloc_expression_statement(|this| ExpressionStatement{
+            this,
+            position,
+            expression: assignment_expr_id.upcast(),
+            next: None
+        });
+        Ok((memory_stmt_id, assignment_stmt_id))
     }
     fn consume_labeled_statement(
         &mut self,
@@ -1965,6 +2000,7 @@ impl Lexer<'_> {
         self.consume_keyword(b"struct")?;
         self.consume_whitespace(true)?;
         let struct_ident = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
         let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
@@ -2023,6 +2059,7 @@ impl Lexer<'_> {
         self.consume_keyword(b"enum")?;
         self.consume_whitespace(true)?;
         let enum_ident = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
         let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
@@ -2117,6 +2154,7 @@ impl Lexer<'_> {
         self.consume_keyword(b"composite")?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
         let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
@@ -2143,6 +2181,7 @@ impl Lexer<'_> {
         self.consume_keyword(b"primitive")?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
         let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 
@@ -2169,6 +2208,7 @@ impl Lexer<'_> {
         let return_type = self.consume_type2(h, false)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
         let poly_vars = self.consume_polymorphic_vars()?;
         self.consume_whitespace(false)?;
 

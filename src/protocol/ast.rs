@@ -808,8 +808,10 @@ impl Default for ConcreteType {
     }
 }
 
+// TODO: Remove at some point
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveType {
+    Unassigned,
     Input,
     Output,
     Message,
@@ -845,6 +847,8 @@ pub struct Type {
 
 #[allow(dead_code)]
 impl Type {
+    pub const UNASSIGNED: Type = Type { primitive: PrimitiveType::Unassigned, array: false };
+
     pub const INPUT: Type = Type { primitive: PrimitiveType::Input, array: false };
     pub const OUTPUT: Type = Type { primitive: PrimitiveType::Output, array: false };
     pub const MESSAGE: Type = Type { primitive: PrimitiveType::Message, array: false };
@@ -867,6 +871,9 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self.primitive {
+            PrimitiveType::Unassigned => {
+                write!(f, "unassigned")?;
+            }
             PrimitiveType::Input => {
                 write!(f, "in")?;
             }
@@ -1621,7 +1628,6 @@ pub struct MemoryStatement {
     // Phase 1: parser
     pub position: InputPosition,
     pub variable: LocalId,
-    pub initial: ExpressionId,
     // Phase 2: linker
     pub next: Option<StatementId>,
 }
@@ -1916,7 +1922,6 @@ impl SyntaxElement for ExpressionStatement {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum ExpressionParent {
     None, // only set during initial parsing
-    Memory(MemoryStatementId),
     If(IfStatementId),
     While(WhileStatementId),
     Return(ReturnStatementId),

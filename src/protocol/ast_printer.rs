@@ -361,8 +361,6 @@ impl ASTWriter {
 
                         self.kv(indent2).with_s_key("Variable");
                         self.write_local(heap, stmt.variable, indent3);
-                        self.kv(indent2).with_s_key("initial");
-                        self.write_expr(heap, stmt.initial, indent3);
                         self.kv(indent2).with_s_key("Next")
                             .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
                     }
@@ -812,7 +810,6 @@ fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
 
     *target = match parent {
         EP::None => String::from("None"),
-        EP::Memory(id) => format!("MemoryStmt({})", id.0.0.index),
         EP::If(id) => format!("IfStmt({})", id.0.index),
         EP::While(id) => format!("WhileStmt({})", id.0.index),
         EP::Return(id) => format!("ReturnStmt({})", id.0.index),

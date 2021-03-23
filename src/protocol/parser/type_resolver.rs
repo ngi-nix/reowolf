@@ -5,6 +5,26 @@
 /// TODO: Needs an optimization pass
 /// TODO: Needs a cleanup pass
 
+macro_rules! enabled_debug_print {
+    (false, $name:literal, $format:literal) => {};
+    (false, $name:literal, $format:literal, $($args:expr),*) => {};
+    (true, $name:literal, $format:literal) => {
+        println!("[{}] {}", $name, $format)
+    };
+    (true, $name:literal, $format:literal, $($args:expr),*) => {
+        println!("[{}] {}", $name, format!($format, $($args),*))
+    };
+}
+
+macro_rules! debug_log {
+    ($format:literal) => {
+        enabled_debug_print!(true, "types", $format);
+    };
+    ($format:literal, $($args:expr),*) => {
+        enabled_debug_print!(true, "types", $format, $($args),*);
+    };
+}
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::protocol::ast::*;
@@ -837,6 +857,9 @@ impl TypeResolvingVisitor {
     ) -> VisitorResult {
         // Visit the definition
         debug_assert_eq!(ctx.module.root_id, element.root_id);
+        self.reset();
+        self.poly_vars.clear();
+        self.poly_vars.extend(element.monomorph_types.iter().cloned());
         self.visit_definition(ctx, element.definition_id)?;
 
         // Keep resolving types
@@ -860,11 +883,14 @@ impl Visitor2 for TypeResolvingVisitor {
     // Definitions
 
     fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentId) -> VisitorResult {
-        self.reset();
         self.definition_type = DefinitionType::Component(id);
 
         let comp_def = &ctx.heap[id];
         debug_assert_eq!(comp_def.poly_vars.len(), self.poly_vars.len(), "component polyvars do not match imposed polyvars");
+
+        debug_log!("{}", "-".repeat(80));
+        debug_log!("Visiting component '{}': {}", &String::from_utf8_lossy(&comp_def.identifier.value), id.0.index);
+        debug_log!("{}", "-".repeat(80));
 
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
@@ -878,11 +904,14 @@ impl Visitor2 for TypeResolvingVisitor {
     }
 
     fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionId) -> VisitorResult {
-        self.reset();
         self.definition_type = DefinitionType::Function(id);
 
         let func_def = &ctx.heap[id];
         debug_assert_eq!(func_def.poly_vars.len(), self.poly_vars.len(), "function polyvars do not match imposed polyvars");
+
+        debug_log!("{}", "-".repeat(80));
+        debug_log!("Visiting function '{}': {}", &String::from_utf8_lossy(&func_def.identifier.value), id.0.index);
+        debug_log!("{}", "-".repeat(80));
 
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
@@ -914,9 +943,6 @@ impl Visitor2 for TypeResolvingVisitor {
         let local = &ctx.heap[memory_stmt.variable];
         let var_type = self.determine_inference_type_from_parser_type(ctx, local.parser_type, true);
         self.var_types.insert(memory_stmt.variable.upcast(), VarData{ var_type, used_at: Vec::new() });
-
-        let expr_id = memory_stmt.initial;
-        self.visit_expr(ctx, expr_id)?;
 
         Ok(())
     }
@@ -1185,7 +1211,6 @@ macro_rules! debug_assert_ptrs_distinct {
 impl TypeResolvingVisitor {
     fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError2> {
         // Keep inferring until we can no longer make any progress
-        println!("DEBUG: Resolve queue is {:?}", &self.expr_queued);
         while let Some(next_expr_id) = self.expr_queued.iter().next() {
             let next_expr_id = *next_expr_id;
             self.expr_queued.remove(&next_expr_id);
@@ -1195,10 +1220,6 @@ impl TypeResolvingVisitor {
         // Should have inferred everything
         for (expr_id, expr_type) in self.expr_types.iter() {
             if !expr_type.is_done {
-                let mut buffer = std::fs::File::create("type_debug.txt").unwrap();
-                use crate::protocol::ast_printer::ASTWriter;
-                let mut w = ASTWriter::new();
-                w.write_ast(&mut buffer, &ctx.heap);
                 // TODO: Auto-inference of integerlike types
                 let expr = &ctx.heap[*expr_id];
                 return Err(ParseError2::new_error(
@@ -1334,6 +1355,12 @@ impl TypeResolvingVisitor {
         let arg1_expr_id = expr.left;
         let arg2_expr_id = expr.right;
 
+        debug_log!("Assignment expr '{:?}': {}", expr.operation, upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         let progress_base = match expr.operation {
             AO::Set =>
                 false,
@@ -1347,6 +1374,12 @@ impl TypeResolvingVisitor {
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
             ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
+
+        debug_log!(" * After:");
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_base || progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
 
         if progress_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(arg1_expr_id); }
@@ -1362,9 +1395,20 @@ impl TypeResolvingVisitor {
         let arg1_expr_id = expr.true_expression;
         let arg2_expr_id = expr.false_expression;
 
+        debug_log!("Conditional expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
             ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
+
+        debug_log!(" * After:");
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(arg1_expr_id); }
@@ -1382,6 +1426,12 @@ impl TypeResolvingVisitor {
         let expr = &ctx.heap[id];
         let arg1_id = expr.left;
         let arg2_id = expr.right;
+
+        debug_log!("Binary expr '{:?}': {}", expr.operation, upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
@@ -1412,8 +1462,16 @@ impl TypeResolvingVisitor {
 
                 (progress_base || progress_expr, progress_base || progress_arg1, progress_base || progress_arg2)
             },
-            BO::Equality | BO::Inequality | BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
+            BO::Equality | BO::Inequality => {
                 // Equal2 on args, forced boolean output
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
+                let (progress_arg1, progress_arg2) =
+                    self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
+
+                (progress_expr, progress_arg1, progress_arg2)
+            },
+            BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
+                // Equal2 on args with numberlike type, forced boolean output
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let progress_arg_base = self.apply_forced_constraint(ctx, arg1_id, &NUMBERLIKE_TEMPLATE)?;
                 let (progress_arg1, progress_arg2) =
@@ -1431,6 +1489,11 @@ impl TypeResolvingVisitor {
             },
         };
 
+        debug_log!(" * After:");
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(arg1_id); }
         if progress_arg2 { self.queue_expr(arg2_id); }
@@ -1444,6 +1507,11 @@ impl TypeResolvingVisitor {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let arg_id = expr.expression;
+
+        debug_log!("Unary expr '{:?}': {}", expr.operation, upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Arg  type: {}", self.expr_types.get(&arg_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         let (progress_expr, progress_arg) = match expr.operation {
             UO::Positive | UO::Negative => {
@@ -1470,6 +1538,10 @@ impl TypeResolvingVisitor {
             }
         };
 
+        debug_log!(" * After:");
+        debug_log!("   - Arg  type [{}]: {}", progress_arg, self.expr_types.get(&arg_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg { self.queue_expr(arg_id); }
 
@@ -1482,6 +1554,12 @@ impl TypeResolvingVisitor {
         let subject_id = expr.subject;
         let index_id = expr.index;
 
+        debug_log!("Indexing expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Subject type: {}", self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Index   type: {}", self.expr_types.get(&index_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         // Make sure subject is arraylike and index is integerlike
         let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
         let progress_index = self.apply_forced_constraint(ctx, index_id, &INTEGERLIKE_TEMPLATE)?;
@@ -1489,6 +1567,11 @@ impl TypeResolvingVisitor {
         // Make sure if output is of T then subject is Array<T>
         let (progress_expr, progress_subject) =
             self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
+
+        debug_log!(" * After:");
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Index   type [{}]: {}", progress_index, self.expr_types.get(&index_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
@@ -1504,6 +1587,13 @@ impl TypeResolvingVisitor {
         let from_id = expr.from_index;
         let to_id = expr.to_index;
 
+        debug_log!("Slicing expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Subject type: {}", self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - FromIdx type: {}", self.expr_types.get(&from_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - ToIdx   type: {}", self.expr_types.get(&to_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         // Make sure subject is arraylike and indices are of equal integerlike
         let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
         let progress_idx_base = self.apply_forced_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
@@ -1512,6 +1602,13 @@ impl TypeResolvingVisitor {
         // Make sure if output is of T then subject is Array<T>
         let (progress_expr, progress_subject) =
             self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
+
+
+        debug_log!(" * After:");
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - FromIdx type [{}]: {}", progress_idx_base || progress_from, self.expr_types.get(&from_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.expr_types.get(&to_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
@@ -1526,6 +1623,11 @@ impl TypeResolvingVisitor {
         let expr = &ctx.heap[id];
         let subject_id = expr.subject;
 
+        debug_log!("Select expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Subject type: {}", self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         let (progress_subject, progress_expr) = match &expr.field {
             Field::Length => {
                 let progress_subject = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
@@ -1537,6 +1639,10 @@ impl TypeResolvingVisitor {
             }
         };
 
+        debug_log!(" * After:");
+        debug_log!("   - Subject type [{}]: {}", progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         if progress_subject { self.queue_expr(subject_id); }
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
@@ -1547,6 +1653,10 @@ impl TypeResolvingVisitor {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let expr_elements = expr.elements.clone(); // TODO: @performance
+
+        debug_log!("Array expr ({} elements): {}", expr_elements.len(), upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         // All elements should have an equal type
         let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
@@ -1574,6 +1684,9 @@ impl TypeResolvingVisitor {
             if arg_progress { self.queue_expr(upcast_id); }
         }
 
+        debug_log!(" * After:");
+        debug_log!("   - Expr type [{}]: {}", expr_progress, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         if expr_progress { self.queue_expr_parent(ctx, upcast_id); }
 
         Ok(())
@@ -1599,10 +1712,20 @@ impl TypeResolvingVisitor {
     //  polymorphic struct/enum/union literals. These likely follow the same
     //  pattern as here.
     fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
-        println!("DEBUG: Processing call {}", id.0.index);
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+
+        debug_log!("Call expr '{}': {}", match &expr.method {
+            Method::Create => String::from("create"),
+            Method::Fires => String::from("fires"),
+            Method::Get => String::from("get"),
+            Method::Put => String::from("put"),
+            Method::Symbolic(method) => String::from_utf8_lossy(&method.identifier.value).to_string()
+        },upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!(" * During (inferring types from arguments and return type):");
 
         // Check if we can make progress using the arguments and/or return types
         // while keeping track of the polyvars we've extended
@@ -1617,7 +1740,7 @@ impl TypeResolvingVisitor {
                 ctx, upcast_id, signature_type, 0, argument_type, 0
             )?;
 
-            println!("DEBUG Arg  {}: {} <--> {}", arg_idx, signature_type.display_name(&ctx.heap), unsafe{&*argument_type}.display_name(&ctx.heap));
+            debug_log!("   - Arg {} type | sig: {}, arg: {}", arg_idx, signature_type.display_name(&ctx.heap), unsafe{&*argument_type}.display_name(&ctx.heap));
 
             if progress_sig {
                 // Progressed signature, so also apply inference to the 
@@ -1632,7 +1755,8 @@ impl TypeResolvingVisitor {
                         Ok(false) => {},
                         Err(()) => { poly_infer_error = true; }
                     }
-                    println!("DEBUG Poly {}: {} <--> {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
+
+                    debug_log!("   - Poly {} type | sig: {}, arg: {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
                 }
             }
             if progress_arg {
@@ -1648,7 +1772,7 @@ impl TypeResolvingVisitor {
             ctx, upcast_id, signature_type, 0, expr_type, 0
         )?;
 
-        println!("DEBUG Ret  {} <--> {}", signature_type.display_name(&ctx.heap), unsafe{&*expr_type}.display_name(&ctx.heap));
+        debug_log!("   - Ret type | sig: {}, arg: {}", signature_type.display_name(&ctx.heap), unsafe{&*expr_type}.display_name(&ctx.heap));
 
         if progress_sig {
             // As above: apply inference to polyargs as well
@@ -1662,7 +1786,7 @@ impl TypeResolvingVisitor {
                     Ok(false) => {},
                     Err(()) => { poly_infer_error = true; }
                 }
-                println!("DEBUG Poly {}: {} <--> {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
+                debug_log!("   - Poly {} type | sig: {}, arg: {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
             }
         }
         if progress_expr {
@@ -1680,6 +1804,7 @@ impl TypeResolvingVisitor {
         // If we did not have an error in the polymorph inference above, then
         // reapplying the polymorph type to each argument type and the return
         // type should always succeed.
+        debug_log!(" * During (reinferring from progress polyvars):");
         // TODO: @performance If the algorithm is changed to be more "on demand
         //  argument re-evaluation", instead of "all-argument re-evaluation",
         //  then this is no longer true
@@ -1698,7 +1823,10 @@ impl TypeResolvingVisitor {
                     seek_idx = end_idx;
                 }
 
-                if !modified_sig { continue; }
+                if !modified_sig {
+                    debug_log!("   - Poly {} | Arg {} type | signature has not changed", poly_idx, arg_idx);
+                    continue;
+                }
 
                 // Part of signature was modified, so update expression used as
                 // argument as well
@@ -1708,6 +1836,7 @@ impl TypeResolvingVisitor {
                     ctx, arg_expr_id, arg_type, 0, sig_type, 0
                 ).expect("no inference error at argument type");
                 if progress_arg { self.expr_queued.insert(arg_expr_id); }
+                debug_log!("   - Poly {} | Arg {} type | sig: {}, arg: {}", poly_idx, arg_idx, sig_type.display_name(&ctx.heap), unsafe{&*arg_type}.display_name(&ctx.heap));
             }
 
             // Again: do the same for the return type
@@ -1732,8 +1861,14 @@ impl TypeResolvingVisitor {
                         self.expr_queued.insert(parent_id);
                     }
                 }
+                debug_log!("   - Poly {} | Ret type | sig: {}, arg: {}", poly_idx, sig_type.display_name(&ctx.heap), ret_type.display_name(&ctx.heap));
+            } else {
+                debug_log!("   - Poly {} | Ret type | signature has not changed", poly_idx);
             }
         }
+
+        debug_log!(" * After:");
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         Ok(())
     }
@@ -1742,6 +1877,11 @@ impl TypeResolvingVisitor {
         let upcast_id = id.upcast();
         let var_expr = &ctx.heap[id];
         let var_id = var_expr.declaration.unwrap();
+
+        debug_log!("Variable expr '{}': {}", &String::from_utf8_lossy(&ctx.heap[var_id].identifier().value), upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Var  type: {}", self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
         // Retrieve shared variable type and expression type and apply inference
         let var_data = self.var_types.get_mut(&var_id).unwrap();
@@ -1778,6 +1918,11 @@ impl TypeResolvingVisitor {
             }
         }
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+
+        debug_log!(" * After:");
+        debug_log!("   - Var  type [{}]: {}", progress_var, self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
 
         Ok(())
     }
@@ -1996,7 +2141,7 @@ impl TypeResolvingVisitor {
             EP::None =>
                 // Should have been set by linker
                 unreachable!(),
-            EP::Memory(_) | EP::ExpressionStmt(_) | EP::Expression(_, _) =>
+            EP::ExpressionStmt(_) | EP::Expression(_, _) =>
                 // Determined during type inference
                 InferenceType::new(false, false, vec![ITP::Unknown]),
             EP::If(_) | EP::While(_) | EP::Assert(_) =>
@@ -2055,7 +2200,6 @@ impl TypeResolvingVisitor {
         // map them back and forth to the polymorphic arguments of the function
         // we are calling.
         let call = &ctx.heap[call_id];
-        debug_assert!(!call.poly_args.is_empty());
 
         // Handle the polymorphic variables themselves
         let mut poly_vars = Vec::with_capacity(call.poly_args.len());
