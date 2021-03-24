@@ -173,6 +173,8 @@ impl InputPosition {
     fn eval_error<S: ToString>(&self, message: S) -> EvalError {
         EvalError { position: *self, message: message.to_string(), backtrace: Backtrace::new() }
     }
+
+    pub(crate) fn col(&self) -> usize { self.column }
 }
 
 impl Default for InputPosition {
@@ -202,11 +204,11 @@ pub enum ParseErrorType {
 
 #[derive(Debug)]
 pub struct ParseErrorStatement {
-    error_type: ParseErrorType,
-    position: InputPosition,
-    filename: String,
-    context: String,
-    message: String,
+    pub(crate) error_type: ParseErrorType,
+    pub(crate) position: InputPosition,
+    pub(crate) filename: String,
+    pub(crate) context: String,
+    pub(crate) message: String,
 }
 
 impl ParseErrorStatement {
@@ -277,7 +279,7 @@ impl fmt::Display for ParseErrorStatement {
 
 #[derive(Debug)]
 pub struct ParseError2 {
-    statements: Vec<ParseErrorStatement>
+    pub(crate) statements: Vec<ParseErrorStatement>
 }
 
 impl fmt::Display for ParseError2 {

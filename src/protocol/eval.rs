@@ -68,12 +68,12 @@ impl Value {
             _ => unimplemented!(),
         }
     }
-    fn from_constant(constant: &Constant) -> Value {
+    fn from_constant(constant: &Literal) -> Value {
         match constant {
-            Constant::Null => Value::Message(MessageValue(None)),
-            Constant::True => Value::Boolean(BooleanValue(true)),
-            Constant::False => Value::Boolean(BooleanValue(false)),
-            Constant::Integer(val) => {
+            Literal::Null => Value::Message(MessageValue(None)),
+            Literal::True => Value::Boolean(BooleanValue(true)),
+            Literal::False => Value::Boolean(BooleanValue(false)),
+            Literal::Integer(val) => {
                 // Convert raw ASCII data to UTF-8 string
                 let val = *val;
                 if val >= BYTE_MIN && val <= BYTE_MAX {
@@ -86,7 +86,7 @@ impl Value {
                     Value::Long(LongValue(val))
                 }
             }
-            Constant::Character(_data) => unimplemented!(),
+            Literal::Character(_data) => unimplemented!(),
         }
     }
     fn set(&mut self, index: &Value, value: &Value) -> Option<Value> {
@@ -1517,7 +1517,7 @@ impl Store {
                 }
                 todo!()
             }
-            Expression::Constant(expr) => Ok(Value::from_constant(&expr.value)),
+            Expression::Literal(expr) => Ok(Value::from_constant(&expr.value)),
             Expression::Call(expr) => match &expr.method {
                 Method::Get => {
                     assert_eq!(1, expr.arguments.len());

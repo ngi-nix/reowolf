@@ -695,11 +695,31 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         Ok(())
     }
 
-    fn visit_constant_expr(&mut self, ctx: &mut Ctx, id: ConstantExpressionId) -> VisitorResult {
+    fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
 
         let constant_expr = &mut ctx.heap[id];
-        constant_expr.parent = self.expr_parent;
+        let old_expr_parent = self.expr_parent;
+        constant_expr.parent = old_expr_parent;
+
+        match &mut constant_expr.value {
+            Literal::Null | Literal::True | Literal::False |
+            Literal::Character(_) | Literal::Integer(_) => {
+                // Just the parent has to be set, done above
+            },
+            Literal::Struct(literal) => {
+                // Retrieve and set the literals definition
+                let definition =
+                // Need to traverse fields expressions in struct
+                let old_num_exprs = self.expression_buffer.len();
+                self.expression_buffer.extend(literal.fields.iter().map(|v| v.value));
+                let new_num_exprs = self.expression_buffer.len();
+
+                self.expression_buffer.truncate(old_num_exprs);
+            }
+        }
+
+        self.expr_parent = old_expr_parent;
 
         Ok(())
     }

@@ -121,7 +121,7 @@ define_new_ast_id!(IndexingExpressionId, ExpressionId, IndexingExpression, Expre
 define_new_ast_id!(SlicingExpressionId, ExpressionId, SlicingExpression, Expression::Slicing, expressions);
 define_new_ast_id!(SelectExpressionId, ExpressionId, SelectExpression, Expression::Select, expressions);
 define_new_ast_id!(ArrayExpressionId, ExpressionId, ArrayExpression, Expression::Array, expressions);
-define_new_ast_id!(ConstantExpressionId, ExpressionId, ConstantExpression, Expression::Constant, expressions);
+define_new_ast_id!(LiteralExpressionId, ExpressionId, LiteralExpression, Expression::Literal, expressions);
 define_new_ast_id!(CallExpressionId, ExpressionId, CallExpression, Expression::Call, expressions);
 define_new_ast_id!(VariableExpressionId, ExpressionId, VariableExpression, Expression::Variable, expressions);
 
@@ -249,13 +249,13 @@ impl Heap {
                 .alloc_with_id(|id| Expression::Array(f(ArrayExpressionId(id)))),
         )
     }
-    pub fn alloc_constant_expression(
+    pub fn alloc_literal_expression(
         &mut self,
-        f: impl FnOnce(ConstantExpressionId) -> ConstantExpression,
-    ) -> ConstantExpressionId {
-        ConstantExpressionId(
+        f: impl FnOnce(LiteralExpressionId) -> LiteralExpression,
+    ) -> LiteralExpressionId {
+        LiteralExpressionId(
             self.expressions.alloc_with_id(|id| {
-                Expression::Constant(f(ConstantExpressionId(id)))
+                Expression::Literal(f(LiteralExpressionId(id)))
             }),
         )
     }
@@ -937,16 +937,36 @@ impl Display for Type {
     }
 }
 
-type CharacterData = Vec<u8>;
-type IntegerData = i64;
+type LiteralCharacter = Vec<u8>;
+type LiteralInteger = i64; // TODO: @int_literal
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Constant {
+pub enum Literal {
     Null, // message
     True,
     False,
-    Character(CharacterData),
-    Integer(IntegerData),
+    Character(LiteralCharacter),
+    Integer(LiteralInteger),
+    Struct(LiteralStruct),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralStructField {
+    // Phase 1: parser
+    pub(crate) identifier: Identifier,
+    pub(crate) value: ExpressionId,
+    // Phase 2: linker
+    pub(crate) field_idx: usize, // in struct definition
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralStruct {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) poly_args: Vec<ParserTypeId>,
+    pub(crate) fields: Vec<LiteralStructField>,
+    // Phase 2: linker
+    pub(crate) definition: Option<DefinitionId>
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1956,7 +1976,7 @@ pub enum Expression {
     Slicing(SlicingExpression),
     Select(SelectExpression),
     Array(ArrayExpression),
-    Constant(ConstantExpression),
+    Literal(LiteralExpression),
     Call(CallExpression),
     Variable(VariableExpression),
 }
@@ -2010,9 +2030,9 @@ impl Expression {
             _ => panic!("Unable to cast `Expression` to `ArrayExpression`"),
         }
     }
-    pub fn as_constant(&self) -> &ConstantExpression {
+    pub fn as_constant(&self) -> &LiteralExpression {
         match self {
-            Expression::Constant(result) => result,
+            Expression::Literal(result) => result,
             _ => panic!("Unable to cast `Expression` to `ConstantExpression`"),
         }
     }
@@ -2051,7 +2071,7 @@ impl Expression {
             Expression::Slicing(expr) => &expr.parent,
             Expression::Select(expr) => &expr.parent,
             Expression::Array(expr) => &expr.parent,
-            Expression::Constant(expr) => &expr.parent,
+            Expression::Literal(expr) => &expr.parent,
             Expression::Call(expr) => &expr.parent,
             Expression::Variable(expr) => &expr.parent,
         }
@@ -2075,7 +2095,7 @@ impl Expression {
             Expression::Slicing(expr) => expr.parent = parent,
             Expression::Select(expr) => expr.parent = parent,
             Expression::Array(expr) => expr.parent = parent,
-            Expression::Constant(expr) => expr.parent = parent,
+            Expression::Literal(expr) => expr.parent = parent,
             Expression::Call(expr) => expr.parent = parent,
             Expression::Variable(expr) => expr.parent = parent,
         }
@@ -2091,7 +2111,7 @@ impl Expression {
             Expression::Slicing(expr) => &mut expr.concrete_type,
             Expression::Select(expr) => &mut expr.concrete_type,
             Expression::Array(expr) => &mut expr.concrete_type,
-            Expression::Constant(expr) => &mut expr.concrete_type,
+            Expression::Literal(expr) => &mut expr.concrete_type,
             Expression::Call(expr) => &mut expr.concrete_type,
             Expression::Variable(expr) => &mut expr.concrete_type,
         }
@@ -2109,7 +2129,7 @@ impl SyntaxElement for Expression {
             Expression::Slicing(expr) => expr.position(),
             Expression::Select(expr) => expr.position(),
             Expression::Array(expr) => expr.position(),
-            Expression::Constant(expr) => expr.position(),
+            Expression::Literal(expr) => expr.position(),
             Expression::Call(expr) => expr.position(),
             Expression::Variable(expr) => expr.position(),
         }
@@ -2342,18 +2362,18 @@ impl SyntaxElement for CallExpression {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ConstantExpression {
-    pub this: ConstantExpressionId,
+pub struct LiteralExpression {
+    pub this: LiteralExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub value: Constant,
+    pub value: Literal,
     // Phase 2: linker
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for ConstantExpression {
+impl SyntaxElement for LiteralExpression {
     fn position(&self) -> InputPosition {
         self.position
     }

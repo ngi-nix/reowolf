@@ -175,7 +175,7 @@ pub(crate) trait Visitor: Sized {
     fn visit_constant_expression(
         &mut self,
         _h: &mut Heap,
-        _expr: ConstantExpressionId,
+        _expr: LiteralExpressionId,
     ) -> VisitorResult {
         Ok(())
     }
@@ -434,7 +434,7 @@ fn recursive_expression<T: Visitor>(
         Expression::Slicing(expr) => this.visit_slicing_expression(h, expr.this),
         Expression::Select(expr) => this.visit_select_expression(h, expr.this),
         Expression::Array(expr) => this.visit_array_expression(h, expr.this),
-        Expression::Constant(expr) => this.visit_constant_expression(h, expr.this),
+        Expression::Literal(expr) => this.visit_constant_expression(h, expr.this),
         Expression::Call(expr) => this.visit_call_expression(h, expr.this),
         Expression::Variable(expr) => this.visit_variable_expression(h, expr.this),
     }
@@ -1305,7 +1305,7 @@ impl Visitor for AssignableExpressions {
     fn visit_constant_expression(
         &mut self,
         h: &mut Heap,
-        expr: ConstantExpressionId,
+        expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.assignable {
             self.error(h[expr].position)
@@ -1424,7 +1424,7 @@ impl Visitor for IndexableExpressions {
     fn visit_constant_expression(
         &mut self,
         h: &mut Heap,
-        expr: ConstantExpressionId,
+        expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.indexable {
             self.error(h[expr].position)
@@ -1532,7 +1532,7 @@ impl Visitor for SelectableExpressions {
     fn visit_constant_expression(
         &mut self,
         h: &mut Heap,
-        expr: ConstantExpressionId,
+        expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.selectable {
             self.error(h[expr].position)

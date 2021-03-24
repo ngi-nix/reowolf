@@ -612,17 +612,17 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("ConcreteType")
                     .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
-            Expression::Constant(expr) => {
+            Expression::Literal(expr) => {
                 self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.index)
                     .with_s_key("ConstantExpr");
 
                 let val = self.kv(indent2).with_s_key("Value");
                 match &expr.value {
-                    Constant::Null => { val.with_s_val("null"); },
-                    Constant::True => { val.with_s_val("true"); },
-                    Constant::False => { val.with_s_val("false"); },
-                    Constant::Character(char) => { val.with_ascii_val(char); },
-                    Constant::Integer(int) => { val.with_disp_val(int); },
+                    Literal::Null => { val.with_s_val("null"); },
+                    Literal::True => { val.with_s_val("true"); },
+                    Literal::False => { val.with_s_val("false"); },
+                    Literal::Character(char) => { val.with_ascii_val(char); },
+                    Literal::Integer(int) => { val.with_disp_val(int); },
                 }
 
                 self.kv(indent2).with_s_key("Parent")

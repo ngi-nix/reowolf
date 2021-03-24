@@ -4,6 +4,7 @@ mod eval;
 pub(crate) mod inputsource;
 // mod lexer;
 mod parser;
+#[cfg(test)] mod tests;
 
 // TODO: Remove when not benchmarking
 pub(crate) mod ast;

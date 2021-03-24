@@ -207,6 +207,81 @@ impl Lexer<'_> {
         }
         Ok(())
     }
+    /// Generic comma-separated consumer. If opening delimiter is not found then
+    /// `Ok(None)` will be returned. Otherwise will consume the comma separated
+    /// values, allowing a trailing comma. If no comma is found and the closing
+    /// delimiter is not found, then a parse error with `expected_end_msg` is
+    /// returned.
+    fn consume_comma_separated<T, F>(
+        &mut self, h: &mut Heap, open: u8, close: u8, expected_end_msg: &str, func: F
+    ) -> Result<Option<Vec<T>>, ParseError2>
+        where F: Fn(&mut Lexer, &mut Heap) -> Result<T, ParseError2>
+    {
+        if Some(open) != self.source.next() {
+            return Ok(None)
+        }
+
+        self.source.consume();
+        self.consume_whitespace(false)?;
+        let mut elements = Vec::new();
+        let mut had_comma = true;
+
+        loop {
+            if Some(close) == self.source.next() {
+                self.source.consume();
+                break;
+            } else if !had_comma {
+                return Err(ParseError2::new_error(
+                    &self.source, self.source.pos(), expected_end_msg
+                ));
+            }
+
+            elements.push(func(self, h)?);
+            self.consume_whitespace(false)?;
+
+            had_comma = self.source.next() == Some(b',');
+            if had_comma {
+                self.source.consume();
+                self.consume_whitespace(false)?;
+            }
+        }
+
+        Ok(Some(elements))
+    }
+    /// Essentially the same as `consume_comma_separated`, but will not allocate
+    /// memory. Will return `true` and leave the input position at the end of
+    /// the comma-separated list if well formed. Otherwise returns `false` and
+    /// leaves the input position at a "random" position.
+    fn consume_comma_separated_spilled_without_pos_recovery<F: Fn(&mut Lexer) -> bool>(
+        &mut self, open: u8, close: u8, func: F
+    ) -> bool {
+        if Some(open) != self.source.next() {
+            return true;
+        }
+
+        self.source.consume();
+        if self.consume_whitespace(false).is_err() { return false };
+        let mut had_comma = true;
+        loop {
+            if Some(close) == self.source.next() {
+                self.source.consume();
+                return true;
+            } else if !had_comma {
+                return false;
+            }
+
+            if !func(self) { return false; }
+            if self.consume_whitespace(false).is_err() { return false };
+
+            had_comma = self.source.next() == Some(b',');
+            if had_comma {
+                self.source.consume();
+                if self.consume_whitespace(false).is_err() { return false; }
+            }
+        }
+
+        true
+    }
     fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError2> {
         if !self.has_identifier() {
             return Err(self.error_at_pos("Expected identifier"));
@@ -442,7 +517,6 @@ impl Lexer<'_> {
         } else if self.has_keyword(b"in") {
             // TODO: @cleanup: not particularly neat to have this special case
             //  where we enforce polyargs in the parser-phase
-            // TODO: @hack, temporarily allow inferred port values
             self.consume_keyword(b"in")?;
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
@@ -456,7 +530,6 @@ impl Lexer<'_> {
                 })?;
             ParserTypeVariant::Input(poly_arg)
         } else if self.has_keyword(b"out") {
-            // TODO: @hack, temporarily allow inferred port values
             self.consume_keyword(b"out")?;
             let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
@@ -572,34 +645,16 @@ impl Lexer<'_> {
     /// doesn't encounter well-formed polymorphic arguments, then the input
     /// position is left at a "random" position.
     fn maybe_consume_poly_args_spilled_without_pos_recovery(&mut self) -> bool {
-        if let Some(b'<') = self.source.next() {
-            self.source.consume();
-            if self.consume_whitespace(false).is_err() { return false; }
-            loop {
-                if !self.maybe_consume_type_spilled_without_pos_recovery() { return false; }
-                if self.consume_whitespace(false).is_err() { return false; }
-                let has_comma = self.source.next() == Some(b',');
-                if has_comma {
-                    self.source.consume();
-                    if self.consume_whitespace(false).is_err() { return false; }
-                }
-                if let Some(b'>') = self.source.next() {
-                    self.source.consume();
-                    break;
-                } else if !has_comma {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+        self.consume_comma_separated_spilled_without_pos_recovery(
+            b'<', b'>', |lexer| {
+                lexer.maybe_consume_type_spilled_without_pos_recovery()
+            })
     }
 
-    /// Consumes polymorphic arguments and its delimiters if specified. The
-    /// input position may be at whitespace. If polyargs are present then the
-    /// whitespace and the args are consumed and the input position will be
-    /// placed after the polyarg list. If polyargs are not present then the
-    /// input position will remain unmodified and an empty vector will be
+    /// Consumes polymorphic arguments and its delimiters if specified. If
+    /// polyargs are present then the args are consumed and the input position
+    /// will be placed after the polyarg list. If polyargs are not present then
+    /// the input position will remain unmodified and an empty vector will be
     /// returned.
     ///
     /// Polymorphic arguments represent the specification of the parametric
@@ -607,43 +662,15 @@ impl Lexer<'_> {
     /// type's polymorphic variables.
     fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Vec<ParserTypeId>, ParseError2> {
         let backup_pos = self.source.pos();
-        self.consume_whitespace(false)?;
-        if let Some(b'<') = self.source.next() {
-            // Has polymorphic args, at least one type must be specified
-            self.source.consume();
-            self.consume_whitespace(false)?;
-            let mut poly_args = Vec::new();
-
-            loop {
-                // TODO: @cleanup, remove the no_more_types var
-                poly_args.push(self.consume_type2(h, allow_inference)?);
-                self.consume_whitespace(false)?;
-
-                let has_comma = self.source.next() == Some(b',');
-                if has_comma {
-                    // We might not actually be getting more types when the
-                    // comma is at the end of the line, and we get a closing
-                    // angular bracket on the next line.
-                    self.source.consume();
-                    self.consume_whitespace(false)?;
-                }
-
-                if let Some(b'>') = self.source.next() {
-                    self.source.consume();
-                    break;
-                } else if !has_comma {
-                    return Err(ParseError2::new_error(
-                        &self.source, self.source.pos(),
-                        "Expected the end of the polymorphic argument list"
-                    ))
-                }
+        match self.consume_comma_separated(
+            h, b'<', b'>', "Expected the end of the polymorphic argument list",
+            |lexer, heap| lexer.consume_type2(heap, allow_inference)
+        )? {
+            Some(poly_args) => Ok(poly_args),
+            None => {
+                self.source.seek(backup_pos);
+                Ok(vec![])
             }
-
-            Ok(poly_args)
-        } else {
-            // No polymorphic args
-            self.source.seek(backup_pos);
-            Ok(vec!())
         }
     }
 
@@ -653,41 +680,17 @@ impl Lexer<'_> {
     /// delimiters and the polymorphic variables are consumed. Otherwise the
     /// input position will stay where it is. If no polymorphic variables are
     /// present then an empty vector will be returned.
-    fn consume_polymorphic_vars(&mut self) -> Result<Vec<Identifier>, ParseError2> {
+    fn consume_polymorphic_vars(&mut self, h: &mut Heap) -> Result<Vec<Identifier>, ParseError2> {
         let backup_pos = self.source.pos();
-        if let Some(b'<') = self.source.next() {
-            // Found the opening delimiter, we want at least one polyvar
-            self.source.consume();
-            self.consume_whitespace(false)?;
-            let mut poly_vars = Vec::new();
-
-            loop {
-                poly_vars.push(self.consume_identifier()?);
-                self.consume_whitespace(false)?;
-
-                let has_comma = self.source.next() == Some(b',');
-                if has_comma {
-                    // We may get another variable
-                    self.source.consume();
-                    self.consume_whitespace(false)?;
-                }
-
-                if let Some(b'>') = self.source.next() {
-                    self.source.consume();
-                    break;
-                } else if !has_comma {
-                    return Err(ParseError2::new_error(
-                        &self.source, self.source.pos(),
-                        "Expected the end of the polymorphic variable list"
-                    ))
-                }
+        match self.consume_comma_separated(
+            h, b'<', b'>', "Expected the end of the polymorphic variable list",
+            |lexer, heap| lexer.consume_identifier()
+        )? {
+            Some(poly_vars) => Ok(poly_vars),
+            None => {
+                self.source.seek(backup_pos);
+                Ok(vec!())
             }
-
-            Ok(poly_vars)
-        } else {
-            // No polymorphic args
-            self.source.seek(backup_pos);
-            Ok(vec!())
         }
     }
 
@@ -702,27 +705,19 @@ impl Lexer<'_> {
             h.alloc_parameter(|this| Parameter { this, position, parser_type, identifier });
         Ok(id)
     }
-    fn consume_parameters(
-        &mut self,
-        h: &mut Heap,
-        params: &mut Vec<ParameterId>,
-    ) -> Result<(), ParseError2> {
-        self.consume_string(b"(")?;
-        self.consume_whitespace(false)?;
-        if !self.has_string(b")") {
-            while self.source.next().is_some() {
-                params.push(self.consume_parameter(h)?);
-                self.consume_whitespace(false)?;
-                if self.has_string(b")") {
-                    break;
-                }
-                self.consume_string(b",")?;
-                self.consume_whitespace(false)?;
+    fn consume_parameters(&mut self, h: &mut Heap) -> Result<Vec<ParameterId>, ParseError2> {
+        match self.consume_comma_separated(
+            h, b'(', b')', "Expected the end of the parameter list",
+            |lexer, heap| lexer.consume_parameter(heap)
+        )? {
+            Some(params) => Ok(params),
+            None => {
+                Err(ParseError2::new_error(
+                    &self.source, self.source.pos(),
+                    "Expected a parameter list"
+                ))
             }
         }
-        self.consume_string(b")")?;
-
-        Ok(())
     }
 
     // ====================
@@ -1337,12 +1332,11 @@ impl Lexer<'_> {
         if self.has_string(b"{") {
             return Ok(self.consume_array_expression(h)?.upcast());
         }
-        if self.has_constant()
-            || self.has_keyword(b"null")
-            || self.has_keyword(b"true")
-            || self.has_keyword(b"false")
-        {
-            return Ok(self.consume_constant_expression(h)?.upcast());
+        if self.has_builtin_literal() {
+            return Ok(self.consume_builtin_literal_expression(h)?.upcast());
+        }
+        if self.has_struct_literal() {
+            return Ok(self.consume_struct_literal_expression(h)?.upcast());
         }
         if self.has_call_expression() {
             return Ok(self.consume_call_expression(h)?.upcast());
@@ -1374,24 +1368,27 @@ impl Lexer<'_> {
             concrete_type: ConcreteType::default(),
         }))
     }
-    fn has_constant(&self) -> bool {
+    fn has_builtin_literal(&self) -> bool {
         is_constant(self.source.next())
+            || self.has_keyword(b"null")
+            || self.has_keyword(b"true")
+            || self.has_keyword(b"false")
     }
-    fn consume_constant_expression(
+    fn consume_builtin_literal_expression(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ConstantExpressionId, ParseError2> {
+    ) -> Result<LiteralExpressionId, ParseError2> {
         let position = self.source.pos();
         let value;
         if self.has_keyword(b"null") {
             self.consume_keyword(b"null")?;
-            value = Constant::Null;
+            value = Literal::Null;
         } else if self.has_keyword(b"true") {
             self.consume_keyword(b"true")?;
-            value = Constant::True;
+            value = Literal::True;
         } else if self.has_keyword(b"false") {
             self.consume_keyword(b"false")?;
-            value = Constant::False;
+            value = Literal::False;
         } else if self.source.next() == Some(b'\'') {
             self.source.consume();
             let mut data = Vec::new();
@@ -1405,15 +1402,15 @@ impl Lexer<'_> {
                 return Err(self.error_at_pos("Expected character constant"));
             }
             self.source.consume();
-            value = Constant::Character(data);
+            value = Literal::Character(data);
         } else {
             if !self.has_integer() {
                 return Err(self.error_at_pos("Expected integer constant"));
             }
 
-            value = Constant::Integer(self.consume_integer()?);
+            value = Literal::Integer(self.consume_integer()?);
         }
-        Ok(h.alloc_constant_expression(|this| ConstantExpression {
+        Ok(h.alloc_literal_expression(|this| LiteralExpression {
             this,
             position,
             value,
@@ -1421,6 +1418,65 @@ impl Lexer<'_> {
             concrete_type: ConcreteType::default(),
         }))
     }
+
+    fn has_struct_literal(&mut self) -> bool {
+        // A struct literal is written as:
+        //      namespace::StructName<maybe_one_of_these, auto>{ field: expr }
+        // We will parse up until the opening brace to see if we're dealing with
+        // a struct literal.
+        let backup_pos = self.source.pos();
+        let result = self.consume_namespaced_identifier_spilled().is_ok() &&
+            self.consume_whitespace(false).is_ok() &&
+            self.maybe_consume_poly_args_spilled_without_pos_recovery() &&
+            self.consume_whitespace(false).is_ok() &&
+            self.source.next() == Some(b'{');
+
+        self.source.seek(backup_pos);
+        return result;
+    }
+
+    fn consume_struct_literal_expression(&mut self, h: &mut Heap) -> Result<LiteralExpressionId, ParseError2> {
+        // Consume identifier and polymorphic arguments
+        let position = self.source.pos();
+        let identifier = self.consume_namespaced_identifier()?;
+        self.consume_whitespace(false)?;
+        let poly_args = self.consume_polymorphic_args(h, true)?;
+        self.consume_whitespace(false)?;
+
+        // Consume fields
+        let fields = match self.consume_comma_separated(
+            h, b'{', b'}', "Expected the end of the list of struct fields",
+            |lexer, heap| {
+                let identifier = lexer.consume_identifier()?;
+                lexer.consume_whitespace(false)?;
+                lexer.consume_string(b":")?;
+                lexer.consume_whitespace(false)?;
+                let value = lexer.consume_expression(heap)?;
+
+                Ok(LiteralStructField{ identifier, value, field_idx: 0 })
+            }
+        )? {
+            Some(fields) => fields,
+            None => return Err(ParseError2::new_error(
+                self.source, self.source.pos(),
+                "A struct literal must be followed by its field values"
+            ))
+        };
+
+        Ok(h.alloc_literal_expression(|this| LiteralExpression{
+            this,
+            position,
+            value: Literal::Struct(LiteralStruct{
+                identifier,
+                poly_args,
+                fields,
+                definition: None,
+            }),
+            parent: ExpressionParent::None,
+            concrete_type: Default::default()
+        }))
+    }
+
     fn has_call_expression(&mut self) -> bool {
         // We need to prevent ambiguity with various operators (because we may
         // be specifying polymorphic variables) and variables.
@@ -1674,10 +1730,14 @@ impl Lexer<'_> {
         &mut self,
         h: &mut Heap,
     ) -> Result<ChannelStatementId, ParseError2> {
-        // Consume channel statement and polymorphic argument if specified
+        // Consume channel statement and polymorphic argument if specified.
+        // Needs a tiny bit of special parsing to ensure the right amount of
+        // whitespace is present.
         let position = self.source.pos();
         self.consume_keyword(b"channel")?;
 
+        let expect_whitespace = self.source.next() != Some(b'<');
+        self.consume_whitespace(expect_whitespace)?;
         let poly_args = self.consume_polymorphic_args(h, true)?;
         let poly_arg_id = match poly_args.len() {
             0 => h.alloc_parser_type(|this| ParserType{
@@ -1689,7 +1749,7 @@ impl Lexer<'_> {
                 "port construction using 'channel' accepts up to 1 polymorphic argument"
             ))
         };
-        self.consume_whitespace(true)?;
+        self.consume_whitespace(false)?;
 
         // Consume the output port
         let out_parser_type = h.alloc_parser_type(|this| ParserType{
@@ -1703,7 +1763,6 @@ impl Lexer<'_> {
         self.consume_whitespace(false)?;
 
         // Consume the input port
-        // TODO: Unsure about this, both ports refer to the same ParserType, is this ok?
         let in_parser_type = h.alloc_parser_type(|this| ParserType{
             this, pos: position.clone(), variant: ParserTypeVariant::Input(poly_arg_id)
         });
@@ -2001,48 +2060,27 @@ impl Lexer<'_> {
         self.consume_whitespace(true)?;
         let struct_ident = self.consume_identifier()?;
         self.consume_whitespace(false)?;
-        let poly_vars = self.consume_polymorphic_vars()?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
         self.consume_whitespace(false)?;
 
         // Parse struct fields
-        self.consume_string(b"{")?;
-        let mut next = self.source.next();
-        let mut fields = Vec::new();
-        while next.is_some() {
-            let char = next.unwrap();
-            if char == b'}' {
-                break;
+        let fields = match self.consume_comma_separated(
+            h, b'{', b'}', "Expected the end of the list of struct fields",
+            |lexer, heap| {
+                let position = lexer.source.pos();
+                let parser_type = lexer.consume_type2(heap, false)?;
+                lexer.consume_whitespace(true)?;
+                let field = lexer.consume_identifier()?;
+
+                Ok(StructFieldDefinition{ position, field, parser_type })
             }
-
-            // Consume field definition
-            self.consume_whitespace(false)?;
-            let field_position = self.source.pos();
-            let field_parser_type = self.consume_type2(h, false)?;
-            self.consume_whitespace(true)?;
-            let field_ident = self.consume_identifier()?;
-            self.consume_whitespace(false)?;
-
-            fields.push(StructFieldDefinition{
-                position: field_position,
-                field: field_ident,
-                parser_type: field_parser_type,
-            });
-
-            // If we have a comma, then we may or may not have another field
-            // definition. Otherwise we expect the struct to be fully defined
-            // and expect a closing brace
-            next = self.source.next();
-            if let Some(b',') = next {
-                self.source.consume();
-                self.consume_whitespace(false)?;
-                next = self.source.next();
-            } else {
-                break;
-            }
-        }
-
-        // End of struct definition, so we expect a closing brace
-        self.consume_string(b"}")?;
+        )? {
+            Some(fields) => fields,
+            None => return Err(ParseError2::new_error(
+                self.source, struct_pos,
+                "An struct definition must be followed by its fields"
+            )),
+        };
 
         // Valid struct definition
         Ok(h.alloc_struct_definition(|this| StructDefinition{
@@ -2060,77 +2098,58 @@ impl Lexer<'_> {
         self.consume_whitespace(true)?;
         let enum_ident = self.consume_identifier()?;
         self.consume_whitespace(false)?;
-        let poly_vars = self.consume_polymorphic_vars()?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
         self.consume_whitespace(false)?;
 
-        // Parse enum variants
-        self.consume_string(b"{")?;
-        let mut next = self.source.next();
-        let mut variants = Vec::new();
-        while next.is_some() {
-            let char = next.unwrap();
-            if char == b'}' {
-                break;
+        let variants = match self.consume_comma_separated(
+            h, b'{', b'}', "Expected end of enum variant list",
+            |lexer, heap| {
+                // Variant identifier
+                let position = lexer.source.pos();
+                let identifier = lexer.consume_identifier()?;
+                lexer.consume_whitespace(false)?;
+
+                // Optional variant value/type
+                let next = lexer.source.next();
+                let value = match next {
+                    Some(b',') => {
+                        // Do not consume, let `consume_comma_separated` handle
+                        // the next item
+                        EnumVariantValue::None
+                    },
+                    Some(b'=') => {
+                        // Integer value
+                        lexer.source.consume();
+                        lexer.consume_whitespace(false)?;
+                        if !lexer.has_integer() {
+                            return Err(lexer.error_at_pos("expected integer"))
+                        }
+                        let value = lexer.consume_integer()?;
+                        EnumVariantValue::Integer(value)
+                    },
+                    Some(b'(') => {
+                        // Embedded type
+                        lexer.source.consume();
+                        lexer.consume_whitespace(false)?;
+                        let embedded_type = lexer.consume_type2(heap, false)?;
+                        lexer.consume_whitespace(false)?;
+                        lexer.consume_string(b")")?;
+                        EnumVariantValue::Type(embedded_type)
+                    },
+                    _ => {
+                        return Err(lexer.error_at_pos("Expected ',', '=', or '('"));
+                    }
+                };
+
+                Ok(EnumVariantDefinition{ position, identifier, value })
             }
-
-            // Consume variant identifier
-            self.consume_whitespace(false)?;
-            let variant_position = self.source.pos();
-            let variant_ident = self.consume_identifier()?;
-            self.consume_whitespace(false)?;
-
-            // Consume variant (tag) value: may be nothing, in which case it is
-            // assigned automatically, may be a constant integer, or an embedded
-            // type as value, resulting in a tagged union
-            next = self.source.next();
-            let variant_value = if let Some(b',') = next {
-                EnumVariantValue::None
-            } else if let Some(b'=') = next {
-                self.source.consume();
-                self.consume_whitespace(false)?;
-                if !self.has_integer() {
-                    return Err(self.error_at_pos("expected integer"));
-                }
-                let variant_int = self.consume_integer()?;
-                self.consume_whitespace(false)?;
-                EnumVariantValue::Integer(variant_int)
-            } else if let Some(b'(') = next {
-                self.source.consume();
-                self.consume_whitespace(false)?;
-                let variant_type = self.consume_type2(h, false)?;
-                self.consume_whitespace(false)?;
-                self.consume_string(b")")?;
-                self.consume_whitespace(false)?;
-                EnumVariantValue::Type(variant_type)
-            } else {
-                return Err(self.error_at_pos("expected ',', '=', or '('"));
-            };
-
-            variants.push(EnumVariantDefinition{
-                position: variant_position,
-                identifier: variant_ident,
-                value: variant_value
-            });
-
-            // If we have a comma, then we may or may not have another variant,
-            // otherwise we expect the enum is fully defined
-            next = self.source.next();
-            if let Some(b',') = next {
-                self.source.consume();
-                self.consume_whitespace(false)?;
-                next = self.source.next();
-            } else {
-                break;
-            }
-        }
-
-        self.consume_string(b"}")?;
-
-        // An enum without variants is somewhat valid, but completely useless
-        // within the language
-        if variants.is_empty() {
-            return Err(ParseError2::new_error(self.source, enum_pos, "enum definition without variants"));
-        }
+        )? {
+            Some(variants) => variants,
+            None => return Err(ParseError2::new_error(
+                self.source, enum_pos,
+                "An enum definition must be followed by its variants"
+            )),
+        };
 
         Ok(h.alloc_enum_definition(|this| EnumDefinition{
             this,
@@ -2155,12 +2174,11 @@ impl Lexer<'_> {
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
-        let poly_vars = self.consume_polymorphic_vars()?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
         self.consume_whitespace(false)?;
 
         // Consume parameters
-        let mut parameters = Vec::new();
-        self.consume_parameters(h, &mut parameters)?;
+        let parameters = self.consume_parameters(h)?;
         self.consume_whitespace(false)?;
 
         // Parse body
@@ -2182,12 +2200,11 @@ impl Lexer<'_> {
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
-        let poly_vars = self.consume_polymorphic_vars()?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
         self.consume_whitespace(false)?;
 
         // Consume parameters
-        let mut parameters = Vec::new();
-        self.consume_parameters(h, &mut parameters)?;
+        let parameters = self.consume_parameters(h)?;
         self.consume_whitespace(false)?;
 
         // Consume body
@@ -2209,12 +2226,11 @@ impl Lexer<'_> {
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
-        let poly_vars = self.consume_polymorphic_vars()?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
         self.consume_whitespace(false)?;
 
         // Consume parameters
-        let mut parameters = Vec::new();
-        self.consume_parameters(h, &mut parameters)?;
+        let parameters = self.consume_parameters(h)?;
         self.consume_whitespace(false)?;
 
         // Consume body
@@ -2321,79 +2337,52 @@ impl Lexer<'_> {
             self.consume_string(b"::")?;
             self.consume_whitespace(false)?;
 
-            if let Some(b'{') = self.source.next() {
-                // Import specific symbols, optionally with an alias
-                self.source.consume();
-                self.consume_whitespace(false)?;
+            let next = self.source.next();
+            if Some(b'{') == next {
+                let symbols = match self.consume_comma_separated(
+                    h, b'{', b'}', "Expected end of import list",
+                    |lexer, heap| {
+                        // Symbol name
+                        let position = lexer.source.pos();
+                        let name = lexer.consume_ident()?;
+                        lexer.consume_whitespace(false)?;
 
-                let mut symbols = Vec::new();
-                let mut next = self.source.next();
+                        // Symbol alias
+                        if lexer.has_string(b"as") {
+                            // With alias
+                            lexer.consume_string(b"as")?;
+                            lexer.consume_whitespace(true)?;
+                            let alias = lexer.consume_ident()?;
 
-                while next.is_some() {
-                    let char = next.unwrap();
-                    if char == b'}' {
-                        break;
+                            Ok(AliasedSymbol{
+                                position,
+                                name,
+                                alias,
+                                definition_id: None
+                            })
+                        } else {
+                            // Without alias
+                            Ok(AliasedSymbol{
+                                position,
+                                name: name.clone(),
+                                alias: name,
+                                definition_id: None
+                            })
+                        }
                     }
+                )? {
+                    Some(symbols) => symbols,
+                    None => unreachable!(), // because we checked for opening '{'
+                };
 
-                    let symbol_position = self.source.pos();
-                    let symbol_name = self.consume_ident()?;
-                    self.consume_whitespace(false)?;
-                    if self.has_string(b"as") {
-                        // Symbol has an alias
-                        self.consume_string(b"as")?;
-                        self.consume_whitespace(true)?;
-                        let symbol_alias = self.consume_ident()?;
-
-                        symbols.push(AliasedSymbol{
-                            position: symbol_position,
-                            name: symbol_name,
-                            alias: symbol_alias,
-                            definition_id: None,
-                        });
-                    } else {
-                        // Symbol does not have an alias
-                        symbols.push(AliasedSymbol{
-                            position: symbol_position,
-                            name: symbol_name.clone(),
-                            alias: symbol_name,
-                            definition_id: None,
-                        });
-                    }
-
-                    // A comma indicates that we may have another symbol coming
-                    // up (not necessary), but if not present then we expect the
-                    // end of the symbol list
-                    self.consume_whitespace(false)?;
-
-                    next = self.source.next();
-                    if let Some(b',') = next {
-                        self.source.consume();
-                        self.consume_whitespace(false)?;
-                        next = self.source.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                if let Some(b'}') = next {
-                    // We are fine, push the imported symbols
-                    self.source.consume();
-                    if symbols.is_empty() {
-                        return Err(ParseError2::new_error(self.source, position, "empty symbol import list"));
-                    }
-
-                    h.alloc_import(|this| Import::Symbols(ImportSymbols{
-                        this,
-                        position,
-                        module_name: value,
-                        module_id: None,
-                        symbols,
-                    }))
-                } else {
-                    return Err(self.error_at_pos("Expected '}'"));
-                }
-            } else if let Some(b'*') = self.source.next() {
-                // Import all symbols without alias
+                h.alloc_import(|this| Import::Symbols(ImportSymbols{
+                    this,
+                    position,
+                    module_name: value,
+                    module_id: None,
+                    symbols,
+                }))
+            } else if Some(b'*') == next {
                 self.source.consume();
                 h.alloc_import(|this| Import::Symbols(ImportSymbols{
                     this,

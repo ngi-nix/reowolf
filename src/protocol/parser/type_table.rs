@@ -6,22 +6,22 @@ contains a concrete type definition for each AST type definition. In general
 terms the type table will go through the following phases during the compilation
 process:
 
-    1. The base type definitions are resolved after the parser phase has
-        finished. This implies that the AST is fully constructed, but not yet
-        annotated.
-    2. With the base type definitions resolved, the validation/linker phase will
-        use the type table (together with the symbol table) to disambiguate
-        terms (e.g. does an expression refer to a variable, an enum, a constant,
-        etc.)
-    3. During the type checking/inference phase the type table is used to ensure
-        that the AST contains valid use of types in expressions and statements.
-        At the same time type inference will find concrete instantiations of
-        polymorphic types, these will be stored in the type table as monomorphed
-        instantiations of a generic type.
-    4. After type checking and inference (and possibly when constructing byte
-        code) the type table will construct a type graph and solidify each
-        non-polymorphic type and monomorphed instantiations of polymorphic types
-        into concrete types.
+1. The base type definitions are resolved after the parser phase has
+    finished. This implies that the AST is fully constructed, but not yet
+    annotated.
+2. With the base type definitions resolved, the validation/linker phase will
+    use the type table (together with the symbol table) to disambiguate
+    terms (e.g. does an expression refer to a variable, an enum, a constant,
+    etc.)
+3. During the type checking/inference phase the type table is used to ensure
+    that the AST contains valid use of types in expressions and statements.
+    At the same time type inference will find concrete instantiations of
+    polymorphic types, these will be stored in the type table as monomorphed
+    instantiations of a generic type.
+4. After type checking and inference (and possibly when constructing byte
+    code) the type table will construct a type graph and solidify each
+    non-polymorphic type and monomorphed instantiations of polymorphic types
+    into concrete types.
 
 So a base type is defined by its (optionally polymorphic) representation in the
 AST. A concrete type has concrete types for each of the polymorphic arguments. A

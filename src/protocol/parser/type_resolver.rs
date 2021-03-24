@@ -1197,7 +1197,7 @@ impl Visitor2 for TypeResolvingVisitor {
         self.progress_array_expr(ctx, id)
     }
 
-    fn visit_constant_expr(&mut self, ctx: &mut Ctx, id: ConstantExpressionId) -> VisitorResult {
+    fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
         self.progress_constant_expr(ctx, id)
@@ -1386,7 +1386,7 @@ impl TypeResolvingVisitor {
                 let id = expr.this;
                 self.progress_array_expr(ctx, id)
             },
-            Expression::Constant(expr) => {
+            Expression::Literal(expr) => {
                 let id = expr.this;
                 self.progress_constant_expr(ctx, id)
             },
@@ -1747,14 +1747,14 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_constant_expr(&mut self, ctx: &mut Ctx, id: ConstantExpressionId) -> Result<(), ParseError2> {
+    fn progress_constant_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError2> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let template = match &expr.value {
-            Constant::Null => &MESSAGE_TEMPLATE[..],
-            Constant::Integer(_) => &INTEGERLIKE_TEMPLATE[..],
-            Constant::True | Constant::False => &BOOL_TEMPLATE[..],
-            Constant::Character(_) => todo!("character literals")
+            Literal::Null => &MESSAGE_TEMPLATE[..],
+            Literal::Integer(_) => &INTEGERLIKE_TEMPLATE[..],
+            Literal::True | Literal::False => &BOOL_TEMPLATE[..],
+            Literal::Character(_) => todo!("character literals")
         };
 
         let progress = self.apply_forced_constraint(ctx, upcast_id, template)?;
@@ -2434,7 +2434,7 @@ impl TypeResolvingVisitor {
             let parser_type = &ctx.heap[parser_type_id];
             match &parser_type.variant {
                 PTV::Message => {
-                    /// TODO: @types Remove the Message -> Byte hack at some point...
+                    // TODO: @types Remove the Message -> Byte hack at some point...
                     infer_type.push(ITP::Message);
                     infer_type.push(ITP::Byte);
                 },

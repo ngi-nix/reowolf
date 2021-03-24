@@ -207,9 +207,9 @@ pub(crate) trait Visitor2 {
                 let this = expr.this;
                 self.visit_array_expr(ctx, this)
             }
-            Expression::Constant(expr) => {
+            Expression::Literal(expr) => {
                 let this = expr.this;
-                self.visit_constant_expr(ctx, this)
+                self.visit_literal_expr(ctx, this)
             }
             Expression::Call(expr) => {
                 let this = expr.this;
@@ -230,7 +230,7 @@ pub(crate) trait Visitor2 {
     fn visit_slicing_expr(&mut self, _ctx: &mut Ctx, _id: SlicingExpressionId) -> VisitorResult { Ok(()) }
     fn visit_select_expr(&mut self, _ctx: &mut Ctx, _id: SelectExpressionId) -> VisitorResult { Ok(()) }
     fn visit_array_expr(&mut self, _ctx: &mut Ctx, _id: ArrayExpressionId) -> VisitorResult { Ok(()) }
-    fn visit_constant_expr(&mut self, _ctx: &mut Ctx, _id: ConstantExpressionId) -> VisitorResult { Ok(()) }
+    fn visit_literal_expr(&mut self, _ctx: &mut Ctx, _id: LiteralExpressionId) -> VisitorResult { Ok(()) }
     fn visit_call_expr(&mut self, _ctx: &mut Ctx, _id: CallExpressionId) -> VisitorResult { Ok(()) }
     fn visit_variable_expr(&mut self, _ctx: &mut Ctx, _id: VariableExpressionId) -> VisitorResult { Ok(()) }
 
