@@ -704,6 +704,7 @@ impl Display for Identifier {
     }
 }
 
+/// TODO: @types Remove the Message -> Byte hack at some point...
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParserTypeVariant {
     // Basic builtin
@@ -776,8 +777,12 @@ pub enum SymbolicParserTypeVariant {
 
 /// ConcreteType is the representation of a type after resolving symbolic types
 /// and performing type inference
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConcreteTypePart {
+    // Markers for the use of polymorphic types within a procedure's body that
+    // refer to polymorphic variables on the procedure's definition. Different
+    // from markers in the `InferenceType`, these will not contain nested types.
+    Marker(usize),
     // Special types (cannot be explicitly constructed by the programmer)
     Void,
     // Builtin types without nested types
@@ -797,7 +802,7 @@ pub enum ConcreteTypePart {
     Instance(DefinitionId, usize),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConcreteType {
     pub(crate) parts: Vec<ConcreteTypePart>
 }
@@ -805,6 +810,16 @@ pub struct ConcreteType {
 impl Default for ConcreteType {
     fn default() -> Self {
         Self{ parts: Vec::new() }
+    }
+}
+
+impl ConcreteType {
+    pub(crate) fn has_marker(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|p| {
+                if let ConcreteTypePart::Marker(_) = p { true } else { false }
+            })
     }
 }
 

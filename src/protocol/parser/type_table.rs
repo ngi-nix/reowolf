@@ -116,6 +116,22 @@ pub struct DefinedType {
     pub(crate) monomorphs: Vec<Vec<ConcreteType>>,
 }
 
+impl DefinedType {
+    fn add_monomorph(&mut self, types: Vec<ConcreteType>) {
+        debug_assert!(!self.has_monomorph(&types), "monomorph already exists");
+        self.monomorphs.push(types);
+    }
+
+    fn has_monomorph(&self, types: &Vec<ConcreteType>) -> bool {
+        debug_assert_eq!(self.poly_args.len(), types.len(), "mismatch in number of polymorphic types");
+        for monomorph in &self.monomorphs {
+            if monomorph == types { return true; }
+        }
+
+        return false;
+    }
+}
+
 pub enum DefinedTypeVariant {
     Enum(EnumType),
     Union(UnionType),
@@ -188,8 +204,8 @@ pub struct FunctionType {
 }
 
 pub struct ComponentType {
-    variant: ComponentVariant,
-    arguments: Vec<FunctionArgument>
+    pub variant: ComponentVariant,
+    pub arguments: Vec<FunctionArgument>
 }
 
 pub struct FunctionArgument {
@@ -323,19 +339,25 @@ impl TypeTable {
     }
 
     /// Instantiates a monomorph for a given base definition.
-    pub(crate) fn instantiate_monomorph(&mut self, definition_id: &DefinitionId, monomorph: &Vec<ConcreteType>) {
+    pub(crate) fn add_monomorph(&mut self, definition_id: &DefinitionId, types: Vec<ConcreteType>) {
         debug_assert!(
             self.lookup.contains_key(definition_id),
             "attempting to instantiate monomorph of definition unknown to type table"
         );
+
         let definition = self.lookup.get_mut(definition_id).unwrap();
-        debug_assert_eq!(
-            monomorph.len(), definition.poly_args.len(),
-            "attempting to instantiate monomorph with {} types, but definition requires {}",
-            monomorph.len(), definition.poly_args.len()
+        definition.add_monomorph(types);
+    }
+
+    /// Checks if a given definition already has a specific monomorph
+    pub(crate) fn has_monomorph(&mut self, definition_id: &DefinitionId, types: &Vec<ConcreteType>) -> bool {
+        debug_assert!(
+            self.lookup.contains_key(definition_id),
+            "attempting to check monomorph existence of definition unknown to type table"
         );
 
-        definition.monomorphs.push(monomorph.clone())
+        let definition = self.lookup.get(definition_id).unwrap();
+        definition.has_monomorph(types)
     }
 
     /// This function will resolve just the basic definition of the type, it

@@ -908,7 +908,11 @@ impl ValueImpl for InputValue {
         Type::INPUT
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
-        return if let ParserTypeVariant::Input(_) = t.variant { true } else { false }
+        use ParserTypeVariant::*;
+        match &t.variant {
+            Input(_) | Inferred | Symbolic(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -926,7 +930,11 @@ impl ValueImpl for OutputValue {
         Type::OUTPUT
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
-        return if let ParserTypeVariant::Output(_) = t.variant { true } else { false }
+        use ParserTypeVariant::*;
+        match &t.variant {
+            Output(_) | Inferred | Symbolic(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -954,7 +962,11 @@ impl ValueImpl for MessageValue {
         Type::MESSAGE
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
-        return if let ParserTypeVariant::Message = t.variant { true } else { false };
+        use ParserTypeVariant::*;
+        match &t.variant {
+            Message | Inferred | Symbolic(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -974,7 +986,7 @@ impl ValueImpl for BooleanValue {
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
         match t.variant {
-            Bool | Byte | Short | Int | Long => true,
+            Symbolic(_) | Inferred | Bool | Byte | Short | Int | Long => true,
             _ => false
         }
     }
@@ -996,7 +1008,7 @@ impl ValueImpl for ByteValue {
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
         match t.variant {
-            Byte | Short | Int | Long => true,
+            Symbolic(_) | Inferred | Byte | Short | Int | Long => true,
             _ => false
         }
     }
@@ -1018,7 +1030,7 @@ impl ValueImpl for ShortValue {
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
         match t.variant {
-            Short | Int | Long => true,
+            Symbolic(_) | Inferred | Short | Int | Long => true,
             _ => false
         }
     }
@@ -1040,7 +1052,7 @@ impl ValueImpl for IntValue {
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
         match t.variant {
-            Int | Long => true,
+            Symbolic(_) | Inferred | Int | Long => true,
             _ => false
         }
     }
@@ -1060,7 +1072,11 @@ impl ValueImpl for LongValue {
         Type::LONG
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
-        return if let ParserTypeVariant::Long = t.variant { true } else { false }
+        use ParserTypeVariant::*;
+        match &t.variant {
+            Long | Inferred | Symbolic(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -1515,13 +1531,10 @@ impl Store {
                     assert_eq!(2, expr.arguments.len());
                     let port_value = self.eval(h, ctx, expr.arguments[0])?;
                     let msg_value = self.eval(h, ctx, expr.arguments[1])?;
-                    println!("DEBUG: Handiling put({:?}, {:?})", port_value, msg_value);
                     if ctx.did_put(port_value.clone()) {
-                        println!("DEBUG: Already put...");
                         // Return bogus, replacing this at some point anyway
                         Ok(Value::Message(MessageValue(None)))
                     } else {
-                        println!("DEBUG: Did not yet put...");
                         Err(EvalContinuation::Put(port_value, msg_value))
                     }
                 }

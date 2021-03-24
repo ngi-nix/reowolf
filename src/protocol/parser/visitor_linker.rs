@@ -492,67 +492,25 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 );
             }
 
-            // No fancy recursive parsing, must be followed by a call expression
-            let definition_id = {
-                let call_expr = &ctx.heap[call_expr_id];
-                if let Method::Symbolic(symbolic) = &call_expr.method {
-                    let found_symbol = self.find_symbol_of_type(
-                        ctx.module.root_id, &ctx.symbols, &ctx.types,
-                        &symbolic.identifier, TypeClass::Component
-                    );
-
-                    match found_symbol {
-                        FindOfTypeResult::Found(definition_id) => definition_id,
-                        FindOfTypeResult::TypeMismatch(got_type_class) => {
-                            return Err(ParseError2::new_error(
-                                &ctx.module.source, symbolic.identifier.position,
-                                &format!("New must instantiate a component, this identifier points to a {}", got_type_class)
-                            ))
-                        },
-                        FindOfTypeResult::NotFound => {
-                            return Err(ParseError2::new_error(
-                                &ctx.module.source, symbolic.identifier.position,
-                                "Could not find a defined component with this name"
-                            ))
-                        }
-                    }
-                } else {
-                    return Err(
-                        ParseError2::new_error(&ctx.module.source, call_expr.position, "Must instantiate a component")
-                    );
-                }
-            };
-
-            // Modify new statement's symbolic call to point to the appropriate
-            // definition.
-            let call_expr = &mut ctx.heap[call_expr_id];
-            match &mut call_expr.method {
-                Method::Symbolic(method) => method.definition = Some(definition_id),
-                _ => unreachable!()
+            // We make sure that we point to a symbolic method. Checking that it
+            // points to a component is done in the depth pass.
+            let call_expr = &ctx.heap[call_expr_id];
+            if let Method::Symbolic(_) = &call_expr.method {
+                // We're fine
+            } else {
+                return Err(
+                    ParseError2::new_error(&ctx.module.source, call_expr.position, "Must instantiate a component")
+                );
             }
         } else {
-            // Performing depth pass. The function definition should have been
-            // resolved in the breadth pass, now we recurse to evaluate the
-            // arguments
-            // TODO: @cleanup Maybe just call `visit_call_expr`?
+            // Just call `visit_call_expr`. We do some extra work we don't have
+            // to, but this prevents silly mistakes.
             let call_expr_id = ctx.heap[id].expression;
-            let call_expr = &mut ctx.heap[call_expr_id];
-            call_expr.parent = ExpressionParent::New(id);
 
-            let old_num_exprs = self.expression_buffer.len();
-            self.expression_buffer.extend(&call_expr.arguments);
-            let new_num_exprs = self.expression_buffer.len();
-
-            let old_expr_parent = self.expr_parent;
-
-            for arg_expr_idx in old_num_exprs..new_num_exprs {
-                let arg_expr_id = self.expression_buffer[arg_expr_idx];
-                self.expr_parent = ExpressionParent::Expression(call_expr_id.upcast(), arg_expr_idx as u32);
-                self.visit_expr(ctx, arg_expr_id)?;
-            }
-
-            self.expression_buffer.truncate(old_num_exprs);
-            self.expr_parent = old_expr_parent;
+            debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+            self.expr_parent = ExpressionParent::New(id);
+            self.visit_call_expr(ctx, call_expr_id)?;
+            self.expr_parent = ExpressionParent::None;
         }
 
         Ok(())
@@ -808,22 +766,33 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
             Method::Symbolic(symbolic) => {
                 // Find symbolic method
+                let (verb, expected_type) = if let ExpressionParent::New(_) = self.expr_parent {
+                    // Expect to find a component
+                    ("instantiated", TypeClass::Component)
+                } else {
+                    // Expect to find a function
+                    ("called", TypeClass::Function)
+                };
+
                 let found_symbol = self.find_symbol_of_type(
                     ctx.module.root_id, &ctx.symbols, &ctx.types,
-                    &symbolic.identifier, TypeClass::Function
+                    &symbolic.identifier, expected_type
                 );
                 let definition_id = match found_symbol {
                     FindOfTypeResult::Found(definition_id) => definition_id,
                     FindOfTypeResult::TypeMismatch(got_type_class) => {
                         return Err(ParseError2::new_error(
                             &ctx.module.source, symbolic.identifier.position,
-                            &format!("Only functions can be called, this identifier points to a {}", got_type_class)
+                            &format!(
+                                "Only {}s can be {}, this identifier points to a {}",
+                                expected_type, verb, got_type_class
+                            )
                         ))
                     },
                     FindOfTypeResult::NotFound => {
                         return Err(ParseError2::new_error(
                             &ctx.module.source, symbolic.identifier.position,
-                            &format!("Could not find a function with this name")
+                            &format!("Could not find a {} with this name", expected_type)
                         ))
                     }
                 };
@@ -833,6 +802,9 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     DefinedTypeVariant::Function(definition) => {
                         num_definition_args = definition.arguments.len();
                     },
+                    DefinedTypeVariant::Component(definition) => {
+                        num_definition_args = definition.arguments.len();
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -1122,7 +1094,7 @@ impl ValidityAndLinkerVisitor {
                 }));
             }
 
-            if let PTV::Symbolic(symbolic) = &mut ctx.heap[id].variant {
+            if let PTV::Symbolic(symbolic) = &mut ctx.heap[parser_type_id].variant {
                 for _ in 0..num_inferred_to_allocate {
                     symbolic.poly_args.push(self.parser_type_buffer.pop().unwrap());
                 }
@@ -1482,11 +1454,13 @@ impl ValidityAndLinkerVisitor {
             }
             Method::Symbolic(symbolic) => {
                 let definition = &ctx.heap[symbolic.definition.unwrap()];
-                if let Definition::Function(definition) = definition {
-                    definition.poly_vars.len()
-                } else {
-                    debug_assert!(false, "expected function while visiting call poly args");
-                    unreachable!();
+                match definition {
+                    Definition::Function(definition) => definition.poly_vars.len(),
+                    Definition::Component(definition) => definition.poly_vars.len(),
+                    _ => {
+                        debug_assert!(false, "expected function or component definition while visiting call poly args");
+                        unreachable!();
+                    }
                 }
             }
         };

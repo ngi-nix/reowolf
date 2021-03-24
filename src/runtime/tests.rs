@@ -37,7 +37,7 @@ fn file_logged_configured_connector(
     Connector::new(file_logger, pd, connector_id)
 }
 static MINIMAL_PDL: &'static [u8] = b"
-primitive together(in ia, in ib, out oa, out ob){
+primitive together(in<msg> ia, in<msg> ib, out<msg> oa, out<msg> ob){
   while(true) synchronous {
     if(fires(ia)) {
       put(oa, get(ia));
@@ -857,7 +857,7 @@ fn ac_not_b() {
             let mut c = file_logged_connector(0, test_log_path);
             let p0 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
             let p1 = c.new_net_port(Putter, sock_addrs[1], Active).unwrap();
-            c.connect(SEC1).unwrap();
+            c.connect(SEC5).unwrap();
 
             // put both A and B
             c.put(p0, TEST_MSG.clone()).unwrap();
@@ -867,7 +867,7 @@ fn ac_not_b() {
         s.spawn(|_| {
             // "bob"
             let pdl = b"
-            primitive ac_not_b(in a, in b, out c){
+            primitive ac_not_b(in<msg> a, in<msg> b, out<msg> c){
                 // forward A to C but keep B silent
                 synchronous{ put(c, get(a)); }
             }";
@@ -876,7 +876,9 @@ fn ac_not_b() {
             let p0 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
             let p1 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
             let [a, b] = c.new_port_pair();
+
             c.add_component(b"ac_not_b", &[p0, p1, a]).unwrap();
+
             c.connect(SEC1).unwrap();
 
             c.get(b).unwrap();
@@ -930,7 +932,7 @@ fn many_rounds_mem() {
 #[test]
 fn pdl_reo_lossy() {
     let pdl = b"
-    primitive lossy(in a, out b) {
+    primitive lossy(in<msg> a, out<msg> b) {
         while(true) synchronous {
             msg m = null;
             if(fires(a)) {
@@ -948,7 +950,7 @@ fn pdl_reo_lossy() {
 #[test]
 fn pdl_reo_fifo1() {
     let pdl = b"
-    primitive fifo1(in a, out b) {
+    primitive fifo1(in<msg> a, out<msg> b) {
         msg m = null;
         while(true) synchronous {
             if(m == null) {
@@ -967,7 +969,7 @@ fn pdl_reo_fifo1() {
 fn pdl_reo_fifo1full() {
     let test_log_path = Path::new("./logs/pdl_reo_fifo1full");
     let pdl = b"
-    primitive fifo1full(in a, out b) {
+    primitive fifo1full(in<msg> a, out<msg> b) {
         msg m = create(0);
         while(true) synchronous {
             if(m == null) {
@@ -994,7 +996,7 @@ fn pdl_reo_fifo1full() {
 fn pdl_msg_consensus() {
     let test_log_path = Path::new("./logs/pdl_msg_consensus");
     let pdl = b"
-    primitive msgconsensus(in a, in b) {
+    primitive msgconsensus(in<msg> a, in<msg> b) {
         while(true) synchronous {
             msg x = get(a);
             msg y = get(b);
@@ -1021,7 +1023,7 @@ fn pdl_msg_consensus() {
 fn sequencer3_prim() {
     let test_log_path = Path::new("./logs/sequencer3_prim");
     let pdl = b"
-    primitive sequencer3(out a, out b, out c) {
+    primitive sequencer3(out<msg> a, out<msg> b, out<msg> c) {
         int i = 0;
         while(true) synchronous {
             out to = a;
@@ -1068,7 +1070,7 @@ fn sequencer3_prim() {
 fn sequencer3_comp() {
     let test_log_path = Path::new("./logs/sequencer3_comp");
     let pdl = b"
-    primitive fifo1_init(msg m, in a, out b) {
+    primitive fifo1_init<T>(T m, in<T> a, out<T> b) {
         while(true) synchronous {
             if(m != null && fires(b)) {
                 put(b, m);
@@ -1078,13 +1080,13 @@ fn sequencer3_comp() {
             }
         }
     }
-    composite fifo1_full(in a, out b) {
+    composite fifo1_full<T>(in<T> a, out<T> b) {
         new fifo1_init(create(0), a, b);
     }
-    composite fifo1(in a, out b) {
+    composite fifo1<T>(in<T> a, out<T> b) {
         new fifo1_init(null, a, b);
     }
-    composite sequencer3(out a, out b, out c) {
+    composite sequencer3(out<msg> a, out<msg> b, out<msg> c) {
         channel d -> e;
         channel f -> g;
         channel h -> i;
@@ -1149,7 +1151,7 @@ const XROUTER_ITEMS: &[XRouterItem] = {
 fn xrouter_prim() {
     let test_log_path = Path::new("./logs/xrouter_prim");
     let pdl = b"
-    primitive xrouter(in a, out b, out c) {
+    primitive xrouter(in<msg> a, out<msg> b, out<msg> c) {
         while(true) synchronous {
             if(fires(a)) {
                 if(fires(b)) put(b, get(a));
@@ -1189,15 +1191,15 @@ fn xrouter_prim() {
 fn xrouter_comp() {
     let test_log_path = Path::new("./logs/xrouter_comp");
     let pdl = b"
-    primitive lossy(in a, out b) {
+    primitive lossy<T>(in<T> a, out<T> b) {
         while(true) synchronous {
             if(fires(a)) {
-                msg m = get(a);
+                auto m = get(a);
                 if(fires(b)) put(b, m);
             }
         }
     }
-    primitive sync_drain(in a, in b) {
+    primitive sync_drain<T>(in<T> a, in<T> b) {
         while(true) synchronous {
             if(fires(a)) {
                 get(a);
@@ -1205,7 +1207,7 @@ fn xrouter_comp() {
             }
         }
     }
-    composite xrouter(in a, out b, out c) {
+    composite xrouter(in<msg> a, out<msg> b, out<msg> c) {
         channel d -> e;
         channel f -> g;
         channel h -> i;
@@ -1258,7 +1260,7 @@ fn xrouter_comp() {
 fn count_stream() {
     let test_log_path = Path::new("./logs/count_stream");
     let pdl = b"
-    primitive count_stream(out o) {
+    primitive count_stream(out<msg> o) {
         msg m = create(1);
         m[0] = 0;
         while(true) synchronous {
@@ -1286,11 +1288,12 @@ fn count_stream() {
 fn for_msg_byte() {
     let test_log_path = Path::new("./logs/for_msg_byte");
     let pdl = b"
-    primitive for_msg_byte(out o) {
+    primitive for_msg_byte(out<msg> o) {
         byte i = 0;
+        int idx = 0;
         while(i<8) {
             msg m = create(1);
-            m[0] = i;
+            m[idx] = i;
             synchronous put(o, m);
             i++;
         }
@@ -1316,7 +1319,7 @@ fn for_msg_byte() {
 fn eq_causality() {
     let test_log_path = Path::new("./logs/eq_causality");
     let pdl = b"
-    primitive eq(in a, in b, out c) {
+    primitive eq(in<msg> a, in<msg> b, out<msg> c) {
         msg ma = null;
         msg mb = null;
         while(true) synchronous {

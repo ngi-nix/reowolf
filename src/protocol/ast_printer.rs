@@ -82,7 +82,7 @@ impl<'a> KV<'a> {
         self
     }
 
-    fn with_d_key<D: Display>(mut self, key: &D) -> Self {
+    fn with_d_key<D: Display>(self, key: &D) -> Self {
         self.temp_key.push_str(&key.to_string());
         self
     }
@@ -92,12 +92,12 @@ impl<'a> KV<'a> {
         self
     }
 
-    fn with_disp_val<D: Display>(mut self, val: &D) -> Self {
+    fn with_disp_val<D: Display>(self, val: &D) -> Self {
         self.temp_val.push_str(&format!("{}", val));
         self
     }
 
-    fn with_debug_val<D: Debug>(mut self, val: &D) -> Self {
+    fn with_debug_val<D: Debug>(self, val: &D) -> Self {
         self.temp_val.push_str(&format!("{:?}", val));
         self
     }
@@ -107,7 +107,7 @@ impl<'a> KV<'a> {
         self
     }
 
-    fn with_opt_disp_val<D: Display>(mut self, val: Option<&D>) -> Self {
+    fn with_opt_disp_val<D: Display>(self, val: Option<&D>) -> Self {
         match val {
             Some(v) => { self.temp_val.push_str(&format!("Some({})", v)); },
             None => { self.temp_val.push_str("None"); }
@@ -164,6 +164,7 @@ impl<'a> Drop for KV<'a> {
 }
 
 pub(crate) struct ASTWriter {
+    cur_definition: Option<DefinitionId>,
     buffer: String,
     temp1: String,
     temp2: String,
@@ -172,6 +173,7 @@ pub(crate) struct ASTWriter {
 impl ASTWriter {
     pub(crate) fn new() -> Self {
         Self{
+            cur_definition: None,
             buffer: String::with_capacity(4096),
             temp1: String::with_capacity(256),
             temp2: String::with_capacity(256),
@@ -267,6 +269,7 @@ impl ASTWriter {
     //--------------------------------------------------------------------------
 
     fn write_definition(&mut self, heap: &Heap, def_id: DefinitionId, indent: usize) {
+        self.cur_definition = Some(def_id);
         let indent2 = indent + 1;
         let indent3 = indent2 + 1;
         let indent4 = indent3 + 1;
@@ -497,6 +500,7 @@ impl ASTWriter {
         let expr = &heap[expr_id];
         let indent2 = indent + 1;
         let indent3 = indent2 + 1;
+        let def_id = self.cur_definition.unwrap();
 
         match expr {
             Expression::Assignment(expr) => {
@@ -510,7 +514,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Conditional(expr) => {
                 self.kv(indent).with_id(PREFIX_CONDITIONAL_EXPR_ID, expr.this.0.index)
@@ -524,7 +528,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Binary(expr) => {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
@@ -537,7 +541,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Unary(expr) => {
                 self.kv(indent).with_id(PREFIX_UNARY_EXPR_ID, expr.this.0.index)
@@ -548,7 +552,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Indexing(expr) => {
                 self.kv(indent).with_id(PREFIX_INDEXING_EXPR_ID, expr.this.0.index)
@@ -560,7 +564,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Slicing(expr) => {
                 self.kv(indent).with_id(PREFIX_SLICING_EXPR_ID, expr.this.0.index)
@@ -574,7 +578,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Select(expr) => {
                 self.kv(indent).with_id(PREFIX_SELECT_EXPR_ID, expr.this.0.index)
@@ -593,7 +597,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Array(expr) => {
                 self.kv(indent).with_id(PREFIX_ARRAY_EXPR_ID, expr.this.0.index)
@@ -606,7 +610,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Constant(expr) => {
                 self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.index)
@@ -624,7 +628,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Call(expr) => {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
@@ -655,7 +659,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Variable(expr) => {
                 self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.index)
@@ -666,7 +670,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
                 self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, &expr.concrete_type));
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             }
         }
     }
@@ -749,16 +753,26 @@ fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
     }
 }
 
-fn write_concrete_type(target: &mut String, heap: &Heap, t: &ConcreteType) {
+fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t: &ConcreteType) {
     use ConcreteTypePart as CTP;
 
-    fn write_concrete_part(target: &mut String, heap: &Heap, t: &ConcreteType, mut idx: usize) -> usize {
+    fn write_concrete_part(target: &mut String, heap: &Heap, def_id: DefinitionId, t: &ConcreteType, mut idx: usize) -> usize {
         if idx >= t.parts.len() {
-            target.push_str("Programmer error: invalid concrete type tree");
             return idx;
         }
 
         match &t.parts[idx] {
+            CTP::Marker(marker) => {
+                // Marker points to polymorphic variable index
+                let definition = &heap[def_id];
+                let poly_var_ident = match definition {
+                    Definition::Struct(_) | Definition::Enum(_) => unreachable!(),
+                    Definition::Function(definition) => &definition.poly_vars[*marker].value,
+                    Definition::Component(definition) => &definition.poly_vars[*marker].value,
+                };
+                target.push_str(&String::from_utf8_lossy(&poly_var_ident));
+                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
+            },
             CTP::Void => target.push_str("void"),
             CTP::Message => target.push_str("msg"),
             CTP::Bool => target.push_str("bool"),
@@ -768,21 +782,21 @@ fn write_concrete_type(target: &mut String, heap: &Heap, t: &ConcreteType) {
             CTP::Long => target.push_str("long"),
             CTP::String => target.push_str("string"),
             CTP::Array => {
-                idx = write_concrete_part(target, heap, t, idx + 1);
+                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 target.push_str("[]");
             },
             CTP::Slice => {
-                idx = write_concrete_part(target, heap, t, idx + 1);
+                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 target.push_str("[..]");
             }
             CTP::Input => {
                 target.push_str("in<");
-                idx = write_concrete_part(target, heap, t, idx + 1);
+                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 target.push('>');
             },
             CTP::Output => {
                 target.push_str("out<");
-                idx = write_concrete_part(target, heap, t, idx + 1);
+                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 target.push('>')
             },
             CTP::Instance(definition_id, num_embedded) => {
@@ -793,7 +807,7 @@ fn write_concrete_type(target: &mut String, heap: &Heap, t: &ConcreteType) {
                     if idx_embedded != 0 {
                         target.push_str(", ");
                     }
-                    idx = write_concrete_part(target, heap, t, idx + 1);
+                    idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 }
                 target.push('>');
             }
@@ -802,7 +816,7 @@ fn write_concrete_type(target: &mut String, heap: &Heap, t: &ConcreteType) {
         idx + 1
     }
 
-    write_concrete_part(target, heap, t, 0);
+    write_concrete_part(target, heap, def_id, t, 0);
 }
 
 fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
