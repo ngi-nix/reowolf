@@ -14,6 +14,7 @@ use super::visitor::{
     Visitor2, 
     VisitorResult
 };
+use std::hint::unreachable_unchecked;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
@@ -698,6 +699,8 @@ impl Visitor2 for ValidityAndLinkerVisitor {
     fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
         debug_assert!(!self.performing_breadth_pass);
 
+        const FIELD_NOT_FOUND_SENTINEL: usize = usize::max_value();
+
         let constant_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
         constant_expr.parent = old_expr_parent;
@@ -708,12 +711,82 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 // Just the parent has to be set, done above
             },
             Literal::Struct(literal) => {
-                // Retrieve and set the literals definition
-                let definition =
+                let upcast_id = id.upcast();
+
+                // Retrieve and set the literal's definition
+                let definition = self.find_symbol_of_type(
+                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types,
+                    &literal.identifier, TypeClass::Struct
+                )?;
+                literal.definition = Some(definition.ast_definition);
+
+                let definition = definition.definition.as_struct();
+
+                // Make sure all fields are specified, none are specified twice
+                // and all fields exist on the struct definition
+                let mut specified = Vec::new(); // TODO: @performance
+                specified.resize(definition.fields.len(), false);
+
+                for field in &mut literal.fields {
+                    // Find field in the struct definition
+                    field.field_idx = FIELD_NOT_FOUND_SENTINEL;
+                    for (def_field_idx, def_field) in definition.fields.iter().enumerate() {
+                        if field.identifier == def_field.identifier {
+                            field.field_idx = def_field_idx;
+                            num_found += 1;
+                            break;
+                        }
+                    }
+
+                    // Check if not found
+                    if field.field_idx == FIELD_NOT_FOUND_SENTINEL {
+                        return Err(ParseError2::new_error(
+                            &ctx.module.source, field.identifier.position(),
+                            &format!(
+                                "This field does not exist on the struct '{}'",
+                                &String::from_utf8_lossy(&literal.identifier.value),
+                            )
+                        ));
+                    }
+
+                    // Check if specified more than once
+                    if specified[field.field_idx] {
+                        return Err(ParseError2::new_error(
+                            &ctx.module.source, field.identifier.position(),
+                            "This field is specified more than once"
+                        ));
+                    }
+
+                    specified[field.field_idx] = true;
+                }
+
+                if !specified.iter().all(|v| *v) {
+                    // Some fields were not specified
+                    let mut not_specified = String::new();
+                    for (def_field_idx, is_specified) in specified.iter().enumerate() {
+                        if !is_specified {
+                            if !not_specified.is_empty() { not_specified.push_str(", ") }
+                            let field_ident = &definition.fields[def_field_idx].identifier;
+                            not_specified.push_str(&String::from_utf8_lossy(&field_ident.value));
+                        }
+                    }
+
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, literal.identifier.position,
+                        &format!("Not all fields are specified, [{}] are missing", not_specified)
+                    ));
+                }
+
                 // Need to traverse fields expressions in struct
                 let old_num_exprs = self.expression_buffer.len();
                 self.expression_buffer.extend(literal.fields.iter().map(|v| v.value));
                 let new_num_exprs = self.expression_buffer.len();
+
+                for expr_idx in old_num_exprs..new_num_exprs {
+                    let expr_id = self.expression_buffer[expr_idx];
+                    self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
+                    self.visit_expr(ctx, expr_id)
+                }
 
                 self.expression_buffer.truncate(old_num_exprs);
             }
@@ -794,31 +867,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     ("called", TypeClass::Function)
                 };
 
-                let found_symbol = self.find_symbol_of_type(
-                    ctx.module.root_id, &ctx.symbols, &ctx.types,
+                let definition = self.find_symbol_of_type(
+                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types,
                     &symbolic.identifier, expected_type
-                );
-                let definition_id = match found_symbol {
-                    FindOfTypeResult::Found(definition_id) => definition_id,
-                    FindOfTypeResult::TypeMismatch(got_type_class) => {
-                        return Err(ParseError2::new_error(
-                            &ctx.module.source, symbolic.identifier.position,
-                            &format!(
-                                "Only {}s can be {}, this identifier points to a {}",
-                                expected_type, verb, got_type_class
-                            )
-                        ))
-                    },
-                    FindOfTypeResult::NotFound => {
-                        return Err(ParseError2::new_error(
-                            &ctx.module.source, symbolic.identifier.position,
-                            &format!("Could not find a {} with this name", expected_type)
-                        ))
-                    }
-                };
+                )?;
 
-                symbolic.definition = Some(definition_id);
-                match &ctx.types.get_base_definition(&definition_id).unwrap().definition {
+                symbolic.definition = Some(definition.ast_definition);
+                match definition {
                     DefinedTypeVariant::Function(definition) => {
                         num_definition_args = definition.arguments.len();
                     },
@@ -895,15 +950,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             }
         }
     }
-}
-
-enum FindOfTypeResult {
-    // Identifier was exactly matched, type matched as well
-    Found(DefinitionId),
-    // Identifier was matched, but the type differs from the expected one
-    TypeMismatch(&'static str),
-    // Identifier could not be found
-    NotFound,
 }
 
 impl ValidityAndLinkerVisitor {
@@ -1343,32 +1389,26 @@ impl ValidityAndLinkerVisitor {
     /// a definition of a particular type.
     // Note: root_id, symbols and types passed in explicitly to prevent
     //  borrowing errors
-    fn find_symbol_of_type(
-        &self, root_id: RootId, symbols: &SymbolTable, types: &TypeTable,
+    fn find_symbol_of_type<'a>(
+        &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable, types: &'a TypeTable,
         identifier: &NamespacedIdentifier, expected_type_class: TypeClass
-    ) -> FindOfTypeResult {
+    ) -> Result<&'a DefinedType, ParseError2> {
         // Find symbol associated with identifier
-        let symbol = symbols.resolve_namespaced_symbol(root_id, &identifier);
-        if symbol.is_none() { return FindOfTypeResult::NotFound; }
+        let find_result = find_type_definition(symbols, types, root_id, identifier)
+            .as_parse_error(source)?;
 
-        let (symbol, iter) = symbol.unwrap();
-        if iter.num_remaining() != 0 { return FindOfTypeResult::NotFound; }
-
-        match &symbol.symbol {
-            Symbol::Definition((_, definition_id)) => {
-                // Make sure definition is of the expected type
-                let definition_type = types.get_base_definition(&definition_id);
-                debug_assert!(definition_type.is_some(), "Found symbol '{}' in symbol table, but not in type table", String::from_utf8_lossy(&identifier.value));
-                let definition_type_class = definition_type.unwrap().definition.type_class();
-
-                if definition_type_class != expected_type_class {
-                    FindOfTypeResult::TypeMismatch(definition_type_class.display_name())
-                } else {
-                    FindOfTypeResult::Found(*definition_id)
-                }
-            },
-            Symbol::Namespace(_) => FindOfTypeResult::TypeMismatch("namespace"),
+        let definition_type_class = find_result.definition.type_class();
+        if expected_type_class != definition_type_class {
+            return Err(ParseError2::new_error(
+                source, identifier.position,
+                &format!(
+                    "Expected to find a {}, this symbol points to a {}",
+                    expected_type_class, definition_type_class
+                )
+            ))
         }
+
+        Ok(find_result)
     }
 
     /// This function will check if the provided while statement ID has a block
@@ -1526,6 +1566,44 @@ impl ValidityAndLinkerVisitor {
                     num_expected_poly_args, call_expr.poly_args.len()
                 )
             ));
+        }
+    }
+
+    fn visit_literal_poly_args(&mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId) -> VisitorResult {
+        let literal_expr = &ctx.heap[lit_id];
+        let (num_specified_poly_ags, num_expected_poly_args) = match &literal_expr.value {
+            Literal::Null | Literal::False | Literal::True |
+            Literal::Character(_) | Literal::Integer(_) => {
+                // Not really an error, but a programmer error as we're likely
+                // doing work twice
+                debug_assert!(false, "called visit_literal_poly_args on a non-polymorphic literal");
+                unreachable!();
+            },
+            Literal::Struct(literal) => {
+                let definition = &ctx.heap[literal.definition.unwrap()];
+                let num_expected = match definition {
+                    Definition::Struct(definition) => definition.poly_vars.len(),
+                    _ => {
+                        debug_assert!(false, "expected struct literal while visiting literal poly args");
+                        unreachable!();
+                    }
+                };
+
+                (literal.poly_args.len(), num_expected)
+            }
+        };
+
+        if num_specified_poly_ags == 0 {
+            if num_expected_poly_args != 0 {
+                let pos = literal_expr.position;
+                for _ in 0..num_expected_poly_args {
+                    self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
+                        this, pos, variant: ParserTypeVariant::Inferred
+                    }));
+                }
+
+                let literal_expr = match &mut
+            }
         }
     }
 }

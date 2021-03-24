@@ -157,6 +157,13 @@ impl DefinedTypeVariant {
             DefinedTypeVariant::Component(_) => TypeClass::Component
         }
     }
+
+    pub(crate) fn as_struct(&self) -> &StructType {
+        match self {
+            DefinedTypeVariant::Struct(v) => v,
+            _ => unreachable!("Cannot convert {} to struct variant", self.type_class())
+        }
+    }
 }
 
 /// `EnumType` is the classical C/C++ enum type. It has various variants with
@@ -190,12 +197,12 @@ pub struct UnionVariant {
 }
 
 pub struct StructType {
-    fields: Vec<StructField>,
+    pub(crate) fields: Vec<StructField>,
 }
 
 pub struct StructField {
-    identifier: Identifier,
-    parser_type: ParserTypeId,
+    pub(crate) identifier: Identifier,
+    pub(crate) parser_type: ParserTypeId,
 }
 
 pub struct FunctionType {
