@@ -1715,10 +1715,8 @@ impl TypeResolvingVisitor {
 
         // All elements should have an equal type
         let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
-        let mut any_progress = false;
         for (progress_arg, arg_id) in progress.iter().zip(expr_elements.iter()) {
             if *progress_arg {
-                any_progress = true;
                 self.queue_expr(*arg_id);
             }
         }
@@ -1750,11 +1748,20 @@ impl TypeResolvingVisitor {
     fn progress_constant_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError2> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
-        let template = match &expr.value {
-            Literal::Null => &MESSAGE_TEMPLATE[..],
-            Literal::Integer(_) => &INTEGERLIKE_TEMPLATE[..],
-            Literal::True | Literal::False => &BOOL_TEMPLATE[..],
-            Literal::Character(_) => todo!("character literals")
+        let progress_expr = match &expr.value {
+            Literal::Null => {
+                self.apply_forced_constraint(ctx, upcast_id, &MESSAGE_TEMPLATE)?
+            },
+            Literal::Integer(_) => {
+                self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?
+            },
+            Literal::True | Literal::False => {
+                self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?
+            },
+            Literal::Character(_) => todo!("character literals"),
+            Literal::Struct(data) => {
+
+            }
         };
 
         let progress = self.apply_forced_constraint(ctx, upcast_id, template)?;
@@ -1982,7 +1989,7 @@ impl TypeResolvingVisitor {
                 // Only perform one-way inference to prevent updating our type, this
                 // would lead to an inconsistency
                 let var_type: *mut _ = &mut var_data.var_type;
-                let mut link_data = self.var_types.get_mut(&linked_id).unwrap();
+                let link_data = self.var_types.get_mut(&linked_id).unwrap();
 
                 debug_assert!(
                     unsafe{&*var_type}.parts[0] == InferenceTypePart::Input ||
@@ -2369,6 +2376,7 @@ impl TypeResolvingVisitor {
 
                 match definition {
                     Definition::Component(definition) => {
+                        debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
                         for param_id in definition.parameters.clone() {
                             let param = &ctx.heap[param_id];
@@ -2379,6 +2387,7 @@ impl TypeResolvingVisitor {
                         (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Void]))
                     },
                     Definition::Function(definition) => {
+                        debug_assert!(poly_vars.len(), definition.poly_vars.len());
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
                         for param_id in definition.parameters.clone() {
                             let param = &ctx.heap[param_id];
@@ -2401,6 +2410,30 @@ impl TypeResolvingVisitor {
             embedded: embedded_types,
             returned: return_type
         });
+    }
+
+    fn insert_initial_struct_polymorph_data(
+        &mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId,
+    ) {
+        let literal = ctx.heap[lit_id].value.as_struct();
+
+        // Handle polymorphic arguments
+        let mut poly_vars = Vec::with_capacity(literal.poly_args.len());
+        for poly_arg_type_id in literal.poly_args.clone() { // TODO: @performance
+            poly_vars.push(self.determine_inference_type_from_parser_type(ctx, *poly_arg_type_id, true))
+        }
+
+        // Handle parser types on struct definition
+        let definition = &ctx.heap[literal.definition.unwrap()];
+        match definition {
+            Definition::Struct(definition) => {
+                debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
+
+            },
+            _ => unreachable!("definition for struct literal does not point to struct definition")
+        }
+
+        // TODO: Continue here!!!
     }
 
     /// Determines the initial InferenceType from the provided ParserType. This

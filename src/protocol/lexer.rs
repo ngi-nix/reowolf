@@ -279,8 +279,6 @@ impl Lexer<'_> {
                 if self.consume_whitespace(false).is_err() { return false; }
             }
         }
-
-        true
     }
     fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError2> {
         if !self.has_identifier() {
@@ -684,7 +682,7 @@ impl Lexer<'_> {
         let backup_pos = self.source.pos();
         match self.consume_comma_separated(
             h, b'<', b'>', "Expected the end of the polymorphic variable list",
-            |lexer, heap| lexer.consume_identifier()
+            |lexer, _heap| lexer.consume_identifier()
         )? {
             Some(poly_vars) => Ok(poly_vars),
             None => {
@@ -2341,7 +2339,7 @@ impl Lexer<'_> {
             if Some(b'{') == next {
                 let symbols = match self.consume_comma_separated(
                     h, b'{', b'}', "Expected end of import list",
-                    |lexer, heap| {
+                    |lexer, _heap| {
                         // Symbol name
                         let position = lexer.source.pos();
                         let name = lexer.consume_ident()?;

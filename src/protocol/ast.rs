@@ -620,6 +620,18 @@ pub struct Identifier {
     pub value: Vec<u8>
 }
 
+impl PartialEq for Identifier {
+    fn eq(&self, other: &Self) -> bool {
+        return self.value == other.value
+    }
+}
+
+impl PartialEq<NamespacedIdentifier> for Identifier {
+    fn eq(&self, other: &NamespacedIdentifier) -> bool {
+        return self.value == other.value
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NamespacedIdentifier {
     pub position: InputPosition,
@@ -643,7 +655,12 @@ impl PartialEq for NamespacedIdentifier {
         return self.value == other.value
     }
 }
-impl Eq for NamespacedIdentifier{}
+
+impl PartialEq<Identifier> for NamespacedIdentifier {
+    fn eq(&self, other: &Identifier) -> bool {
+        return self.value == other.value;
+    }
+}
 
 // TODO: Just keep ref to NamespacedIdentifier
 pub(crate) struct NamespacedIdentifierIter<'a> {
@@ -950,6 +967,24 @@ pub enum Literal {
     Struct(LiteralStruct),
 }
 
+impl Literal {
+    pub(crate) fn as_struct(&self) -> &LiteralStruct {
+        if let Literal::Struct(literal) = self{
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
+        }
+    }
+
+    pub(crate) fn as_struct_mut(&mut self) -> &mut LiteralStruct {
+        if let Literal::Struct(literal) = self{
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiteralStructField {
     // Phase 1: parser
@@ -1227,7 +1262,7 @@ impl VariableScope for Definition {
     fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         for &parameter_id in self.parameters().iter() {
             let parameter = &h[parameter_id];
-            if parameter.identifier.value == id.value {
+            if parameter.identifier == *id {
                 return Some(parameter_id.0);
             }
         }
@@ -1607,7 +1642,7 @@ impl VariableScope for BlockStatement {
     fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
         for local_id in self.locals.iter() {
             let local = &h[*local_id];
-            if local.identifier.value == id.value {
+            if local.identifier == *id {
                 return Some(local_id.0);
             }
         }

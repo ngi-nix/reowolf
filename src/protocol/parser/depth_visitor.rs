@@ -55,7 +55,7 @@ pub(crate) trait Visitor: Sized {
     fn visit_local_statement(&mut self, h: &mut Heap, stmt: LocalStatementId) -> VisitorResult {
         recursive_local_statement(self, h, stmt)
     }
-    fn visit_memory_statement(&mut self, h: &mut Heap, stmt: MemoryStatementId) -> VisitorResult {
+    fn visit_memory_statement(&mut self, _h: &mut Heap, _stmt: MemoryStatementId) -> VisitorResult {
         Ok(())
     }
     fn visit_channel_statement(
@@ -1033,7 +1033,7 @@ impl ResolveLabels {
                 if other_stmt == stmt {
                     continue;
                 } else {
-                    if h[other_stmt].label.value == h[stmt].label.value {
+                    if h[other_stmt].label == h[stmt].label {
                         return Err((h[stmt].position, "Duplicate label".to_string()));
                     }
                 }
@@ -1064,7 +1064,7 @@ impl ResolveLabels {
             // It does not matter in what order we find the labels.
             // If there are duplicates: that is checked elsewhere.
             for &stmt in h[block].labels.iter() {
-                if h[stmt].label.value == id.value {
+                if h[stmt].label == *id {
                     return Some(stmt);
                 }
             }

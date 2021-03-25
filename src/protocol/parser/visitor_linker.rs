@@ -733,7 +733,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     for (def_field_idx, def_field) in definition.fields.iter().enumerate() {
                         if field.identifier == def_field.identifier {
                             field.field_idx = def_field_idx;
-                            num_found += 1;
                             break;
                         }
                     }
@@ -741,7 +740,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     // Check if not found
                     if field.field_idx == FIELD_NOT_FOUND_SENTINEL {
                         return Err(ParseError2::new_error(
-                            &ctx.module.source, field.identifier.position(),
+                            &ctx.module.source, field.identifier.position,
                             &format!(
                                 "This field does not exist on the struct '{}'",
                                 &String::from_utf8_lossy(&literal.identifier.value),
@@ -752,7 +751,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     // Check if specified more than once
                     if specified[field.field_idx] {
                         return Err(ParseError2::new_error(
-                            &ctx.module.source, field.identifier.position(),
+                            &ctx.module.source, field.identifier.position,
                             "This field is specified more than once"
                         ));
                     }
@@ -777,15 +776,18 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     ));
                 }
 
-                // Need to traverse fields expressions in struct
+                // Need to traverse fields expressions in struct and evaluate
+                // the poly args
                 let old_num_exprs = self.expression_buffer.len();
                 self.expression_buffer.extend(literal.fields.iter().map(|v| v.value));
                 let new_num_exprs = self.expression_buffer.len();
 
+                self.visit_literal_poly_args(ctx, id)?;
+
                 for expr_idx in old_num_exprs..new_num_exprs {
                     let expr_id = self.expression_buffer[expr_idx];
                     self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
-                    self.visit_expr(ctx, expr_id)
+                    self.visit_expr(ctx, expr_id);
                 }
 
                 self.expression_buffer.truncate(old_num_exprs);
@@ -858,13 +860,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 num_definition_args = 2;
             }
             Method::Symbolic(symbolic) => {
-                // Find symbolic method
-                let (verb, expected_type) = if let ExpressionParent::New(_) = self.expr_parent {
+                // Find symbolic procedure
+                let expected_type = if let ExpressionParent::New(_) = self.expr_parent {
                     // Expect to find a component
-                    ("instantiated", TypeClass::Component)
+                    TypeClass::Component
                 } else {
                     // Expect to find a function
-                    ("called", TypeClass::Function)
+                    TypeClass::Function
                 };
 
                 let definition = self.find_symbol_of_type(
@@ -873,7 +875,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 )?;
 
                 symbolic.definition = Some(definition.ast_definition);
-                match definition {
+                match &definition.definition {
                     DefinedTypeVariant::Function(definition) => {
                         num_definition_args = definition.arguments.len();
                     },
@@ -1074,7 +1076,7 @@ impl ValidityAndLinkerVisitor {
 
                     let mut symbolic_variant = None;
                     for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
-                        if symbolic.identifier.value == poly_var.value {
+                        if symbolic.identifier == *poly_var {
                             // Type refers to a polymorphic variable.
                             // TODO: @hkt Maybe allow higher-kinded types?
                             if !symbolic.poly_args.is_empty() {
@@ -1095,7 +1097,6 @@ impl ValidityAndLinkerVisitor {
                         let found_type = find_type_definition(
                             &ctx.symbols, &ctx.types, ctx.module.root_id, &symbolic.identifier
                         ).as_parse_error(&ctx.module.source)?;
-                        symbolic_variant = Some(SymbolicParserTypeVariant::Definition(found_type.ast_definition));
 
                         // TODO: @function_ptrs: Allow function pointers at some
                         //  point in the future
@@ -1212,7 +1213,7 @@ impl ValidityAndLinkerVisitor {
                 // in which the current variable resides.
                 if local.this != *other_local_id &&
                     local_relative_pos >= other_local.relative_pos_in_block &&
-                    local.identifier.value == other_local.identifier.value {
+                    local.identifier == other_local.identifier {
                     // Collision within this scope
                     return Err(
                         ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
@@ -1228,7 +1229,7 @@ impl ValidityAndLinkerVisitor {
                 // At outer scope, check parameters of function/component
                 for parameter_id in ctx.heap[*definition_id].parameters() {
                     let parameter = &ctx.heap[*parameter_id];
-                    if local.identifier.value == parameter.identifier.value {
+                    if local.identifier == parameter.identifier {
                         return Err(
                             ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with parameter")
                                 .with_postfixed_info(&ctx.module.source, parameter.position, "Parameter definition is found here")
@@ -1273,7 +1274,7 @@ impl ValidityAndLinkerVisitor {
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
                 
-                if local.relative_pos_in_block < relative_pos && local.identifier.value == identifier.value {
+                if local.relative_pos_in_block < relative_pos && local.identifier == *identifier {
                     return Ok(local_id.upcast());
                 }
             }
@@ -1287,7 +1288,7 @@ impl ValidityAndLinkerVisitor {
                         let definition = &ctx.heap[*definition_id];
                         for parameter_id in definition.parameters() {
                             let parameter = &ctx.heap[*parameter_id];
-                            if parameter.identifier.value == identifier.value {
+                            if parameter.identifier == *identifier {
                                 return Ok(parameter_id.upcast());
                             }
                         }
@@ -1320,7 +1321,7 @@ impl ValidityAndLinkerVisitor {
             let block = &ctx.heap[scope.to_block()];
             for other_label_id in &block.labels {
                 let other_label = &ctx.heap[*other_label_id];
-                if other_label.label.value == label.label.value {
+                if other_label.label == label.label {
                     // Collision
                     return Err(
                         ParseError2::new_error(&ctx.module.source, label.position, "Label name conflicts with another label")
@@ -1357,7 +1358,7 @@ impl ValidityAndLinkerVisitor {
             let block = &ctx.heap[scope.to_block()];
             for label_id in &block.labels {
                 let label = &ctx.heap[*label_id];
-                if label.label.value == identifier.value {
+                if label.label == *identifier {
                     for local_id in &block.locals {
                         // TODO: Better to do this in control flow analysis, it
                         //  is legal to skip over a variable declaration if it
@@ -1495,6 +1496,7 @@ impl ValidityAndLinkerVisitor {
         Ok(target)
     }
 
+    // TODO: @cleanup, merge with function below
     fn visit_call_poly_args(&mut self, ctx: &mut Ctx, call_id: CallExpressionId) -> VisitorResult {
         let call_expr = &ctx.heap[call_id];
 
@@ -1571,7 +1573,8 @@ impl ValidityAndLinkerVisitor {
 
     fn visit_literal_poly_args(&mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId) -> VisitorResult {
         let literal_expr = &ctx.heap[lit_id];
-        let (num_specified_poly_ags, num_expected_poly_args) = match &literal_expr.value {
+        let literal_pos = literal_expr.position;
+        let (num_specified, num_expected) = match &literal_expr.value {
             Literal::Null | Literal::False | Literal::True |
             Literal::Character(_) | Literal::Integer(_) => {
                 // Not really an error, but a programmer error as we're likely
@@ -1588,22 +1591,52 @@ impl ValidityAndLinkerVisitor {
                         unreachable!();
                     }
                 };
+                let num_specified = literal.poly_args.len();
 
-                (literal.poly_args.len(), num_expected)
+                // Visit all embedded parser types (they might not be of the
+                // correct length, but we check this below)
+                let old_num_types = self.parser_type_buffer.len();
+                self.parser_type_buffer.extend(&literal.poly_args);
+                while self.parser_type_buffer.len() > old_num_types {
+                    let parser_type_id = self.parser_type_buffer.pop().unwrap();
+                    self.visit_parser_type(ctx, parser_type_id)?;
+                }
+                self.parser_type_buffer.truncate(old_num_types);
+
+                (num_specified, num_expected)
             }
         };
 
-        if num_specified_poly_ags == 0 {
-            if num_expected_poly_args != 0 {
-                let pos = literal_expr.position;
-                for _ in 0..num_expected_poly_args {
+        if num_specified == 0 {
+            // None are specified
+            if num_expected != 0 {
+                // So assumed to all be inferred
+                for _ in 0..num_expected {
                     self.parser_type_buffer.push(ctx.heap.alloc_parser_type(|this| ParserType{
-                        this, pos, variant: ParserTypeVariant::Inferred
+                        this, pos: literal_pos, variant: ParserTypeVariant::Inferred
                     }));
                 }
 
-                let literal_expr = match &mut
+                let literal = match &mut ctx.heap[lit_id].value {
+                    Literal::Struct(literal) => literal,
+                    _ => unreachable!(),
+                };
+                literal.poly_args.reserve(num_expected);
+                for _ in 0..num_expected {
+                    literal.poly_args.push(self.parser_type_buffer.pop().unwrap());
+                }
             }
+        } else if num_specified != num_expected {
+            // Incorrect specification of poly args
+            return Err(ParseError2::new_error(
+                &ctx.module.source, literal_pos,
+                &format!(
+                    "Expected {} polymorphic arguments (or none, to infer them), but {} were specified",
+                    num_expected, num_specified
+                )
+            ))
         }
+
+        Ok(())
     }
 }

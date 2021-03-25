@@ -621,8 +621,29 @@ impl ASTWriter {
                     Literal::Null => { val.with_s_val("null"); },
                     Literal::True => { val.with_s_val("true"); },
                     Literal::False => { val.with_s_val("false"); },
-                    Literal::Character(char) => { val.with_ascii_val(char); },
-                    Literal::Integer(int) => { val.with_disp_val(int); },
+                    Literal::Character(data) => { val.with_ascii_val(data); },
+                    Literal::Integer(data) => { val.with_disp_val(data); },
+                    Literal::Struct(data) => {
+                        val.with_s_val("Struct");
+                        let indent4 = indent3 + 1;
+
+                        // Polymorphic arguments
+                        if !data.poly_args.is_empty() {
+                            self.kv(indent3).with_s_key("PolymorphicArguments");
+                            for poly_arg in &data.poly_args {
+                                self.kv(indent4).with_s_key("Argument")
+                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
+                            }
+                        }
+
+                        for field in &data.fields {
+                            self.kv(indent3).with_s_key("Field");
+                            self.kv(indent4).with_s_key("Name").with_ascii_val(&field.identifier.value);
+                            self.kv(indent4).with_s_key("Index").with_disp_val(&field.field_idx);
+                            self.kv(indent4).with_s_key("ParserType");
+                            self.write_expr(heap, field.value, indent4 + 1);
+                        }
+                    }
                 }
 
                 self.kv(indent2).with_s_key("Parent")
@@ -646,6 +667,15 @@ impl ASTWriter {
                         self.kv(indent3).with_s_key("Name").with_ascii_val(&symbolic.identifier.value);
                         self.kv(indent3).with_s_key("Definition")
                             .with_opt_disp_val(symbolic.definition.as_ref().map(|v| &v.index));
+                    }
+                }
+
+                // Polymorphic arguments
+                if !expr.poly_args.is_empty() {
+                    self.kv(indent2).with_s_key("PolymorphicArguments");
+                    for poly_arg in &expr.poly_args {
+                        self.kv(indent3).with_s_key("Argument")
+                            .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
                     }
                 }
 

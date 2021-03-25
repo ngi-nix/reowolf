@@ -846,7 +846,7 @@ impl TypeTable {
                     // polymorphic arguments. If so then we can halt the
                     // execution
                     for (poly_arg_idx, poly_arg) in poly_vars.iter().enumerate() {
-                        if poly_arg.value == symbolic.identifier.value {
+                        if *poly_arg == symbolic.identifier {
                             set_resolve_result(ResolveResult::PolyArg(poly_arg_idx));
                             continue 'resolve_loop;
                         }
@@ -990,7 +990,7 @@ impl TypeTable {
                 },
                 PTV::Symbolic(symbolic) => {
                     for (poly_arg_idx, poly_arg) in poly_args.iter_mut().enumerate() {
-                        if poly_arg.identifier.value == symbolic.identifier.value {
+                        if poly_arg.identifier == symbolic.identifier {
                             poly_arg.is_in_use = true;
                             // TODO: If we allow higher-kinded types in the future,
                             //  then we can't continue here, but must resolve the
@@ -1061,7 +1061,7 @@ impl TypeTable {
             let item_ident = getter(item);
             for other_item in &items[0..item_idx] {
                 let other_item_ident = getter(other_item);
-                if item_ident.value == other_item_ident.value {
+                if item_ident == other_item_ident {
                     let module_source = &ctx.modules[root_id.index as usize].source;
                     return Err(ParseError2::new_error(
                         module_source, item_ident.position, &format!("This {} is defined more than once", item_name)
@@ -1085,7 +1085,7 @@ impl TypeTable {
         // identifiers conflict with any imported scopes
         for (arg_idx, poly_arg) in poly_args.iter().enumerate() {
             for other_poly_arg in &poly_args[..arg_idx] {
-                if poly_arg.value == other_poly_arg.value {
+                if poly_arg == other_poly_arg {
                     let module_source = &ctx.modules[root_id.index as usize].source;
                     return Err(ParseError2::new_error(
                         module_source, poly_arg.position,
