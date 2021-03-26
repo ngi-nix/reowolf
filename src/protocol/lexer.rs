@@ -419,7 +419,7 @@ impl Lexer<'_> {
         let mut ns_ident = self.consume_ident()?;
         let mut num_namespaces = 1;
         while self.has_string(b"::") {
-            self.consume_string(b"::");
+            self.consume_string(b"::")?;
             if num_namespaces >= MAX_NAMESPACES {
                 return Err(self.error_at_pos("Too many namespaces in identifier"));
             }

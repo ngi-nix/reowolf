@@ -28,6 +28,12 @@
 ///
 /// TODO: Needs an optimization pass
 /// TODO: Needs a cleanup pass
+///     slightly more specific: initially it seemed that expressions just need 
+///     to apply constraints between their expression types and the expression
+///     types of the arguments. But it seems to appear more-and-more that the 
+///     expressions may need their own little datastructures. Using some kind of
+///     scratch allocator and proper considerations for dependencies might lead 
+///     to a much more efficient algorithm
 /// TODO: Disallow `Void` types in various expressions (and other future types)
 /// TODO: Maybe remove msg type?
 
@@ -55,8 +61,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
-use super::type_table::*;
-use super::symbol_table::*;
+use crate::protocol::parser::type_table::*;
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
@@ -65,7 +70,6 @@ use super::visitor::{
     VisitorResult
 };
 use std::collections::hash_map::Entry;
-use crate::protocol::parser::type_resolver::InferenceTypePart::IntegerLike;
 
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::Byte ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
@@ -73,7 +77,6 @@ const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberL
 const INTEGERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::IntegerLike ];
 const ARRAY_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Array, InferenceTypePart::Unknown ];
 const ARRAYLIKE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::ArrayLike, InferenceTypePart::Unknown ];
-const PORTLIKE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::PortLike, InferenceTypePart::Unknown ];
 
 /// TODO: @performance Turn into PartialOrd+Ord to simplify checks
 /// TODO: @types Remove the Message -> Byte hack at some point...
@@ -84,6 +87,7 @@ pub(crate) enum InferenceTypePart {
     // polymorphs: an expression may determine the polymorphs type, after we
     // need to apply that information to all other places where the polymorph is
     // used.
+    // TODO: @rename to something appropriate, I keep confusing myself...
     MarkerDefinition(usize), // marker for polymorph types on a procedure's definition
     MarkerBody(usize), // marker for polymorph types within a procedure body
     // Completely unknown type, needs to be inferred
@@ -239,6 +243,8 @@ struct InferenceType {
 }
 
 impl InferenceType {
+    /// Generates a new InferenceType. The two boolean flags will be checked in
+    /// debug mode.
     fn new(has_body_marker: bool, is_done: bool, parts: Vec<InferenceTypePart>) -> Self {
         if cfg!(debug_assertions) {
             debug_assert!(!parts.is_empty());
@@ -254,8 +260,10 @@ impl InferenceType {
         Self{ has_body_marker: has_body_marker, is_done, parts }
     }
 
+    /// Replaces a type subtree with the provided subtree. The caller must make
+    /// sure the the replacement is a well formed type subtree.
     fn replace_subtree(&mut self, start_idx: usize, with: &[InferenceTypePart]) {
-         let end_idx = Self::find_subtree_end_idx(&self.parts, start_idx);
+        let end_idx = Self::find_subtree_end_idx(&self.parts, start_idx);
         debug_assert_eq!(with.len(), Self::find_subtree_end_idx(with, 0));
         self.parts.splice(start_idx..end_idx, with.iter().cloned());
         self.recompute_is_done();
@@ -270,25 +278,6 @@ impl InferenceType {
     /// follows those markers.
     fn body_marker_iter(&self) -> InferenceTypeMarkerIter {
         InferenceTypeMarkerIter::new(&self.parts)
-    }
-
-    /// Attempts to find a specific type part appearing at or after the
-    /// specified index. If found then the partial type tree's bounding indices
-    /// that follow that marker are returned.
-    fn find_subtree_idx_for_part(&self, part: InferenceTypePart, mut idx: usize) -> Option<(usize, usize)> {
-        debug_assert!(part.depth_change() >= 0, "cannot find subtree for leaf part");
-        while idx < self.parts.len() {
-            if part == self.parts[idx] {
-                // Found the specified part
-                let start_idx = idx + 1;
-                let end_idx = Self::find_subtree_end_idx(&self.parts, start_idx);
-                return Some((start_idx, end_idx))
-            }
-
-            idx += 1;
-        }
-
-        None
     }
 
     /// Given that the `parts` are a depth-first serialized tree of types, this
@@ -379,7 +368,7 @@ impl InferenceType {
                 *to_infer_idx..*to_infer_idx + erase_offset,
                 template_parts[*template_idx..template_end_idx].iter().cloned()
             );
-            *to_infer_idx += (template_end_idx - *template_idx);
+            *to_infer_idx += template_end_idx - *template_idx;
             *template_idx = template_end_idx;
 
             // Note: by definition the LHS was Unknown and the RHS traversed a 
@@ -433,8 +422,6 @@ impl InferenceType {
         type_a: *mut InferenceType, start_idx_a: usize,
         type_b: *mut InferenceType, start_idx_b: usize
     ) -> DualInferenceResult {
-        use InferenceTypePart as ITP;
-
         debug_assert!(!std::ptr::eq(type_a, type_b), "encountered pointers to the same inference type");
         let type_a = &mut *type_a;
         let type_b = &mut *type_b;
@@ -772,12 +759,6 @@ enum DualInferenceResult {
 }
 
 impl DualInferenceResult {
-    fn modified_any(&self) -> bool {
-        match self {
-            DualInferenceResult::First | DualInferenceResult::Second | DualInferenceResult::Both => true,
-            _ => false
-        }
-    }
     fn modified_lhs(&self) -> bool {
         match self {
             DualInferenceResult::First | DualInferenceResult::Both => true,
@@ -1200,7 +1181,29 @@ impl Visitor2 for TypeResolvingVisitor {
     fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
-        self.progress_constant_expr(ctx, id)
+
+        let literal_expr = &ctx.heap[id];
+        match &literal_expr.value {
+            Literal::Null | Literal::False | Literal::True |
+            Literal::Integer(_) | Literal::Character(_) => {
+                // No subexpressions
+            },
+            Literal::Struct(literal) => {
+                // TODO: @performance
+                let expr_ids: Vec<_> = literal.fields
+                    .iter()
+                    .map(|f| f.value)
+                    .collect();
+
+                self.insert_initial_struct_polymorph_data(ctx, id);
+
+                for expr_id in expr_ids {
+                    self.visit_expr(ctx, expr_id)?;
+                }
+            }
+        }
+
+        self.progress_literal_expr(ctx, id)
     }
 
     fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
@@ -1388,7 +1391,7 @@ impl TypeResolvingVisitor {
             },
             Expression::Literal(expr) => {
                 let id = expr.this;
-                self.progress_constant_expr(ctx, id)
+                self.progress_literal_expr(ctx, id)
             },
             Expression::Call(expr) => {
                 let id = expr.this;
@@ -1689,8 +1692,57 @@ impl TypeResolvingVisitor {
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
                 (progress_subject, progress_expr)
             },
-            Field::Symbolic(_field) => {
-                todo!("implement select expr for symbolic fields");
+            Field::Symbolic(field) => {
+                // Check if we already know the definition ID of the subject
+                let mut definition_and_field = None;
+                let subject_type = self.expr_types.get(&subject_id).unwrap();
+                'type_loop: for part in &subject_type.parts {
+                    if part.is_marker() || !part.is_concrete() { continue; }
+
+                    if let InferenceTypePart::Instance(definition_id, _) = part {
+                        // Make sure we're accessing a struct of some sort
+                        let definition_type = ctx.types.get_base_definition(definition_id).unwrap();
+                        if let DefinedTypeVariant::Struct(definition) = &definition_type.definition {
+                            // Make sure the struct has the specified field
+                            let mut field_found = false;
+                            for (def_field_idx, def_field) in definition.fields.iter().enumerate() {
+                                if def_field.identifier == *field {
+                                    definition_and_field = Some((*definition_id, def_field_idx));
+                                    break 'type_loop;
+                                }
+                            }
+
+                            // If here then field was not found
+                            if !field_found {
+                                let definition = &ctx.heap[*definition_id];
+                                return Err(ParseError2::new_error(
+                                    &ctx.module.source, field.position,
+                                    &format!(
+                                        "The field '{}' does not exist on the struct '{}'",
+                                        &String::from_utf8_lossy(&field.value),
+                                        &String::from_utf8_lossy(&definition.identifier().value)
+                                    )
+                                ))
+                            }
+                        }
+
+                        // Else, fall through and complain about not being a struct
+                    }
+                    
+                    // Concrete part that is not an instance of a struct,
+                    // select expression cannot possibly be correct
+                    return Err(ParseError2::new_error(
+                        &ctx.module.source, ctx.heap[subject_id].position(),
+                        &format!(
+                            "Expected to find a struct instance to access a field from, found a '{}'",
+                            subject_type.display_name(&ctx.heap)
+                        )
+                    ))
+                }
+
+                // If here then we have our definition and field idx
+                let (definition_id, field_idx) = definition_and_field.unwrap();
+                (false, false)
             }
         };
 
@@ -1745,9 +1797,14 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_constant_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError2> {
+    fn progress_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError2> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
+
+        debug_log!("Literal expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
         let progress_expr = match &expr.value {
             Literal::Null => {
                 self.apply_forced_constraint(ctx, upcast_id, &MESSAGE_TEMPLATE)?
@@ -1760,12 +1817,97 @@ impl TypeResolvingVisitor {
             },
             Literal::Character(_) => todo!("character literals"),
             Literal::Struct(data) => {
+                let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                let mut poly_progress = HashSet::new();
+                debug_assert_eq!(extra.embedded.len(), data.fields.len());
 
+                debug_log!(" * During (inferring types from fields and struct type):");
+
+                // Mutually infer field signature/expression types
+                for (field_idx, field) in data.fields.iter().enumerate() {
+                    let field_expr_id = field.value;
+                    let signature_type: *mut _ = &mut extra.embedded[field_idx];
+                    let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
+                    let (_, progress_arg) = Self::apply_equal2_signature_constraint(
+                        ctx, upcast_id, Some(field_expr_id), extra, &mut poly_progress,
+                        signature_type, 0, field_type, 0
+                    )?;
+
+                    debug_log!(
+                        "   - Field {} type | sig: {}, field: {}", field_idx,
+                        unsafe{&*signature_type}.display_name(&ctx.heap),
+                        unsafe{&*field_type}.display_name(&ctx.heap)
+                    );
+
+                    if progress_arg {
+                        self.expr_queued.insert(field_expr_id);
+                    }
+                }
+
+                // Same for the type of the struct itself
+                let signature_type: *mut _ = &mut extra.returned;
+                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let (_, progress_expr) = Self::apply_equal2_signature_constraint(
+                    ctx, upcast_id, None, extra, &mut poly_progress,
+                    signature_type, 0, expr_type, 0
+                )?;
+
+                debug_log!(
+                    "   - Ret type | sig: {}, expr: {}",
+                    unsafe{&*signature_type}.display_name(&ctx.heap),
+                    unsafe{&*expr_type}.display_name(&ctx.heap)
+                );
+
+                if progress_expr {
+                    // TODO: @cleanup, cannot call utility self.queue_parent thingo
+                    if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
+                        self.expr_queued.insert(parent_id);
+                    }
+                }
+
+                // Check which expressions use the polymorphic arguments. If the
+                // polymorphic variables have been progressed then we try to 
+                // progress them inside the expression as well.
+                debug_log!(" * During (reinferring from progressed polyvars):");
+
+                // For all field expressions
+                for field_idx in 0..extra.embedded.len() {
+                    debug_assert_eq!(field_idx, data.fields[field_idx].field_idx, "confusing, innit?");
+                    let signature_type: *mut _ = &mut extra.embedded[field_idx];
+                    let field_expr_id = data.fields[field_idx].value;
+                    let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
+
+                    let progress_arg = Self::apply_equal2_polyvar_constraint(
+                        extra, &poly_progress, signature_type, field_type
+                    );
+
+                    debug_log!(
+                        "   - Field {} type | sig: {}, field: {}", field_idx,
+                        unsafe{&*signature_type}.display_name(&ctx.heap),
+                        unsafe{&*field_type}.display_name(&ctx.heap)
+                    );
+                    if progress_arg {
+                        self.expr_queued.insert(field_expr_id);
+                    }
+                }
+                
+                // For the return type
+                let signature_type: *mut _ = &mut extra.returned;
+                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+
+                let progress_expr = Self::apply_equal2_polyvar_constraint(
+                    extra, &poly_progress, signature_type, expr_type
+                );
+
+                progress_expr
             }
         };
 
-        let progress = self.apply_forced_constraint(ctx, upcast_id, template)?;
-        if progress { self.queue_expr_parent(ctx, upcast_id); }
+        debug_log!(" * After:");
+        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
+        // TODO: FIX!!!!
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
         Ok(())
     }
@@ -1793,34 +1935,20 @@ impl TypeResolvingVisitor {
         // while keeping track of the polyvars we've extended
         let mut poly_progress = HashSet::new();
         debug_assert_eq!(extra.embedded.len(), expr.arguments.len());
-        let mut poly_infer_error = false;
 
         for (arg_idx, arg_id) in expr.arguments.clone().into_iter().enumerate() {
-            let signature_type = &mut extra.embedded[arg_idx];
+            let signature_type: *mut _ = &mut extra.embedded[arg_idx];
             let argument_type: *mut _ = self.expr_types.get_mut(&arg_id).unwrap();
-            let (progress_sig, progress_arg) = Self::apply_equal2_signature_constraint(
-                ctx, upcast_id, Some(arg_id), signature_type, 0, argument_type, 0
+            let (_, progress_arg) = Self::apply_equal2_signature_constraint(
+                ctx, upcast_id, Some(arg_id), extra, &mut poly_progress,
+                signature_type, 0, argument_type, 0
             )?;
 
-            debug_log!("   - Arg {} type | sig: {}, arg: {}", arg_idx, signature_type.display_name(&ctx.heap), unsafe{&*argument_type}.display_name(&ctx.heap));
+            debug_log!(
+                "   - Arg {} type | sig: {}, arg: {}", arg_idx,
+                unsafe{&*signature_type}.display_name(&ctx.heap), 
+                unsafe{&*argument_type}.display_name(&ctx.heap));
 
-            if progress_sig {
-                // Progressed signature, so also apply inference to the 
-                // polymorph types using the markers 
-                debug_assert!(signature_type.has_body_marker, "progress on signature argument type without markers");
-                for (poly_idx, poly_section) in signature_type.body_marker_iter() {
-                    let polymorph_type = &mut extra.poly_vars[poly_idx];
-                    match Self::apply_forced_constraint_types(
-                        polymorph_type, 0, poly_section, 0
-                    ) {
-                        Ok(true) => { poly_progress.insert(poly_idx); },
-                        Ok(false) => {},
-                        Err(()) => { poly_infer_error = true; }
-                    }
-
-                    debug_log!("   - Poly {} type | sig: {}, arg: {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
-                }
-            }
             if progress_arg {
                 // Progressed argument expression
                 self.expr_queued.insert(arg_id);
@@ -1828,109 +1956,67 @@ impl TypeResolvingVisitor {
         }
 
         // Do the same for the return type
-        let signature_type = &mut extra.returned;
+        let signature_type: *mut _ = &mut extra.returned;
         let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
-        let (progress_sig, progress_expr) = Self::apply_equal2_signature_constraint(
-            ctx, upcast_id, None, signature_type, 0, expr_type, 0
+        let (_, progress_expr) = Self::apply_equal2_signature_constraint(
+            ctx, upcast_id, None, extra, &mut poly_progress,
+            signature_type, 0, expr_type, 0
         )?;
 
-        debug_log!("   - Ret type | sig: {}, arg: {}", signature_type.display_name(&ctx.heap), unsafe{&*expr_type}.display_name(&ctx.heap));
+        debug_log!(
+            "   - Ret type | sig: {}, expr: {}", 
+            unsafe{&*signature_type}.display_name(&ctx.heap), 
+            unsafe{&*expr_type}.display_name(&ctx.heap)
+        );
 
-        if progress_sig {
-            // As above: apply inference to polyargs as well
-            debug_assert!(signature_type.has_body_marker, "progress on signature return type without markers");
-            for (poly_idx, poly_section) in signature_type.body_marker_iter() {
-                let polymorph_type = &mut extra.poly_vars[poly_idx];
-                match Self::apply_forced_constraint_types(
-                    polymorph_type, 0, poly_section, 0
-                ) {
-                    Ok(true) => { poly_progress.insert(poly_idx); },
-                    Ok(false) => {},
-                    Err(()) => { poly_infer_error = true; }
-                }
-                debug_log!("   - Poly {} type | sig: {}, arg: {}", poly_idx, polymorph_type.display_name(&ctx.heap), InferenceType::partial_display_name(&ctx.heap, poly_section));
-            }
-        }
         if progress_expr {
+            // TODO: @cleanup, cannot call utility self.queue_parent thingo
             if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
                 self.expr_queued.insert(parent_id);
             }
         }
 
-        // If we had an error in the polymorphic variable's inference, then we
-        // need to provide a human readable error: find a pair of inference
-        // types in the arguments/return type that do not agree on the
-        // polymorphic variable's type
-        if poly_infer_error { return Err(self.construct_poly_arg_error(ctx, id)) }
-
         // If we did not have an error in the polymorph inference above, then
         // reapplying the polymorph type to each argument type and the return
         // type should always succeed.
-        debug_log!(" * During (reinferring from progress polyvars):");
+        debug_log!(" * During (reinferring from progressed polyvars):");
         // TODO: @performance If the algorithm is changed to be more "on demand
         //  argument re-evaluation", instead of "all-argument re-evaluation",
         //  then this is no longer true
-        for poly_idx in poly_progress.into_iter() {
-            // For each polymorphic argument: first extend the signature type,
-            // then reapply the equal2 constraint to the expressions
-            let poly_type = &extra.poly_vars[poly_idx];
-            for (arg_idx, sig_type) in extra.embedded.iter_mut().enumerate() {
-                let mut seek_idx = 0;
-                let mut modified_sig = false;
-                while let Some((start_idx, end_idx)) = sig_type.find_subtree_idx_for_part(
-                    InferenceTypePart::MarkerBody(poly_idx), seek_idx
-                ) {
-                    let modified_at_marker = Self::apply_forced_constraint_types(
-                        sig_type, start_idx, &poly_type.parts, 0
-                    ).unwrap();
-                    modified_sig = modified_sig || modified_at_marker;
-                    seek_idx = end_idx;
-                }
-
-                if !modified_sig {
-                    debug_log!("   - Poly {} | Arg {} type | signature has not changed", poly_idx, arg_idx);
-                    continue;
-                }
-
-                // Part of signature was modified, so update expression used as
-                // argument as well
-                let arg_expr_id = expr.arguments[arg_idx];
-                let arg_type: *mut _ = self.expr_types.get_mut(&arg_expr_id).unwrap();
-                let (_, progress_arg) = Self::apply_equal2_signature_constraint(
-                    ctx, arg_expr_id, Some(arg_expr_id), sig_type, 0, arg_type, 0
-                ).expect("no inference error at argument type");
-                if progress_arg { self.expr_queued.insert(arg_expr_id); }
-                debug_log!("   - Poly {} | Arg {} type | sig: {}, arg: {}", poly_idx, arg_idx, sig_type.display_name(&ctx.heap), unsafe{&*arg_type}.display_name(&ctx.heap));
+        for arg_idx in 0..extra.embedded.len() {
+            let signature_type: *mut _ = &mut extra.embedded[arg_idx];
+            let arg_expr_id = expr.arguments[arg_idx];
+            let arg_type: *mut _ = self.expr_types.get_mut(&arg_expr_id).unwrap();
+            
+            let progress_arg = Self::apply_equal2_polyvar_constraint(
+                extra, &poly_progress,
+                signature_type, arg_type
+            );
+            
+            debug_log!(
+                "   - Arg {} type | sig: {}, arg: {}", arg_idx, 
+                unsafe{&*signature_type}.display_name(&ctx.heap), 
+                unsafe{&*arg_type}.display_name(&ctx.heap)
+            );
+            if progress_arg {
+                self.expr_queued.insert(arg_expr_id);
             }
+        }
 
-            // Again: do the same for the return type
-            let sig_type = &mut extra.returned;
-            let mut seek_idx = 0;
-            let mut modified_sig = false;
-            while let Some((start_idx, end_idx)) = sig_type.find_subtree_idx_for_part(
-                InferenceTypePart::MarkerBody(poly_idx), seek_idx
-            ) {
-                let modified_at_marker = Self::apply_forced_constraint_types(
-                    sig_type, start_idx, &poly_type.parts, 0
-                ).unwrap();
-                modified_sig = modified_sig || modified_at_marker;
-                seek_idx = end_idx;
-            }
+        // Once more for the return type
+        let signature_type: *mut _ = &mut extra.returned;
+        let ret_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-            if modified_sig {
-                let ret_type = self.expr_types.get_mut(&upcast_id).unwrap();
-                let (_, progress_ret) = Self::apply_equal2_signature_constraint(
-                    ctx, upcast_id, None, sig_type, 0, ret_type, 0
-                ).expect("no inference error at return type");
-                if progress_ret {
-                    if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        self.expr_queued.insert(parent_id);
-                    }
-                }
-                debug_log!("   - Poly {} | Ret type | sig: {}, arg: {}", poly_idx, sig_type.display_name(&ctx.heap), ret_type.display_name(&ctx.heap));
-            } else {
-                debug_log!("   - Poly {} | Ret type | signature has not changed", poly_idx);
-            }
+        let progress_ret = Self::apply_equal2_polyvar_constraint(
+            extra, &poly_progress, signature_type, ret_type
+        );
+        debug_log!(
+            "   - Ret type | sig: {}, arg: {}", 
+            unsafe{&*signature_type}.display_name(&ctx.heap), 
+            unsafe{&*ret_type}.display_name(&ctx.heap)
+        );
+        if progress_ret {
+            self.queue_expr_parent(ctx, upcast_id);
         }
 
         debug_log!(" * After:");
@@ -2105,12 +2191,26 @@ impl TypeResolvingVisitor {
         Ok((infer_res.modified_lhs(), infer_res.modified_rhs()))
     }
 
+    /// Applies an equal2 constraint between a signature type (e.g. a function
+    /// argument or struct field) and an expression whose type should match that
+    /// expression. If we make progress on the signature, then we try to see if
+    /// any of the embedded polymorphic types can be progressed.
+    ///
+    /// `outer_expr_id` is the main expression we're progressing (e.g. a 
+    /// function call), while `expr_id` is the embedded expression we're 
+    /// matching against the signature. `expression_type` and 
+    /// `expression_start_idx` belong to `expr_id`.
     fn apply_equal2_signature_constraint(
         ctx: &Ctx, outer_expr_id: ExpressionId, expr_id: Option<ExpressionId>,
+        polymorph_data: &mut ExtraData, polymorph_progress: &mut HashSet<usize>,
         signature_type: *mut InferenceType, signature_start_idx: usize,
         expression_type: *mut InferenceType, expression_start_idx: usize
     ) -> Result<(bool, bool), ParseError2> {
+        // Safety: cannot mutually infer the same types
+        //         polymorph_data containers may not be modified
         debug_assert_ptrs_distinct!(signature_type, expression_type);
+
+        // Infer the signature and expression type
         let infer_res = unsafe { 
             InferenceType::infer_subtrees_for_both_types(
                 signature_type, signature_start_idx,
@@ -2123,7 +2223,7 @@ impl TypeResolvingVisitor {
             let outer_position = ctx.heap[outer_expr_id].position();
             let (position_name, position) = match expr_id {
                 Some(expr_id) => ("argument's", ctx.heap[expr_id].position()),
-                None => ("return type's", outer_position)
+                None => ("type's", outer_position)
             };
             let (signature_display_type, expression_display_type) = unsafe { (
                 (&*signature_type).display_name(&ctx.heap),
@@ -2142,7 +2242,91 @@ impl TypeResolvingVisitor {
             ));
         }
 
-        Ok((infer_res.modified_lhs(), infer_res.modified_rhs()))
+        // Try to see if we can progress any of the polymorphic variables
+        let progress_sig = infer_res.modified_lhs();
+        let progress_expr = infer_res.modified_rhs();
+
+        if progress_sig {
+            let signature_type = unsafe{&mut *signature_type};
+            debug_assert!(
+                signature_type.has_body_marker, 
+                "made progress on signature type, but it doesn't have a marker"
+            );
+            for (poly_idx, poly_section) in signature_type.body_marker_iter() {
+                let polymorph_type = &mut polymorph_data.poly_vars[poly_idx];
+                match Self::apply_forced_constraint_types(
+                    polymorph_type, 0, poly_section, 0
+                ) {
+                    Ok(true) => { polymorph_progress.insert(poly_idx); },
+                    Ok(false) => {},
+                    Err(()) => { return Err(Self::construct_poly_arg_error(ctx, polymorph_data, outer_expr_id))}
+                }
+            }
+        }
+        Ok((progress_sig, progress_expr))
+    }
+
+    /// Applies equal2 constraints on the signature type for each of the 
+    /// polymorphic variables. If the signature type is progressed then we 
+    /// progress the expression type as well.
+    ///
+    /// This function assumes that the polymorphic variables have already been
+    /// progressed as far as possible by calling 
+    /// `apply_equal2_signature_constraint`. As such, we expect to not encounter
+    /// any errors.
+    ///
+    /// This function returns true if the expression's type has been progressed
+    fn apply_equal2_polyvar_constraint(
+        polymorph_data: &ExtraData, polymorph_progress: &HashSet<usize>,
+        signature_type: *mut InferenceType, expr_type: *mut InferenceType
+    ) -> bool {
+        // Safety: all pointers should be distinct
+        //         polymorph_data contains may not be modified
+        debug_assert_ptrs_distinct!(signature_type, expr_type);
+        let signature_type = unsafe{&mut *signature_type};
+        let expr_type = unsafe{&mut *expr_type};
+
+        // Iterate through markers in signature type to try and make progress
+        // on the polymorphic variable        
+        let mut seek_idx = 0;
+        let mut modified_sig = false;
+        
+        while seek_idx < signature_type.parts.len() {
+            if let InferenceTypePart::MarkerBody(poly_idx) = &signature_type.parts[seek_idx] {
+                let poly_idx = *poly_idx;
+                if polymorph_progress.contains(&poly_idx) {
+                    // Need to match subtrees
+                    let polymorph_type = &polymorph_data.poly_vars[poly_idx];
+                    let start_idx = seek_idx + 1;
+                    let end_idx = InferenceType::find_subtree_end_idx(&signature_type.parts, start_idx);
+                    let modified_at_marker = Self::apply_forced_constraint_types(
+                        signature_type, start_idx, 
+                        &polymorph_type.parts, 0
+                    ).expect("no failure when applying polyvar constraints");
+
+                    modified_sig = modified_sig || modified_at_marker;
+                    seek_idx = end_idx;
+                    continue;
+                }
+            }
+
+            seek_idx += 1;
+        }
+
+        // If we made any progress on the signature's type, then we also need to
+        // apply it to the expression that is supposed to match the signature.
+        if modified_sig {
+            match InferenceType::infer_subtree_for_single_type(
+                expr_type, 0, &signature_type.parts, 0
+            ) {
+                SingleInferenceResult::Modified => true,
+                SingleInferenceResult::Unmodified => false,
+                SingleInferenceResult::Incompatible =>
+                    unreachable!("encountered failure while reapplying modified signature to expression after polyvar inference")
+            }
+        } else {
+            false
+        }
     }
 
     /// Applies a type constraint that expects all three provided types to be
@@ -2387,7 +2571,7 @@ impl TypeResolvingVisitor {
                         (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Void]))
                     },
                     Definition::Function(definition) => {
-                        debug_assert!(poly_vars.len(), definition.poly_vars.len());
+                        debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
                         for param_id in definition.parameters.clone() {
                             let param = &ctx.heap[param_id];
@@ -2415,25 +2599,66 @@ impl TypeResolvingVisitor {
     fn insert_initial_struct_polymorph_data(
         &mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId,
     ) {
+        use InferenceTypePart as ITP;
         let literal = ctx.heap[lit_id].value.as_struct();
 
         // Handle polymorphic arguments
         let mut poly_vars = Vec::with_capacity(literal.poly_args.len());
+        let mut total_num_poly_parts = 0;
         for poly_arg_type_id in literal.poly_args.clone() { // TODO: @performance
-            poly_vars.push(self.determine_inference_type_from_parser_type(ctx, *poly_arg_type_id, true))
+            let inference_type = self.determine_inference_type_from_parser_type(
+                ctx, poly_arg_type_id, true
+            ); 
+            total_num_poly_parts += inference_type.parts.len();
+            poly_vars.push(inference_type);
         }
 
         // Handle parser types on struct definition
         let definition = &ctx.heap[literal.definition.unwrap()];
-        match definition {
+        let definition = match definition {
             Definition::Struct(definition) => {
                 debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
-
+                definition
             },
             _ => unreachable!("definition for struct literal does not point to struct definition")
+        };
+
+        // Note: programmer is capable of specifying fields in a struct literal
+        // in a different order than on the definition. We take the programmer-
+        // specified order to be leading.
+        let mut embedded_types = Vec::with_capacity(definition.fields.len());
+        for lit_field in literal.fields.iter() {
+            let def_field = &definition.fields[lit_field.field_idx];
+            let inference_type = self.determine_inference_type_from_parser_type(
+                ctx, def_field.parser_type, false
+            );
+            embedded_types.push(inference_type);
         }
 
-        // TODO: Continue here!!!
+        // Return type is the struct type itself, with the appropriate 
+        // polymorphic variables. So:
+        // - 1 part for definition
+        // - N_poly_arg marker parts for each polymorphic argument
+        // - all the parts for the currently known polymorphic arguments 
+        let parts_reserved = 1 + poly_vars.len() + total_num_poly_parts;
+        let mut parts = Vec::with_capacity(parts_reserved);
+        parts.push(ITP::Instance(definition.this.upcast(), poly_vars.len()));
+        let mut return_type_done = true;
+        for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+            if !poly_var.is_done { return_type_done = false; }
+
+            parts.push(ITP::MarkerBody(poly_var_idx));
+            parts.extend(poly_var.parts.iter().cloned());
+        }
+
+        debug_assert_eq!(parts.len(), parts_reserved);
+        let return_type = InferenceType::new(true, return_type_done, parts);
+
+        self.extra_data.insert(lit_id.upcast(), ExtraData{
+            poly_vars, 
+            embedded: embedded_types,
+            returned: return_type,
+        });
     }
 
     /// Determines the initial InferenceType from the provided ParserType. This
@@ -2621,15 +2846,17 @@ impl TypeResolvingVisitor {
     }
 
     /// Constructs a human interpretable error in the case that type inference
-    /// on a polymorphic variable to a function call failed. This may only be
-    /// caused by a pair of inference types (which may come from arguments or
-    /// the return type) having two different inferred values for that
-    /// polymorphic variable.
+    /// on a polymorphic variable to a function call or literal construction 
+    /// failed. This may only be caused by a pair of inference types (which may 
+    /// come from arguments or the return type) having two different inferred 
+    /// values for that polymorphic variable.
     ///
-    /// So we find this pair (which may be a argument type or return type
-    /// conflicting with itself) and construct the error using it.
+    /// So we find this pair and construct the error using it.
+    ///
+    /// We assume that the expression is a function call or a struct literal,
+    /// and that an actual error has occurred.
     fn construct_poly_arg_error(
-        &self, ctx: &Ctx, call_id: CallExpressionId
+        ctx: &Ctx, poly_data: &ExtraData, expr_id: ExpressionId
     ) -> ParseError2 {
         // Helper function to check for polymorph mismatch between two inference
         // types.
@@ -2655,7 +2882,7 @@ impl TypeResolvingVisitor {
             None
         }
 
-        // Helpers function to retrieve polyvar name and function name
+        // Helpers function to retrieve polyvar name and definition name
         fn get_poly_var_and_func_name(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> (String, String) {
             match &expr.method {
                 Method::Create => unreachable!(),
@@ -2679,29 +2906,75 @@ impl TypeResolvingVisitor {
             }
         }
 
+        fn get_poly_var_and_literal_name(ctx: &Ctx, poly_var_idx: usize, expr: &LiteralExpression) -> (String, String) {
+            let expr = expr.value.as_struct();
+            let definition = &ctx.heap[expr.definition.unwrap()];
+            match definition {
+                Definition::Enum(_) | Definition::Function(_) | Definition::Component(_) =>
+                    unreachable!(),
+                Definition::Struct(definition) => (
+                    String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string(),
+                    String::from_utf8_lossy(&definition.identifier.value).to_string()
+                ),
+            }
+        }
+
         // Helper function to construct initial error
-        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> ParseError2 {
-            let (poly_var, func_name) = get_poly_var_and_func_name(ctx, poly_var_idx, expr);
-            return ParseError2::new_error(
-                &ctx.module.source, expr.position(),
-                &format!(
-                    "Conflicting type for polymorphic variable '{}' of '{}'",
-                    poly_var, func_name
-                )
-            )
+        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &Expression) -> ParseError2 {
+            match expr {
+                Expression::Call(expr) => {
+                    let (poly_var, func_name) = get_poly_var_and_func_name(ctx, poly_var_idx, expr);
+                    return ParseError2::new_error(
+                        &ctx.module.source, expr.position(),
+                        &format!(
+                            "Conflicting type for polymorphic variable '{}' of '{}'",
+                            poly_var, func_name
+                        )
+                    )
+                },
+                Expression::Literal(expr) => {
+                    let (poly_var, struct_name) = get_poly_var_and_literal_name(ctx, poly_var_idx, expr);
+                    return ParseError2::new_error(
+                        &ctx.module.source, expr.position(),
+                        &format!(
+                            "Conflicting type for polymorphic variable '{}' of instantiation of '{}'",
+                            poly_var, struct_name
+                        )
+                    )
+                },
+                _ => unreachable!("called construct_poly_arg_error without a call/literal expression")
+            }
         }
 
         // Actual checking
-        let extra = self.extra_data.get(&call_id.upcast()).unwrap();
-        let expr = &ctx.heap[call_id];
+        let expr = &ctx.heap[expr_id];
+        let (expr_args, expr_return_name) = match expr {
+            Expression::Call(expr) => 
+                (
+                    expr.arguments.clone(),
+                    "return type"
+                ),
+            Expression::Literal(expr) => 
+                (
+                    expr.value.as_struct().fields
+                        .iter()
+                        .map(|f| f.value)
+                        .collect(),
+                    "literal"
+                ),
+            _ => unreachable!(),
+        };
 
         // - check return type with itself
-        if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(&extra.returned, &extra.returned) {
+        if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(
+            &poly_data.returned, &poly_data.returned
+        ) {
             return construct_main_error(ctx, poly_idx, expr)
                 .with_postfixed_info(
                     &ctx.module.source, expr.position(),
                     &format!(
-                        "The return type inferred the conflicting types '{}' and '{}'",
+                        "The {} inferred the conflicting types '{}' and '{}'",
+                        expr_return_name,
                         InferenceType::partial_display_name(&ctx.heap, section_a),
                         InferenceType::partial_display_name(&ctx.heap, section_b)
                     )
@@ -2709,8 +2982,8 @@ impl TypeResolvingVisitor {
         }
 
         // - check arguments with each other argument and with return type
-        for (arg_a_idx, arg_a) in extra.embedded.iter().enumerate() {
-            for (arg_b_idx, arg_b) in extra.embedded.iter().enumerate() {
+        for (arg_a_idx, arg_a) in poly_data.embedded.iter().enumerate() {
+            for (arg_b_idx, arg_b) in poly_data.embedded.iter().enumerate() {
                 if arg_b_idx > arg_a_idx {
                     break;
                 }
@@ -2719,7 +2992,7 @@ impl TypeResolvingVisitor {
                     let error = construct_main_error(ctx, poly_idx, expr);
                     if arg_a_idx == arg_b_idx {
                         // Same argument
-                        let arg = &ctx.heap[expr.arguments[arg_a_idx]];
+                        let arg = &ctx.heap[expr_args[arg_a_idx]];
                         return error.with_postfixed_info(
                             &ctx.module.source, arg.position(),
                             &format!(
@@ -2729,8 +3002,8 @@ impl TypeResolvingVisitor {
                             )
                         )
                     } else {
-                        let arg_a = &ctx.heap[expr.arguments[arg_a_idx]];
-                        let arg_b = &ctx.heap[expr.arguments[arg_b_idx]];
+                        let arg_a = &ctx.heap[expr_args[arg_a_idx]];
+                        let arg_b = &ctx.heap[expr_args[arg_b_idx]];
                         return error.with_postfixed_info(
                             &ctx.module.source, arg_a.position(),
                             &format!(
@@ -2749,8 +3022,8 @@ impl TypeResolvingVisitor {
             }
 
             // Check with return type
-            if let Some((poly_idx, section_arg, section_ret)) = has_poly_mismatch(arg_a, &extra.returned) {
-                let arg = &ctx.heap[expr.arguments[arg_a_idx]];
+            if let Some((poly_idx, section_arg, section_ret)) = has_poly_mismatch(arg_a, &poly_data.returned) {
+                let arg = &ctx.heap[expr_args[arg_a_idx]];
                 return construct_main_error(ctx, poly_idx, expr)
                     .with_postfixed_info(
                         &ctx.module.source, arg.position(),
@@ -2760,9 +3033,10 @@ impl TypeResolvingVisitor {
                         )
                     )
                     .with_postfixed_info(
-                        &ctx.module.source, expr.position,
+                        &ctx.module.source, expr.position(),
                         &format!(
-                            "While the return type inferred it to '{}'",
+                            "While the {} inferred it to '{}'",
+                            expr_return_name,
                             InferenceType::partial_display_name(&ctx.heap, section_ret)
                         )
                     )

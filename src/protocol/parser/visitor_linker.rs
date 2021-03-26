@@ -787,7 +787,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 for expr_idx in old_num_exprs..new_num_exprs {
                     let expr_id = self.expression_buffer[expr_idx];
                     self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
-                    self.visit_expr(ctx, expr_id);
+                    self.visit_expr(ctx, expr_id)?;
                 }
 
                 self.expression_buffer.truncate(old_num_exprs);
