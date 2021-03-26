@@ -1022,7 +1022,7 @@ pub struct MethodSymbolic {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Field {
     Length,
-    Symbolic(Identifier),
+    Symbolic(FieldSymbolic),
 }
 impl Field {
     pub fn is_length(&self) -> bool {
@@ -1031,6 +1031,15 @@ impl Field {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FieldSymbolic {
+    // Phase 1: Parser
+    pub(crate) identifier: Identifier,
+    // Phase 3: Typing
+    pub(crate) definition: Option<DefinitionId>,
+    pub(crate) field_idx: usize,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

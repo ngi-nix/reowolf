@@ -1307,7 +1307,12 @@ impl Lexer<'_> {
                     self.consume_keyword(b"length")?;
                     field = Field::Length;
                 } else {
-                    field = Field::Symbolic(self.consume_identifier()?);
+                    let identifier = self.consume_identifier()?;
+                    field = Field::Symbolic(FieldSymbolic{
+                        identifier,
+                        definition: None,
+                        field_idx: 0,
+                    });
                 }
                 result = h
                     .alloc_select_expression(|this| SelectExpression {

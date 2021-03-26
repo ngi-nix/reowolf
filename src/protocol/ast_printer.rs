@@ -591,7 +591,9 @@ impl ASTWriter {
                         self.kv(indent2).with_s_key("Field").with_s_val("length");
                     },
                     Field::Symbolic(field) => {
-                        self.kv(indent2).with_s_key("Field").with_ascii_val(&field.value);
+                        self.kv(indent2).with_s_key("Field").with_ascii_val(&field.identifier.value);
+                        self.kv(indent3).with_s_key("Definition").with_opt_disp_val(field.definition.as_ref().map(|v| &v.index));
+                        self.kv(indent3).with_s_key("Index").with_disp_val(&field.field_idx);
                     }
                 }
                 self.kv(indent2).with_s_key("Parent")
