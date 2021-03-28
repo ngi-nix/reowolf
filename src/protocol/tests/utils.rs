@@ -75,6 +75,7 @@ impl AstTesterResult {
             AstTesterResult::Ok(v) => v,
             AstTesterResult::Err(err) => {
                 let wrapped = ErrorTester{ test_name: &err.test_name, error: &err.error };
+                println!("DEBUG: Full error:\n{}", &err.error);
                 assert!(
                     false,
                     "[{}] Expected compilation to succeed, but it failed with {}",
@@ -182,7 +183,7 @@ impl<'a> StructTester<'a> {
     }
 
     pub(crate) fn assert_num_fields(self, num: usize) -> Self {
-        debug_assert_eq!(
+        assert_eq!(
             num, self.def.fields.len(),
             "[{}] Expected {} struct fields, but found {} for {}",
             self.test_name, num, self.def.fields.len(), self.assert_postfix()
@@ -235,7 +236,7 @@ impl<'a> StructFieldTester<'a> {
     pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
         let mut serialized_type = String::new();
         serialize_parser_type(&mut serialized_type, &self.heap, self.def.parser_type);
-        debug_assert_eq!(
+        assert_eq!(
             expected, &serialized_type,
             "[{}] Expected type '{}', but got '{}' for {}",
             self.test_name, expected, &serialized_type, self.assert_postfix()
@@ -265,9 +266,10 @@ impl<'a> FunctionTester<'a> {
     }
 
     pub(crate) fn for_variable<F: Fn(VariableTester)>(self, name: &str, f: F) -> Self {
+        // Find the memory statement in order to find the local
         let mem_stmt_id = seek_stmt(
             self.heap, self.def.body,
-            |stmt| {
+            &|stmt| {
                 if let Statement::Local(local) = stmt {
                     if let LocalStatement::Memory(memory) = local {
                         let local = &self.heap[memory.variable];
@@ -281,26 +283,106 @@ impl<'a> FunctionTester<'a> {
             }
         );
 
-        match mem_stmt_id {
-            Some(mem_stmt_id) => {
-                // TODO: Retrieve shit
-            },
-            None => {
-                // TODO: Throw error
+        assert!(
+            mem_stmt_id.is_some(), "[{}] Failed to find variable '{}' in {}",
+            self.test_name, name, self.assert_postfix()
+        );
+
+        let mem_stmt_id = mem_stmt_id.unwrap();
+        let local_id = self.heap[mem_stmt_id].as_memory().variable;
+        let local = &self.heap[local_id];
+
+        // Find the assignment expression that follows it
+        let assignment_id = seek_expr_in_stmt(
+            self.heap, self.def.body,
+            &|expr| {
+                if let Expression::Assignment(assign_expr) = expr {
+                    if let Expression::Variable(variable_expr) = &self.heap[assign_expr.left] {
+                        if variable_expr.position.offset == local.identifier.position.offset {
+                            return true;
+                        }
+                    }
+                }
+
+                false
             }
-        }
+        );
+
+        assert!(
+            assignment_id.is_some(), "[{}] Failed to find assignment to variable '{}' in {}",
+            self.test_name, name, self.assert_postfix()
+        );
+
+        let assignment = &self.heap[assignment_id.unwrap()];
+
+        // Construct tester and pass to tester function
+        let tester = VariableTester::new(
+            self.test_name, self.def.this.upcast(), local, 
+            assignment.as_assignment(), self.heap
+        );
+        f(tester);
+
+        self
+    }
+
+    fn assert_postfix(&self) -> String {
+        format!(
+            "Function{{ name: {} }}",
+            &String::from_utf8_lossy(&self.def.identifier.value)
+        )
     }
 }
 
 
 pub(crate) struct VariableTester<'a> {
     test_name: &'a str,
-    def: &'a Local,
+    definition_id: DefinitionId,
+    local: &'a Local,
     assignment: &'a AssignmentExpression,
     heap: &'a Heap,
 }
 
+impl<'a> VariableTester<'a> {
+    fn new(
+        test_name: &'a str, definition_id: DefinitionId, local: &'a Local, assignment: &'a AssignmentExpression, heap: &'a Heap
+    ) -> Self {
+        Self{ test_name, definition_id, local, assignment, heap }
+    }
 
+    pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
+        let mut serialized = String::new();
+        serialize_parser_type(&mut serialized, self.heap, self.local.parser_type);
+
+        assert_eq!(
+            expected, &serialized,
+            "[{}] Expected parser type '{}', but got '{}' for {}",
+            self.test_name, expected, &serialized, self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
+        let mut serialized = String::new();
+        serialize_concrete_type(
+            &mut serialized, self.heap, self.definition_id, 
+            &self.assignment.concrete_type
+        );
+
+        assert_eq!(
+            expected, &serialized,
+            "[{}] Expected concrete type '{}', but got '{}' for {}",
+            self.test_name, expected, &serialized, self.assert_postfix()
+        );
+        self
+    }
+
+    fn assert_postfix(&self) -> String {
+        format!(
+            "Variable{{ name: {} }}",
+            &String::from_utf8_lossy(&self.local.identifier.value)
+        )
+    }
+}
 
 //------------------------------------------------------------------------------
 // Interface for failed compilation
@@ -444,7 +526,75 @@ fn serialize_parser_type(buffer: &mut String, heap: &Heap, id: ParserTypeId) {
     }
 }
 
-fn seek_stmt<F: Fn(&Statement) -> bool>(heap: &Heap, start: StatementId, f: F) -> Option<StatementId> {
+fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, concrete: &ConcreteType) {
+    // Retrieve polymorphic variables, if present (since we're dealing with a 
+    // concrete type we only expect procedure types)
+    let poly_vars = match &heap[def] {
+        Definition::Function(func) => &func.poly_vars,
+        Definition::Component(comp) => &comp.poly_vars,
+        _ => unreachable!("Error in testing utility: did not expect non-procedure type for concrete type serialization"),
+    };
+
+    fn serialize_recursive(
+        buffer: &mut String, heap: &Heap, poly_vars: &Vec<Identifier>, concrete: &ConcreteType, mut idx: usize
+    ) -> usize {
+        use ConcreteTypePart as CTP;
+
+        let part = &concrete.parts[idx];
+        match part {
+            CTP::Marker(poly_idx) => {
+                buffer.push_str(&String::from_utf8_lossy(&poly_vars[*poly_idx].value));
+            },
+            CTP::Void => buffer.push_str("void"),
+            CTP::Message => buffer.push_str("msg"),
+            CTP::Bool => buffer.push_str("bool"),
+            CTP::Byte => buffer.push_str("byte"),
+            CTP::Short => buffer.push_str("short"),
+            CTP::Int => buffer.push_str("int"),
+            CTP::Long => buffer.push_str("long"),
+            CTP::String => buffer.push_str("string"),
+            CTP::Array => {
+                idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
+                buffer.push_str("[]");
+                idx += 1;
+            },
+            CTP::Slice => {
+                idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
+                buffer.push_str("[..]");
+                idx += 1;
+            },
+            CTP::Input => {
+                buffer.push_str("in<");
+                idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
+                buffer.push('>');
+                idx += 1;
+            },
+            CTP::Output => {
+                buffer.push_str("out<");
+                idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
+                buffer.push('>');
+                idx += 1
+            },
+            CTP::Instance(definition_id, num_sub) => {
+                let definition_name = heap[*definition_id].identifier();
+                buffer.push_str(&String::from_utf8_lossy(&definition_name.value));
+                buffer.push('<');
+                for sub_idx in 0..*num_sub {
+                    if sub_idx != 0 { buffer.push(','); }
+                    idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
+                }
+                buffer.push('>');
+                idx += 1;
+            }
+        }
+
+        idx
+    }
+
+    serialize_recursive(buffer, heap, poly_vars, concrete, 0);
+}
+
+fn seek_stmt<F: Fn(&Statement) -> bool>(heap: &Heap, start: StatementId, f: &F) -> Option<StatementId> {
     let stmt = &heap[start];
     if f(stmt) { return Some(start); }
 
@@ -476,7 +626,7 @@ fn seek_stmt<F: Fn(&Statement) -> bool>(heap: &Heap, start: StatementId, f: F) -
     matched
 }
 
-fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionId, f: F) -> Option<ExpressionId> {
+fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionId, f: &F) -> Option<ExpressionId> {
     let expr = &heap[start];
     if f(expr) { return Some(start); }
 
@@ -523,7 +673,7 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
             None
         },
         Expression::Literal(expr) => {
-            if let Literal::Struct(lit) = expr.value {
+            if let Literal::Struct(lit) = &expr.value {
                 for field in &lit.fields {
                     if let Some(id) = seek_expr_in_expr(heap, field.value, f) {
                         return Some(id)
@@ -546,7 +696,7 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
     }
 }
 
-fn seek_expr_in_stmt<F: Fn(&Expression) -> bool>(heap: &Heap, start: StatementId, f: F) -> Option<ExpressionId> {
+fn seek_expr_in_stmt<F: Fn(&Expression) -> bool>(heap: &Heap, start: StatementId, f: &F) -> Option<ExpressionId> {
     let stmt = &heap[start];
 
     match stmt {

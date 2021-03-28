@@ -655,8 +655,13 @@ impl InferenceType {
         use InferenceTypePart as ITP;
 
         match &parts[idx] {
-            ITP::MarkerDefinition(_) | ITP::MarkerBody(_) => {
-                idx = Self::write_display_name(buffer, heap, parts, idx + 1)
+            ITP::MarkerDefinition(thing) => {
+                buffer.push_str(&format!("{{D:{}}}", *thing));
+                idx = Self::write_display_name(buffer, heap, parts, idx + 1);
+            }, 
+            ITP::MarkerBody(thing) => {
+                buffer.push_str(&format!("{{B:{}}}", *thing));
+                idx = Self::write_display_name(buffer, heap, parts, idx + 1);
             },
             ITP::Unknown => buffer.push_str("?"),
             ITP::NumberLike => buffer.push_str("num?"),
@@ -1860,14 +1865,14 @@ impl TypeResolvingVisitor {
                 let signature_type: *mut _ = &mut poly_data.embedded[0];
                 let subject_type: *mut _ = self.expr_types.get_mut(&subject_id).unwrap();
                 
-                let progress_subject = Self::apply_equal2_polyvar_constraint(
+                let progress_subject = Self::apply_equal2_polyvar_constraint(&ctx.heap,
                     poly_data, &poly_progress, signature_type, subject_type
                 );
 
                 let signature_type: *mut _ = &mut poly_data.returned;
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-                let progress_expr = Self::apply_equal2_polyvar_constraint(
+                let progress_expr = Self::apply_equal2_polyvar_constraint(&ctx.heap,
                     poly_data, &poly_progress, signature_type, expr_type
                 );
 
@@ -2006,7 +2011,7 @@ impl TypeResolvingVisitor {
                     let field_expr_id = data.fields[field_idx].value;
                     let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
 
-                    let progress_arg = Self::apply_equal2_polyvar_constraint(
+                    let progress_arg = Self::apply_equal2_polyvar_constraint(&ctx.heap,
                         extra, &poly_progress, signature_type, field_type
                     );
 
@@ -2024,7 +2029,7 @@ impl TypeResolvingVisitor {
                 let signature_type: *mut _ = &mut extra.returned;
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-                let progress_expr = Self::apply_equal2_polyvar_constraint(
+                let progress_expr = Self::apply_equal2_polyvar_constraint(&ctx.heap,
                     extra, &poly_progress, signature_type, expr_type
                 );
 
@@ -2109,6 +2114,9 @@ impl TypeResolvingVisitor {
         // reapplying the polymorph type to each argument type and the return
         // type should always succeed.
         debug_log!(" * During (reinferring from progressed polyvars):");
+        for (poly_idx, poly_var) in extra.poly_vars.iter().enumerate() {
+            debug_log!("   - Poly {} | sig: {}", poly_idx, poly_var.display_name(&ctx.heap));
+        }
         // TODO: @performance If the algorithm is changed to be more "on demand
         //  argument re-evaluation", instead of "all-argument re-evaluation",
         //  then this is no longer true
@@ -2117,7 +2125,7 @@ impl TypeResolvingVisitor {
             let arg_expr_id = expr.arguments[arg_idx];
             let arg_type: *mut _ = self.expr_types.get_mut(&arg_expr_id).unwrap();
             
-            let progress_arg = Self::apply_equal2_polyvar_constraint(
+            let progress_arg = Self::apply_equal2_polyvar_constraint(&ctx.heap,
                 extra, &poly_progress,
                 signature_type, arg_type
             );
@@ -2136,7 +2144,7 @@ impl TypeResolvingVisitor {
         let signature_type: *mut _ = &mut extra.returned;
         let ret_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-        let progress_ret = Self::apply_equal2_polyvar_constraint(
+        let progress_ret = Self::apply_equal2_polyvar_constraint(&ctx.heap,
             extra, &poly_progress, signature_type, ret_type
         );
         debug_log!(
@@ -2406,6 +2414,7 @@ impl TypeResolvingVisitor {
     ///
     /// This function returns true if the expression's type has been progressed
     fn apply_equal2_polyvar_constraint(
+        heap: &Heap,
         polymorph_data: &ExtraData, polymorph_progress: &HashSet<usize>,
         signature_type: *mut InferenceType, expr_type: *mut InferenceType
     ) -> bool {
@@ -2425,6 +2434,7 @@ impl TypeResolvingVisitor {
             if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
                 let polymorph_type = &polymorph_data.poly_vars[poly_idx];
+                debug_log!("   - DEBUG: Applying {} to '{}' from '{}'", polymorph_type.display_name(heap), InferenceType::partial_display_name(heap, &signature_type.parts[start_idx..]), signature_type.display_name(heap));
                 let modified_at_marker = Self::apply_forced_constraint_types(
                     signature_type, start_idx, 
                     &polymorph_type.parts, 0

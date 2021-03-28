@@ -64,7 +64,7 @@ fn test_correct_struct_instance() {
         "
     );
 
-    Tester::new_single_source_expr_ok(
+    Tester::new_single_source_expect_ok(
         "multiple fields, different explicit polymorph",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }

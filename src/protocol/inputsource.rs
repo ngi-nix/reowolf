@@ -151,7 +151,7 @@ impl fmt::Display for InputSource {
 pub struct InputPosition {
     line: usize,
     column: usize,
-    offset: usize,
+    pub(crate) offset: usize,
 }
 
 impl InputPosition {
