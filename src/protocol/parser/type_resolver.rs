@@ -26,19 +26,23 @@
 /// references to polymorphic variables. Any later pass will perform just the
 /// type checking.
 ///
-/// TODO: Needs an optimization pass
-/// TODO: Needs a cleanup pass
-///     slightly more specific: initially it seemed that expressions just need 
-///     to apply constraints between their expression types and the expression
-///     types of the arguments. But it seems to appear more-and-more that the 
-///     expressions may need their own little datastructures. Using some kind of
-///     scratch allocator and proper considerations for dependencies might lead 
-///     to a much more efficient algorithm.
-/// Also: Perhaps instead of this serialized tree with markers, we could 
-///     investigate writing it as a graph, where ocurrences of polymorphic 
-///     variables all point to the same type.
-/// TODO: Disallow `Void` types in various expressions (and other future types)
-/// TODO: Maybe remove msg type?
+/// TODO: Needs a thorough rewrite:
+///  1. For polymorphic type inference we need to have an extra datastructure
+///     for progressing the polymorphic variables and mapping them back to each
+///     signature type that uses that polymorphic type. The two types of markers
+///     became somewhat of a mess.
+///  2. We're doing a lot of extra work. It seems better to apply the initial
+///     type based on expression parents, then to apply forced constraints (arg
+///     to a fires() call must be port-like), only then to start progressing the
+///     types.
+///     Furthermore, queueing of expressions can be more intelligent, currently
+///     every child/parent of an expression is inferred again when queued. Hence
+///     we need to queue only specific children/parents of expressions.
+///  3. Remove the `msg` type?
+///  4. Disallow certain types in certain operations (e.g. `Void`).
+///  5. Implement implicit and explicit casting.
+///  6. Investigate different ways of performing the type-on-type inference,
+///     maybe there is a better way then flattened trees + markers?
 
 macro_rules! enabled_debug_print {
     (false, $name:literal, $format:literal) => {};
@@ -90,7 +94,6 @@ pub(crate) enum InferenceTypePart {
     // polymorphs: an expression may determine the polymorphs type, after we
     // need to apply that information to all other places where the polymorph is
     // used.
-    // TODO: @rename to something appropriate, I keep confusing myself...
     MarkerDefinition(usize), // marker for polymorph types on a procedure's definition
     MarkerBody(usize), // marker for polymorph types within a procedure body
     // Completely unknown type, needs to be inferred
@@ -373,21 +376,27 @@ impl InferenceType {
         // Inference of a completely unknown type
         if *to_infer_part == ITP::Unknown {
             // template part is different, so cannot be unknown, hence copy the
-            // entire subtree
+            // entire subtree. Make sure to copy definition markers, but not to
+            // transfer polymorph markers.
             let template_end_idx = Self::find_subtree_end_idx(template_parts, *template_idx);
-            let erase_offset = if let Some(marker) = template_definition_marker {
+            let template_start_idx = if let Some(marker) = template_definition_marker {
                 to_infer.parts[*to_infer_idx] = ITP::MarkerDefinition(marker);
-                *to_infer_idx += 1;
-                0
+                *template_idx
             } else {
-                1
+                to_infer.parts[*to_infer_idx] = template_parts[*template_idx].clone();
+                *template_idx + 1
             };
+            *to_infer_idx += 1;
 
-            to_infer.parts.splice(
-                *to_infer_idx..*to_infer_idx + erase_offset,
-                template_parts[*template_idx..template_end_idx].iter().cloned()
-            );
-            *to_infer_idx += template_end_idx - *template_idx;
+            for template_idx in template_start_idx..template_end_idx {
+                let template_part = &template_parts[template_idx];
+                if let ITP::MarkerBody(_) = template_part {
+                    // Do not copy this one
+                } else {
+                    to_infer.parts.insert(*to_infer_idx, template_part.clone());
+                    *to_infer_idx += 1;
+                }
+            }
             *template_idx = template_end_idx;
 
             // Note: by definition the LHS was Unknown and the RHS traversed a 
@@ -647,8 +656,8 @@ impl InferenceType {
         }
     }
 
-    /// Writes a human-readable version of the type to a string. Mostly a
-    /// function for interior use.
+    /// Writes a human-readable version of the type to a string. This is used
+    /// to display error messages
     fn write_display_name(
         buffer: &mut String, heap: &Heap, parts: &[InferenceTypePart], mut idx: usize
     ) -> usize {
@@ -805,11 +814,12 @@ enum SingleInferenceResult {
 }
 
 enum DefinitionType{
-    None,
+    None, // Token value, never used during actual inference
     Component(ComponentId),
     Function(FunctionId),
 }
 
+#[derive(PartialEq, Eq)]
 pub(crate) struct ResolveQueueElement {
     pub(crate) root_id: RootId,
     pub(crate) definition_id: DefinitionId,
@@ -1299,8 +1309,18 @@ impl TypeResolvingVisitor {
             self.progress_expr(ctx, next_expr_id)?;
         }
 
-        // Should have inferred everything. Check for this and optionally
-        // auto-infer the remaining types
+        // We check if we have all the types we need. If we're typechecking a 
+        // polymorphic procedure more than once, then we have already annotated
+        // the AST and have now performed typechecking for a different 
+        // monomorph. In that case we just need to perform typechecking, no need
+        // to annotate the AST again.
+        let definition_id = match &self.definition_type {
+            DefinitionType::Component(id) => id.upcast(),
+            DefinitionType::Function(id) => id.upcast(),
+            _ => unreachable!(),
+        };
+
+        let already_checked = ctx.types.get_base_definition(&definition_id).unwrap().has_any_monomorph();
         for (expr_id, expr_type) in self.expr_types.iter_mut() {
             if !expr_type.is_done {
                 // Auto-infer numberlike/integerlike types to a regular int
@@ -1318,9 +1338,20 @@ impl TypeResolvingVisitor {
                 }
             }
 
-            let concrete_type = ctx.heap[*expr_id].get_type_mut();
-            expr_type.write_concrete_type(concrete_type);
+            if !already_checked {
+                let concrete_type = ctx.heap[*expr_id].get_type_mut();
+                expr_type.write_concrete_type(concrete_type);
+            } else {
+                if cfg!(debug_assertions) {
+                    let mut concrete_type = ConcreteType::default();
+                    expr_type.write_concrete_type(&mut concrete_type);
+                    debug_assert_eq!(*ctx.heap[*expr_id].get_type(), concrete_type);
+                }
+            }
         }
+
+        // All types are fine
+        ctx.types.add_monomorph(&definition_id, self.poly_vars.clone());
 
         // Check all things we need to monomorphize
         // TODO: Struct/enum/union monomorphization
@@ -1328,7 +1359,10 @@ impl TypeResolvingVisitor {
             if extra_data.poly_vars.is_empty() { continue; }
 
             // Retrieve polymorph variable specification. Those of struct 
-            // literals and those of procedure calls need to be fully inferred
+            // literals and those of procedure calls need to be fully inferred.
+            // The remaining ones (e.g. select expressions) allow partial 
+            // inference of types, as long as the accessed field's type is
+            // fully inferred.
             let needs_full_inference = match &ctx.heap[*expr_id] {
                 Expression::Call(_) => true,
                 Expression::Literal(_) => true,
@@ -1371,12 +1405,15 @@ impl TypeResolvingVisitor {
 
                                 // Pre-emptively add the monomorph to the type table, but
                                 // we still need to perform typechecking on it
-                                ctx.types.add_monomorph(&definition_id, monomorph_types.clone());
-                                queue.push(ResolveQueueElement {
+                                // TODO: Unsure about this, performance wise
+                                let queue_element = ResolveQueueElement{
                                     root_id,
                                     definition_id,
                                     monomorph_types,
-                                })
+                                };
+                                if !queue.contains(&queue_element) {
+                                    queue.push(queue_element);
+                                }
                             }
                         }
                     },

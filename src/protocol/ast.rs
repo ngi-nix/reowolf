@@ -2144,6 +2144,22 @@ impl Expression {
             Expression::Variable(expr) => expr.parent = parent,
         }
     }
+    pub fn get_type(&self) -> &ConcreteType {
+        match self {
+            Expression::Assignment(expr) => &expr.concrete_type,
+            Expression::Conditional(expr) => &expr.concrete_type,
+            Expression::Binary(expr) => &expr.concrete_type,
+            Expression::Unary(expr) => &expr.concrete_type,
+            Expression::Indexing(expr) => &expr.concrete_type,
+            Expression::Slicing(expr) => &expr.concrete_type,
+            Expression::Select(expr) => &expr.concrete_type,
+            Expression::Array(expr) => &expr.concrete_type,
+            Expression::Literal(expr) => &expr.concrete_type,
+            Expression::Call(expr) => &expr.concrete_type,
+            Expression::Variable(expr) => &expr.concrete_type,
+        }
+    }
+
     // TODO: @cleanup
     pub fn get_type_mut(&mut self) -> &mut ConcreteType {
         match self {

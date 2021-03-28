@@ -69,71 +69,71 @@ fn test_integer_inference() {
 
 #[test]
 fn test_struct_inference() {
-    // Tester::new_single_source_expect_ok(
-    //     "by function calls",
-    //     "
-    //     struct Pair<T1, T2>{ T1 first, T2 second }
-    //     Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) { 
-    //         return Pair{ first: first, second: second };
-    //     }
-    //     int fix_t1<T2>(Pair<byte, T2> arg) { return 0; }
-    //     int fix_t2<T1>(Pair<T1, int> arg) { return 0; }
-    //     int test() {
-    //         auto first = 0;
-    //         auto second = 1;
-    //         auto pair = construct(first, second);
-    //         fix_t1(pair);
-    //         fix_t2(pair);
-    //         return 0;
-    //     }
-    //     "
-    // ).for_function("test", |f| { f
-    //     .for_variable("first", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("byte");
-    //     })
-    //     .for_variable("second", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("int");
-    //     })
-    //     .for_variable("pair", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("Pair<byte,int>");
-    //     });
-    // });
+    Tester::new_single_source_expect_ok(
+        "by function calls",
+        "
+        struct Pair<T1, T2>{ T1 first, T2 second }
+        Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) { 
+            return Pair{ first: first, second: second };
+        }
+        int fix_t1<T2>(Pair<byte, T2> arg) { return 0; }
+        int fix_t2<T1>(Pair<T1, int> arg) { return 0; }
+        int test() {
+            auto first = 0;
+            auto second = 1;
+            auto pair = construct(first, second);
+            fix_t1(pair);
+            fix_t2(pair);
+            return 0;
+        }
+        "
+    ).for_function("test", |f| { f
+        .for_variable("first", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("byte");
+        })
+        .for_variable("second", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("int");
+        })
+        .for_variable("pair", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Pair<byte,int>");
+        });
+    });
 
-    // Tester::new_single_source_expect_ok(
-    //     "by field access",
-    //     "
-    //     struct Pair<T1, T2>{ T1 first, T2 second }
-    //     Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) {
-    //         return Pair{ first: first, second: second };
-    //     }
-    //     int test() {
-    //         auto first = 0;
-    //         auto second = 1;
-    //         auto pair = construct(first, second);
-    //         byte assign_first = 0;
-    //         long assign_second = 1;
-    //         pair.first = assign_first;
-    //         pair.second = assign_second;
-    //         return 0;
-    //     }
-    //     "
-    // ).for_function("test", |f| { f
-    //     .for_variable("first", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("byte");
-    //     })
-    //     .for_variable("second", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("long");
-    //     })
-    //     .for_variable("pair", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("Pair<byte,long>");
-    //     });
-    // });
+    Tester::new_single_source_expect_ok(
+        "by field access",
+        "
+        struct Pair<T1, T2>{ T1 first, T2 second }
+        Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) {
+            return Pair{ first: first, second: second };
+        }
+        int test() {
+            auto first = 0;
+            auto second = 1;
+            auto pair = construct(first, second);
+            byte assign_first = 0;
+            long assign_second = 1;
+            pair.first = assign_first;
+            pair.second = assign_second;
+            return 0;
+        }
+        "
+    ).for_function("test", |f| { f
+        .for_variable("first", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("byte");
+        })
+        .for_variable("second", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("long");
+        })
+        .for_variable("pair", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Pair<byte,long>");
+        });
+    });
 
     Tester::new_single_source_expect_ok(
         "by nested field access",
@@ -152,7 +152,7 @@ fn test_struct_inference() {
     ).for_function("test", |f| { f
         .for_variable("thing", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Pair<byte,Pair<byte,byte>>");
+            .assert_concrete_type("Node<byte,Node<byte,byte>>");
         });
     });
 }

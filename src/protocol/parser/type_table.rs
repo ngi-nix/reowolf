@@ -122,7 +122,11 @@ impl DefinedType {
         self.monomorphs.push(types);
     }
 
-    fn has_monomorph(&self, types: &Vec<ConcreteType>) -> bool {
+    pub(crate) fn has_any_monomorph(&self) -> bool {
+        !self.monomorphs.is_empty()
+    }
+
+    pub(crate) fn has_monomorph(&self, types: &Vec<ConcreteType>) -> bool {
         debug_assert_eq!(self.poly_args.len(), types.len(), "mismatch in number of polymorphic types");
         for monomorph in &self.monomorphs {
             if monomorph == types { return true; }
