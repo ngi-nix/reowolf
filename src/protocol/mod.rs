@@ -51,21 +51,22 @@ impl std::fmt::Debug for ProtocolDescription {
     }
 }
 impl ProtocolDescription {
+    // TODO: Allow for multi-file compilation
     pub fn parse(buffer: &[u8]) -> Result<Self, String> {
         // TODO: @fixme, keep code compilable, but needs support for multiple
         //  input files.
         let source = InputSource::from_buffer(buffer).unwrap();
         let mut parser = Parser::new();
-        parser.feed(source).expect("failed to parse source");
-        match parser.parse() {
-            Ok(root) => {
-                return Ok(ProtocolDescription { heap: parser.heap, source: parser.modules[0].source.clone(), root });
-            }
-            Err(err) => {
-                println!("ERROR:\n{}", err);
-                Err(format!("{}", err))
-            }
+        parser.feed(source).expect("failed to lex source");
+        
+        if let Err(err) = parser.parse() {
+            println!("ERROR:\n{}", err);
+            return Err(format!("{}", err))
         }
+
+        debug_assert_eq!(parser.modules.len(), 1, "only supporting one module here for now");
+        let root = parser.modules[0].root_id;
+        return Ok(ProtocolDescription { heap: parser.heap, source: parser.modules[0].source.clone(), root });
     }
     pub(crate) fn component_polarities(
         &self,

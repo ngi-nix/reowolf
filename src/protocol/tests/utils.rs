@@ -1,6 +1,23 @@
-use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
-use crate::protocol::parser::*;
+use crate::protocol::{
+    ast::*,
+    inputsource::*,
+    parser::{
+        *,
+        type_table::TypeTable,
+        symbol_table::SymbolTable,
+    },
+};
+
+// Carries information about the test into utility structures for builder-like
+// assertions
+#[derive(Clone, Copy)]
+struct TestCtx<'a> {
+    test_name: &'a str,
+    heap: &'a Heap,
+    modules: &'a Vec<LexedModule>,
+    types: &'a TypeTable,
+    symbols: &'a SymbolTable,
+}
 
 //------------------------------------------------------------------------------
 // Interface for parsing and compiling
@@ -55,7 +72,6 @@ impl Tester {
             }
         }
 
-        parser.compile();
         if let Err(err) = parser.parse() {
             return AstTesterResult::Err(AstErrTester::new(self.test_name, err))
         }
@@ -105,6 +121,8 @@ pub(crate) struct AstOkTester {
     test_name: String,
     modules: Vec<LexedModule>,
     heap: Heap,
+    symbols: SymbolTable,
+    types: TypeTable,
 }
 
 impl AstOkTester {
@@ -112,7 +130,9 @@ impl AstOkTester {
         Self {
             test_name,
             modules: parser.modules,
-            heap: parser.heap
+            heap: parser.heap,
+            symbols: parser.symbol_table,
+            types: parser.type_table,
         }
     }
 
@@ -125,7 +145,7 @@ impl AstOkTester {
                 }
 
                 // Found struct with the same name
-                let tester = StructTester::new(&self.test_name, definition, &self.heap);
+                let tester = StructTester::new(self.ctx(), definition);
                 f(tester);
                 found = true;
                 break
@@ -150,7 +170,7 @@ impl AstOkTester {
                 }
 
                 // Found function
-                let tester = FunctionTester::new(&self.test_name, definition, &self.heap);
+                let tester = FunctionTester::new(self.ctx(), definition);
                 f(tester);
                 found = true;
                 break;
@@ -165,6 +185,16 @@ impl AstOkTester {
         );
         unreachable!();
     }
+
+    fn ctx(&self) -> TestCtx {
+        TestCtx{
+            test_name: &self.test_name,
+            modules: &self.modules,
+            heap: &self.heap,
+            types: &self.types,
+            symbols: &self.symbols,
+        }
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -172,21 +202,66 @@ impl AstOkTester {
 //------------------------------------------------------------------------------
 
 pub(crate) struct StructTester<'a> {
-    test_name: &'a str,
+    ctx: TestCtx<'a>,
     def: &'a StructDefinition,
-    heap: &'a Heap,
 }
 
 impl<'a> StructTester<'a> {
-    fn new(test_name: &'a str, def: &'a StructDefinition, heap: &'a Heap) -> Self {
-        Self{ test_name, def, heap }
+    fn new(ctx: TestCtx<'a>, def: &'a StructDefinition) -> Self {
+        Self{ ctx, def }
     }
 
     pub(crate) fn assert_num_fields(self, num: usize) -> Self {
         assert_eq!(
             num, self.def.fields.len(),
             "[{}] Expected {} struct fields, but found {} for {}",
-            self.test_name, num, self.def.fields.len(), self.assert_postfix()
+            self.ctx.test_name, num, self.def.fields.len(), self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_num_monomorphs(self, num: usize) -> Self {
+        let type_def = self.ctx.types.get_base_definition(&self.def.this.upcast()).unwrap();
+        assert_eq!(
+            num, type_def.monomorphs.len(),
+            "[{}] Expected {} monomorphs, but found {} for {}",
+            self.ctx.test_name, num, type_def.monomorphs.len(), self.assert_postfix()
+        );
+        self
+    }
+
+    /// Asserts that a monomorph exist, separate polymorphic variable types by
+    /// a semicolon.
+    pub(crate) fn assert_has_monomorph(self, serialized_monomorph: &str) -> Self {
+        let definition_id = self.def.this.upcast();
+        let type_def = self.ctx.types.get_base_definition(&definition_id).unwrap();
+
+        let mut full_buffer = String::new();
+        full_buffer.push('[');
+        for (monomorph_idx, monomorph) in type_def.monomorphs.iter().enumerate() {
+            let mut buffer = String::new();
+            for (element_idx, monomorph_element) in monomorph.iter().enumerate() {
+                if element_idx != 0 { buffer.push(';'); }
+                serialize_concrete_type(&mut buffer, self.ctx.heap, definition_id, monomorph_element);
+            }
+
+            if buffer == serialized_monomorph {
+                // Found an exact match
+                return self
+            }
+
+            if monomorph_idx != 0 {
+                full_buffer.push_str(", ");
+            }
+            full_buffer.push('"');
+            full_buffer.push_str(&buffer);
+            full_buffer.push('"');
+        }
+        full_buffer.push(']');
+
+        assert!(
+            false, "[{}] Expected to find monomorph {}, but got {} for {}",
+            self.ctx.test_name, serialized_monomorph, &full_buffer, self.assert_postfix()
         );
         self
     }
@@ -195,7 +270,7 @@ impl<'a> StructTester<'a> {
         // Find field with specified name
         for field in &self.def.fields {
             if String::from_utf8_lossy(&field.field.value) == name {
-                let tester = StructFieldTester::new(self.test_name, field, self.heap);
+                let tester = StructFieldTester::new(self.ctx, field);
                 f(tester);
                 return self;
             }
@@ -203,7 +278,7 @@ impl<'a> StructTester<'a> {
 
         assert!(
             false, "[{}] Could not find struct field '{}' for {}",
-            self.test_name, name, self.assert_postfix()
+            self.ctx.test_name, name, self.assert_postfix()
         );
         unreachable!();
     }
@@ -223,30 +298,29 @@ impl<'a> StructTester<'a> {
 }
 
 pub(crate) struct StructFieldTester<'a> {
-    test_name: &'a str,
+    ctx: TestCtx<'a>,
     def: &'a StructFieldDefinition,
-    heap: &'a Heap,
 }
 
 impl<'a> StructFieldTester<'a> {
-    fn new(test_name: &'a str, def: &'a StructFieldDefinition, heap: &'a Heap) -> Self {
-        Self{ test_name, def, heap }
+    fn new(ctx: TestCtx<'a>, def: &'a StructFieldDefinition) -> Self {
+        Self{ ctx, def }
     }
 
     pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
         let mut serialized_type = String::new();
-        serialize_parser_type(&mut serialized_type, &self.heap, self.def.parser_type);
+        serialize_parser_type(&mut serialized_type, &self.ctx.heap, self.def.parser_type);
         assert_eq!(
             expected, &serialized_type,
             "[{}] Expected type '{}', but got '{}' for {}",
-            self.test_name, expected, &serialized_type, self.assert_postfix()
+            self.ctx.test_name, expected, &serialized_type, self.assert_postfix()
         );
         self
     }
 
     fn assert_postfix(&self) -> String {
         let mut serialized_type = String::new();
-        serialize_parser_type(&mut serialized_type, &self.heap, self.def.parser_type);
+        serialize_parser_type(&mut serialized_type, &self.ctx.heap, self.def.parser_type);
         format!(
             "StructField{{ name: {}, parser_type: {} }}",
             String::from_utf8_lossy(&self.def.field.value), serialized_type
@@ -255,24 +329,23 @@ impl<'a> StructFieldTester<'a> {
 }
 
 pub(crate) struct FunctionTester<'a> {
-    test_name: &'a str,
+    ctx: TestCtx<'a>,
     def: &'a Function,
-    heap: &'a Heap,
 }
 
 impl<'a> FunctionTester<'a> {
-    fn new(test_name: &'a str, def: &'a Function, heap: &'a Heap) -> Self {
-        Self{ test_name, def, heap }
+    fn new(ctx: TestCtx<'a>, def: &'a Function) -> Self {
+        Self{ ctx, def }
     }
 
     pub(crate) fn for_variable<F: Fn(VariableTester)>(self, name: &str, f: F) -> Self {
         // Find the memory statement in order to find the local
         let mem_stmt_id = seek_stmt(
-            self.heap, self.def.body,
+            self.ctx.heap, self.def.body,
             &|stmt| {
                 if let Statement::Local(local) = stmt {
                     if let LocalStatement::Memory(memory) = local {
-                        let local = &self.heap[memory.variable];
+                        let local = &self.ctx.heap[memory.variable];
                         if local.identifier.value == name.as_bytes() {
                             return true;
                         }
@@ -285,19 +358,19 @@ impl<'a> FunctionTester<'a> {
 
         assert!(
             mem_stmt_id.is_some(), "[{}] Failed to find variable '{}' in {}",
-            self.test_name, name, self.assert_postfix()
+            self.ctx.test_name, name, self.assert_postfix()
         );
 
         let mem_stmt_id = mem_stmt_id.unwrap();
-        let local_id = self.heap[mem_stmt_id].as_memory().variable;
-        let local = &self.heap[local_id];
+        let local_id = self.ctx.heap[mem_stmt_id].as_memory().variable;
+        let local = &self.ctx.heap[local_id];
 
         // Find the assignment expression that follows it
         let assignment_id = seek_expr_in_stmt(
-            self.heap, self.def.body,
+            self.ctx.heap, self.def.body,
             &|expr| {
                 if let Expression::Assignment(assign_expr) = expr {
-                    if let Expression::Variable(variable_expr) = &self.heap[assign_expr.left] {
+                    if let Expression::Variable(variable_expr) = &self.ctx.heap[assign_expr.left] {
                         if variable_expr.position.offset == local.identifier.position.offset {
                             return true;
                         }
@@ -310,15 +383,15 @@ impl<'a> FunctionTester<'a> {
 
         assert!(
             assignment_id.is_some(), "[{}] Failed to find assignment to variable '{}' in {}",
-            self.test_name, name, self.assert_postfix()
+            self.ctx.test_name, name, self.assert_postfix()
         );
 
-        let assignment = &self.heap[assignment_id.unwrap()];
+        let assignment = &self.ctx.heap[assignment_id.unwrap()];
 
         // Construct tester and pass to tester function
         let tester = VariableTester::new(
-            self.test_name, self.def.this.upcast(), local, 
-            assignment.as_assignment(), self.heap
+            self.ctx, self.def.this.upcast(), local, 
+            assignment.as_assignment()
         );
         f(tester);
 
@@ -335,28 +408,27 @@ impl<'a> FunctionTester<'a> {
 
 
 pub(crate) struct VariableTester<'a> {
-    test_name: &'a str,
+    ctx: TestCtx<'a>,
     definition_id: DefinitionId,
     local: &'a Local,
     assignment: &'a AssignmentExpression,
-    heap: &'a Heap,
 }
 
 impl<'a> VariableTester<'a> {
     fn new(
-        test_name: &'a str, definition_id: DefinitionId, local: &'a Local, assignment: &'a AssignmentExpression, heap: &'a Heap
+        ctx: TestCtx<'a>, definition_id: DefinitionId, local: &'a Local, assignment: &'a AssignmentExpression
     ) -> Self {
-        Self{ test_name, definition_id, local, assignment, heap }
+        Self{ ctx, definition_id, local, assignment }
     }
 
     pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
         let mut serialized = String::new();
-        serialize_parser_type(&mut serialized, self.heap, self.local.parser_type);
+        serialize_parser_type(&mut serialized, self.ctx.heap, self.local.parser_type);
 
         assert_eq!(
             expected, &serialized,
             "[{}] Expected parser type '{}', but got '{}' for {}",
-            self.test_name, expected, &serialized, self.assert_postfix()
+            self.ctx.test_name, expected, &serialized, self.assert_postfix()
         );
         self
     }
@@ -364,14 +436,14 @@ impl<'a> VariableTester<'a> {
     pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
         let mut serialized = String::new();
         serialize_concrete_type(
-            &mut serialized, self.heap, self.definition_id, 
+            &mut serialized, self.ctx.heap, self.definition_id, 
             &self.assignment.concrete_type
         );
 
         assert_eq!(
             expected, &serialized,
             "[{}] Expected concrete type '{}', but got '{}' for {}",
-            self.test_name, expected, &serialized, self.assert_postfix()
+            self.ctx.test_name, expected, &serialized, self.assert_postfix()
         );
         self
     }

@@ -14,7 +14,6 @@ use super::visitor::{
     Visitor2, 
     VisitorResult
 };
-use std::hint::unreachable_unchecked;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {

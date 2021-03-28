@@ -75,8 +75,14 @@ pub(crate) struct SymbolTable {
 }
 
 impl SymbolTable {
-    pub(crate) fn new(heap: &Heap, modules: &[LexedModule]) -> Result<Self, ParseError2> {
-        // Sanity check
+    pub(crate) fn new() -> Self {
+        Self{ module_lookup: HashMap::new(), symbol_lookup: HashMap::new() }
+    }
+
+    pub(crate) fn build(&mut self, heap: &Heap, modules: &[LexedModule]) -> Result<(), ParseError2> {
+        // Sanity checks
+        debug_assert!(self.module_lookup.is_empty());
+        debug_assert!(self.symbol_lookup.is_empty());
         if cfg!(debug_assertions) {
             for (index, module) in modules.iter().enumerate() {
                 debug_assert_eq!(
@@ -88,11 +94,11 @@ impl SymbolTable {
 
         // Preparation: create a lookup from module name to root id. This does
         // not take aliasing into account.
-        let mut module_lookup = HashMap::with_capacity(modules.len());
+        self.module_lookup.reserve(modules.len());
         for module in modules {
             // TODO: Maybe put duplicate module name checking here?
             // TODO: @string
-            module_lookup.insert(module.module_name.clone(), module.root_id);
+            self.module_lookup.insert(module.module_name.clone(), module.root_id);
         }
 
         // Preparation: determine total number of imports we will be inserting
@@ -107,7 +113,7 @@ impl SymbolTable {
                     Import::Symbols(import) => {
                         if import.symbols.is_empty() {
                             // Add all symbols from the other module
-                            match module_lookup.get(&import.module_name) {
+                            match self.module_lookup.get(&import.module_name) {
                                 Some(target_module_id) => {
                                     lookup_reserve_size += heap[*target_module_id].definitions.len()
                                 },
@@ -127,10 +133,7 @@ impl SymbolTable {
             lookup_reserve_size += module_root.definitions.len();
         }
 
-        let mut table = Self{
-            module_lookup,
-            symbol_lookup: HashMap::with_capacity(lookup_reserve_size)
-        };
+        self.symbol_lookup.reserve(lookup_reserve_size);
 
         // First pass: we go through all of the modules and add lookups to
         // symbols that are defined within that module. Cross-module imports are
@@ -140,7 +143,7 @@ impl SymbolTable {
             for definition_id in &root.definitions {
                 let definition = &heap[*definition_id];
                 let identifier = definition.identifier();
-                if let Err(previous_position) = table.add_definition_symbol(
+                if let Err(previous_position) = self.add_definition_symbol(
                     module.root_id, identifier.position, &identifier.value,
                     module.root_id, *definition_id
                 ) {
@@ -161,7 +164,7 @@ impl SymbolTable {
                 match import {
                     Import::Module(import) => {
                         // Find the module using its name
-                        let target_root_id = table.resolve_module(&import.module_name);
+                        let target_root_id = self.resolve_module(&import.module_name);
                         if target_root_id.is_none() {
                             return Err(ParseError2::new_error(&module.source, import.position, "Could not resolve module"));
                         }
@@ -171,7 +174,7 @@ impl SymbolTable {
                         }
 
                         // Add the target module under its alias
-                        if let Err(previous_position) = table.add_namespace_symbol(
+                        if let Err(previous_position) = self.add_namespace_symbol(
                             module.root_id, import.position,
                             &import.alias, target_root_id
                         ) {
@@ -183,7 +186,7 @@ impl SymbolTable {
                     },
                     Import::Symbols(import) => {
                         // Find the target module using its name
-                        let target_root_id = table.resolve_module(&import.module_name);
+                        let target_root_id = self.resolve_module(&import.module_name);
                         if target_root_id.is_none() {
                             return Err(ParseError2::new_error(&module.source, import.position, "Could not resolve module of symbol imports"));
                         }
@@ -198,7 +201,7 @@ impl SymbolTable {
                             for definition_id in &heap[target_root_id].definitions {
                                 let definition = &heap[*definition_id];
                                 let identifier = definition.identifier();
-                                if let Err(previous_position) = table.add_definition_symbol(
+                                if let Err(previous_position) = self.add_definition_symbol(
                                     module.root_id, import.position, &identifier.value,
                                     target_root_id, *definition_id
                                 ) {
@@ -229,7 +232,7 @@ impl SymbolTable {
                                 // to "import a module's imported symbol". And so if we do find
                                 // a symbol match, we need to make sure it is a definition from
                                 // within that module by checking `source_root_id == target_root_id`
-                                let target_symbol = table.resolve_symbol(target_root_id, &symbol.name);
+                                let target_symbol = self.resolve_symbol(target_root_id, &symbol.name);
                                 let symbol_definition_id = match target_symbol {
                                     Some(target_symbol) => {
                                         match target_symbol.symbol {
@@ -258,7 +261,7 @@ impl SymbolTable {
                                 }
                                 let symbol_definition_id = symbol_definition_id.unwrap();
 
-                                if let Err(previous_position) = table.add_definition_symbol(
+                                if let Err(previous_position) = self.add_definition_symbol(
                                     module.root_id, symbol.position, &symbol.alias,
                                     target_root_id, symbol_definition_id
                                 ) {
@@ -288,10 +291,10 @@ impl SymbolTable {
         }
 
         debug_assert_eq!(
-            table.symbol_lookup.len(), lookup_reserve_size,
+            self.symbol_lookup.len(), lookup_reserve_size,
             "miscalculated reserved size for symbol lookup table"
         );
-        Ok(table)
+        Ok(())
     }
 
     /// Resolves a module by its defined name

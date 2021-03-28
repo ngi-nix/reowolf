@@ -309,10 +309,21 @@ impl<'a> TypeCtx<'a> {
 }
 
 impl TypeTable {
-    /// Construct a new type table without any resolved types. Types will be
-    /// resolved on-demand.
-    pub(crate) fn new(ctx: &mut TypeCtx) -> Result<Self, ParseError2> {
+    /// Construct a new type table without any resolved types.
+    pub(crate) fn new() -> Self {
+        Self{ 
+            lookup: HashMap::new(), 
+            iter: TypeIterator::new(), 
+            parser_type_iter: VecDeque::with_capacity(64), 
+        }
+    }
+
+    pub(crate) fn build_base_types(&mut self, ctx: &mut TypeCtx) -> Result<(), ParseError2> {
         // Make sure we're allowed to cast root_id to index into ctx.modules
+        debug_assert!(self.lookup.is_empty());
+        debug_assert!(self.iter.top().is_none());
+        debug_assert!(self.parser_type_iter.is_empty());
+
         if cfg!(debug_assertions) {
             for (index, module) in ctx.modules.iter().enumerate() {
                 debug_assert_eq!(index, module.root_id.index as usize);
@@ -321,24 +332,20 @@ impl TypeTable {
 
         // Use context to guess hashmap size
         let reserve_size = ctx.heap.definitions.len();
-        let mut table = Self{
-            lookup: HashMap::with_capacity(reserve_size),
-            iter: TypeIterator::new(),
-            parser_type_iter: VecDeque::with_capacity(64),
-        };
+        self.lookup.reserve(reserve_size);
 
         // TODO: @cleanup Rework this hack
         for root_idx in 0..ctx.modules.len() {
             let last_definition_idx = ctx.heap[ctx.modules[root_idx].root_id].definitions.len();
             for definition_idx in 0..last_definition_idx {
                 let definition_id = ctx.heap[ctx.modules[root_idx].root_id].definitions[definition_idx];
-                table.resolve_base_definition(ctx, definition_id)?;
+                self.resolve_base_definition(ctx, definition_id)?;
             }
         }
 
-        debug_assert_eq!(table.lookup.len(), reserve_size, "mismatch in reserved size of type table");
+        debug_assert_eq!(self.lookup.len(), reserve_size, "mismatch in reserved size of type table");
 
-        Ok(table)
+        Ok(())
     }
 
     /// Retrieves base definition from type table. We must be able to retrieve
