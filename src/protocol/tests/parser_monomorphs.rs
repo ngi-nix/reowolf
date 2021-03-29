@@ -34,5 +34,8 @@ fn test_struct_monomorphs() {
         .assert_has_monomorph("long")
         .assert_has_monomorph("Number<short>")
         .assert_num_monomorphs(5);
+    }).for_function("instantiator", |f| { f
+        .for_variable("a", |v| {v.assert_concrete_type("Number<byte>");} )
+        .for_variable("e", |v| {v.assert_concrete_type("Number<Number<short>>");} );
     });
 }

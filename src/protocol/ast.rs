@@ -1005,6 +1005,16 @@ pub struct LiteralStruct {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralEnum {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) poly_args: Vec<ParserTypeId>,
+    // Phase 2: linker
+    pub(crate) definition: Option<DefinitionId>,
+    pub(crate) variant_idx: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Method {
     Get,
     Put,
@@ -1029,6 +1039,13 @@ impl Field {
         match self {
             Field::Length => true,
             _ => false,
+        }
+    }
+
+    pub fn as_symbolic(&self) -> &FieldSymbolic {
+        match self {
+            Field::Symbolic(v) => v,
+            _ => unreachable!("attempted to get Field::Symbolic from {:?}", self)
         }
     }
 }

@@ -175,6 +175,8 @@ impl Parser {
                     }
                 }
             }
+
+            import_index += 1;
         }
 
         // All imports in the AST are now annotated. We now use the symbol table

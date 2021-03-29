@@ -27,6 +27,7 @@
 /// type checking.
 ///
 /// TODO: Needs a thorough rewrite:
+///  0. polymorph_progress is intentionally broken at the moment.
 ///  1. For polymorphic type inference we need to have an extra datastructure
 ///     for progressing the polymorphic variables and mapping them back to each
 ///     signature type that uses that polymorphic type. The two types of markers
@@ -43,17 +44,6 @@
 ///  5. Implement implicit and explicit casting.
 ///  6. Investigate different ways of performing the type-on-type inference,
 ///     maybe there is a better way then flattened trees + markers?
-
-macro_rules! enabled_debug_print {
-    (false, $name:literal, $format:literal) => {};
-    (false, $name:literal, $format:literal, $($args:expr),*) => {};
-    (true, $name:literal, $format:literal) => {
-        println!("[{}] {}", $name, $format)
-    };
-    (true, $name:literal, $format:literal, $($args:expr),*) => {
-        println!("[{}] {}", $name, format!($format, $($args),*))
-    };
-}
 
 macro_rules! debug_log {
     ($format:literal) => {
@@ -1989,6 +1979,9 @@ impl TypeResolvingVisitor {
             Literal::Character(_) => todo!("character literals"),
             Literal::Struct(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                for poly in &extra.poly_vars {
+                    debug_log!(" * Poly: {}", poly.display_name(&ctx.heap));
+                }
                 let mut poly_progress = HashSet::new();
                 debug_assert_eq!(extra.embedded.len(), data.fields.len());
 
@@ -2015,6 +2008,8 @@ impl TypeResolvingVisitor {
                     }
                 }
 
+                debug_log!("   - Field poly progress | {:?}", poly_progress);
+
                 // Same for the type of the struct itself
                 let signature_type: *mut _ = &mut extra.returned;
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
@@ -2028,6 +2023,7 @@ impl TypeResolvingVisitor {
                     unsafe{&*signature_type}.display_name(&ctx.heap),
                     unsafe{&*expr_type}.display_name(&ctx.heap)
                 );
+                debug_log!("   - Ret poly progress | {:?}", poly_progress);
 
                 if progress_expr {
                     // TODO: @cleanup, cannot call utility self.queue_parent thingo
@@ -2452,7 +2448,7 @@ impl TypeResolvingVisitor {
     /// This function returns true if the expression's type has been progressed
     fn apply_equal2_polyvar_constraint(
         heap: &Heap,
-        polymorph_data: &ExtraData, polymorph_progress: &HashSet<usize>,
+        polymorph_data: &ExtraData, _polymorph_progress: &HashSet<usize>,
         signature_type: *mut InferenceType, expr_type: *mut InferenceType
     ) -> bool {
         // Safety: all pointers should be distinct
@@ -2468,7 +2464,7 @@ impl TypeResolvingVisitor {
         
         while let Some((poly_idx, start_idx)) = signature_type.find_body_marker(seek_idx) {
             let end_idx = InferenceType::find_subtree_end_idx(&signature_type.parts, start_idx);
-            if polymorph_progress.contains(&poly_idx) {
+            // if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
                 let polymorph_type = &polymorph_data.poly_vars[poly_idx];
                 debug_log!("   - DEBUG: Applying {} to '{}' from '{}'", polymorph_type.display_name(heap), InferenceType::partial_display_name(heap, &signature_type.parts[start_idx..]), signature_type.display_name(heap));
@@ -2478,7 +2474,7 @@ impl TypeResolvingVisitor {
                 ).expect("no failure when applying polyvar constraints");
 
                 modified_sig = modified_sig || modified_at_marker;
-            }
+            // }
 
             seek_idx = end_idx;
         }
@@ -2838,10 +2834,7 @@ impl TypeResolvingVisitor {
 
         // Retrieve relevant data
         let expr = &ctx.heap[select_id];
-        let field = match &expr.field {
-            Field::Symbolic(field) => field,
-            _ => unreachable!(),
-        };
+        let field = expr.field.as_symbolic();
 
         let definition_id = field.definition.unwrap();
         let definition = ctx.heap[definition_id].as_struct();
@@ -3120,12 +3113,11 @@ impl TypeResolvingVisitor {
             }
         }
 
-        fn get_poly_var_and_literal_name(ctx: &Ctx, poly_var_idx: usize, expr: &LiteralExpression) -> (String, String) {
-            let expr = expr.value.as_struct();
-            let definition = &ctx.heap[expr.definition.unwrap()];
+        fn get_poly_var_and_type_name(ctx: &Ctx, poly_var_idx: usize, definition_id: DefinitionId) -> (String, String) {
+            let definition = &ctx.heap[definition_id];
             match definition {
                 Definition::Enum(_) | Definition::Function(_) | Definition::Component(_) =>
-                    unreachable!(),
+                    unreachable!("get_poly_var_and_type_name called on non-struct value"),
                 Definition::Struct(definition) => (
                     String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string(),
                     String::from_utf8_lossy(&definition.identifier.value).to_string()
@@ -3147,7 +3139,8 @@ impl TypeResolvingVisitor {
                     )
                 },
                 Expression::Literal(expr) => {
-                    let (poly_var, struct_name) = get_poly_var_and_literal_name(ctx, poly_var_idx, expr);
+                    let lit_struct = expr.value.as_struct();
+                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, lit_struct.definition.unwrap());
                     return ParseError2::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
@@ -3156,6 +3149,17 @@ impl TypeResolvingVisitor {
                         )
                     )
                 },
+                Expression::Select(expr) => {
+                    let field = expr.field.as_symbolic();
+                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, field.definition.unwrap());
+                    return ParseError2::new_error(
+                        &ctx.module.source, expr.position(),
+                        &format!(
+                            "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
+                            poly_var, &String::from_utf8_lossy(&field.identifier.value), struct_name
+                        )
+                    )
+                }
                 _ => unreachable!("called construct_poly_arg_error without a call/literal expression")
             }
         }
@@ -3175,6 +3179,13 @@ impl TypeResolvingVisitor {
                         .map(|f| f.value)
                         .collect(),
                     "literal"
+                ),
+            Expression::Select(expr) =>
+                // Select expression uses the polymorphic variables of the 
+                // struct it is accessing, so get the subject expression.
+                (
+                    vec![expr.subject],
+                    "selected field"
                 ),
             _ => unreachable!(),
         };

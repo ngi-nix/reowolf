@@ -1,3 +1,14 @@
+macro_rules! enabled_debug_print {
+    (false, $name:literal, $format:literal) => {};
+    (false, $name:literal, $format:literal, $($args:expr),*) => {};
+    (true, $name:literal, $format:literal) => {
+        println!("[{}] {}", $name, $format)
+    };
+    (true, $name:literal, $format:literal, $($args:expr),*) => {
+        println!("[{}] {}", $name, format!($format, $($args),*))
+    };
+}
+
 /*
 Change the definition of these macros to control the logging level statically
 */

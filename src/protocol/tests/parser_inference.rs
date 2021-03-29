@@ -68,6 +68,63 @@ fn test_integer_inference() {
 }
 
 #[test]
+fn test_binary_expr_inference() {
+    Tester::new_single_source_expect_ok(
+        "compatible types",
+        "int call() {
+            byte b0 = 0;
+            byte b1 = 1;
+            short s0 = 0;
+            short s1 = 1;
+            int i0 = 0;
+            int i1 = 1;
+            long l0 = 0;
+            long l1 = 1;
+            auto b = b0 + b1;
+            auto s = s0 + s1;
+            auto i = i0 + i1;
+            auto l = l0 + l1;
+            return i;
+        }"
+    ).for_function("call", |f| { f
+        .for_expression_by_source(
+            "b0 + b1", "+", 
+            |e| { e.assert_concrete_type("byte"); }
+        )
+        .for_expression_by_source(
+            "s0 + s1", "+", 
+            |e| { e.assert_concrete_type("short"); }
+        )
+        .for_expression_by_source(
+            "i0 + i1", "+", 
+            |e| { e.assert_concrete_type("int"); }
+        )
+        .for_expression_by_source(
+            "l0 + l1", "+", 
+            |e| { e.assert_concrete_type("long"); }
+        );
+    });
+
+    Tester::new_single_source_expect_err(
+        "incompatible types", 
+        "int call() {
+            byte b = 0;
+            long l = 1;
+            auto r = b + l;
+            return 0;
+        }"
+    ).error(|e| { e
+        .assert_ctx_has(0, "b + l")
+        .assert_msg_has(0, "cannot apply")
+        .assert_occurs_at(0, "+")
+        .assert_msg_has(1, "has type 'byte'")
+        .assert_msg_has(2, "has type 'long'");
+    });
+}
+
+
+
+#[test]
 fn test_struct_inference() {
     Tester::new_single_source_expect_ok(
         "by function calls",
@@ -155,4 +212,87 @@ fn test_struct_inference() {
             .assert_concrete_type("Node<byte,Node<byte,byte>>");
         });
     });
+}
+
+#[test]
+fn test_failed_polymorph_inference() {
+    Tester::new_single_source_expect_err(
+        "function call inference mismatch",
+        "
+        int poly<T>(T a, T b) { return 0; }
+        int call() {
+            byte first_arg = 5;
+            long second_arg = 2;
+            return poly(first_arg, second_arg);
+        }
+        "
+    ).error(|e| { e
+        .assert_num(3)
+        .assert_ctx_has(0, "poly(first_arg, second_arg)")
+        .assert_occurs_at(0, "poly")
+        .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
+        .assert_occurs_at(1, "second_arg")
+        .assert_msg_has(1, "inferred it to 'long'")
+        .assert_occurs_at(2, "first_arg")
+        .assert_msg_has(2, "inferred it to 'byte'");
+    });
+
+    Tester::new_single_source_expect_err(
+        "struct literal inference mismatch",
+        "
+        struct Pair<T>{ T first, T second }
+        int call() {
+            byte first_arg = 5;
+            long second_arg = 2;
+            auto pair = Pair{ first: first_arg, second: second_arg };
+            return 3;
+        }
+        "
+    ).error(|e| { e
+        .assert_num(3)
+        .assert_ctx_has(0, "Pair{ first: first_arg, second: second_arg }")
+        .assert_occurs_at(0, "Pair{")
+        .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
+        .assert_occurs_at(1, "second_arg")
+        .assert_msg_has(1, "inferred it to 'long'")
+        .assert_occurs_at(2, "first_arg")
+        .assert_msg_has(2, "inferred it to 'byte'");
+    });
+
+    Tester::new_single_source_expect_err(
+        "field access inference mismatch",
+        "
+        struct Holder<Shazam>{ Shazam a }
+        int call() {
+            byte to_hold = 0;
+            auto holder = Holder{ a: to_hold };
+            return holder.a;
+        }
+        "
+    ).error(|e| { e
+        .assert_num(3)
+        .assert_ctx_has(0, "holder.a")
+        .assert_occurs_at(0, ".")
+        .assert_msg_has(0, "Conflicting type for polymorphic variable 'Shazam'")
+        .assert_msg_has(1, "inferred it to 'byte'")
+        .assert_msg_has(2, "inferred it to 'int'");
+    });
+
+    // TODO: Needs better error messages anyway, but this failed before
+    Tester::new_single_source_expect_err(
+        "by nested field access",
+        "
+        struct Node<T1, T2>{ T1 l, T2 r }
+        Node<T1, T2> construct<T1, T2>(T1 l, T2 r) { return Node{ l: l, r: r }; }
+        int fix_poly<T>(Node<T, T> a) { return 0; }
+        int test() {
+            byte assigned = 0;
+            long another = 1;
+            auto thing = construct(assigned, construct(another, 1));
+            fix_poly(thing.r);
+            thing.r.r = assigned;
+            return 0;
+        }
+        ",
+    );
 }

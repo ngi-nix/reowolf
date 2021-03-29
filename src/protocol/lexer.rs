@@ -4,6 +4,28 @@ use crate::protocol::inputsource::*;
 const MAX_LEVEL: usize = 128;
 const MAX_NAMESPACES: u8 = 8; // only three levels are supported at the moment
 
+macro_rules! debug_log {
+    ($format:literal) => {
+        enabled_debug_print!(false, "lexer", $format);
+    };
+    ($format:literal, $($args:expr),*) => {
+        enabled_debug_print!(false, "lexer", $format, $($args),*);
+    };
+}
+
+macro_rules! debug_line {
+    ($source:expr) => {
+        {
+            let mut buffer = String::with_capacity(128);
+            for idx in 0..buffer.capacity() {
+                let next = $source.lookahead(idx);
+                if next.is_none() || Some(b'\n') == next { break; }
+                buffer.push(next.unwrap() as char);
+            }
+            buffer
+        }
+    };
+}
 fn is_vchar(x: Option<u8>) -> bool {
     if let Some(c) = x {
         c >= 0x21 && c <= 0x7E
@@ -169,6 +191,10 @@ impl Lexer<'_> {
         }
 
         // Word boundary
+        let next = self.source.lookahead(keyword.len());
+        if next.is_none() { return true; }
+        return !is_ident_rest(next);
+        
         if let Some(next) = self.source.lookahead(keyword.len()) {
             !(next >= b'A' && next <= b'Z' || next >= b'a' && next <= b'z')
         } else {
@@ -249,34 +275,35 @@ impl Lexer<'_> {
         Ok(Some(elements))
     }
     /// Essentially the same as `consume_comma_separated`, but will not allocate
-    /// memory. Will return `true` and leave the input position at the end of
-    /// the comma-separated list if well formed. Otherwise returns `false` and
-    /// leaves the input position at a "random" position.
+    /// memory. Will return `Ok(true)` and leave the input position at the end
+    /// the comma-separated list if well formed and `Ok(false)` if the list is
+    /// not present. Otherwise returns `Err(())` and leaves the input position 
+    /// at a "random" position.
     fn consume_comma_separated_spilled_without_pos_recovery<F: Fn(&mut Lexer) -> bool>(
         &mut self, open: u8, close: u8, func: F
-    ) -> bool {
+    ) -> Result<bool, ()> {
         if Some(open) != self.source.next() {
-            return true;
+            return Ok(false);
         }
 
         self.source.consume();
-        if self.consume_whitespace(false).is_err() { return false };
+        if self.consume_whitespace(false).is_err() { return Err(()) };
         let mut had_comma = true;
         loop {
             if Some(close) == self.source.next() {
                 self.source.consume();
-                return true;
+                return Ok(true);
             } else if !had_comma {
-                return false;
+                return Err(());
             }
 
-            if !func(self) { return false; }
-            if self.consume_whitespace(false).is_err() { return false };
+            if !func(self) { return Err(()); }
+            if self.consume_whitespace(false).is_err() { return Err(()) };
 
             had_comma = self.source.next() == Some(b',');
             if had_comma {
                 self.source.consume();
-                if self.consume_whitespace(false).is_err() { return false; }
+                if self.consume_whitespace(false).is_err() { return Err(()); }
             }
         }
     }
@@ -480,6 +507,7 @@ impl Lexer<'_> {
         };
 
         // Consume the type
+        debug_log!("consume_type2: {}", debug_line!(self.source));
         let pos = self.source.pos();
         let parser_type_variant = if self.has_keyword(b"msg") {
             self.consume_keyword(b"msg")?;
@@ -600,6 +628,7 @@ impl Lexer<'_> {
     /// position.
     fn maybe_consume_type_spilled_without_pos_recovery(&mut self) -> bool {
         // Consume type identifier
+        debug_log!("maybe_consume_type_spilled_...: {}", debug_line!(self.source));
         if self.has_type_keyword() {
             self.consume_any_chars();
         } else {
@@ -610,11 +639,15 @@ impl Lexer<'_> {
         // Consume any polymorphic arguments that follow the type identifier
         let mut backup_pos = self.source.pos();
         if self.consume_whitespace(false).is_err() { return false; }
-        if !self.maybe_consume_poly_args_spilled_without_pos_recovery() { return false; }
+        match self.maybe_consume_poly_args_spilled_without_pos_recovery() {
+            Ok(true) => backup_pos = self.source.pos(),
+            Ok(false) => {},
+            Err(()) => return false
+        }
+        
         // Consume any array specifiers. Make sure we always leave the input
         // position at the end of the last array specifier if we do find a
         // valid type
-
         if self.consume_whitespace(false).is_err() { return false; }
         while let Some(b'[') = self.source.next() {
             self.source.consume();
@@ -641,8 +674,10 @@ impl Lexer<'_> {
 
     /// Attempts to consume polymorphic arguments without returning them. If it
     /// doesn't encounter well-formed polymorphic arguments, then the input
-    /// position is left at a "random" position.
-    fn maybe_consume_poly_args_spilled_without_pos_recovery(&mut self) -> bool {
+    /// position is left at a "random" position. Returns a boolean indicating if
+    /// the poly_args list was present.
+    fn maybe_consume_poly_args_spilled_without_pos_recovery(&mut self) -> Result<bool, ()> {
+        debug_log!("maybe_consume_poly_args_spilled_...: {}", debug_line!(self.source));
         self.consume_comma_separated_spilled_without_pos_recovery(
             b'<', b'>', |lexer| {
                 lexer.maybe_consume_type_spilled_without_pos_recovery()
@@ -1430,7 +1465,7 @@ impl Lexer<'_> {
         let backup_pos = self.source.pos();
         let result = self.consume_namespaced_identifier_spilled().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
-            self.maybe_consume_poly_args_spilled_without_pos_recovery() &&
+            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
             self.source.next() == Some(b'{');
 
@@ -1440,6 +1475,7 @@ impl Lexer<'_> {
 
     fn consume_struct_literal_expression(&mut self, h: &mut Heap) -> Result<LiteralExpressionId, ParseError2> {
         // Consume identifier and polymorphic arguments
+        debug_log!("consume_struct_literal_expression: {}", debug_line!(self.source));
         let position = self.source.pos();
         let identifier = self.consume_namespaced_identifier()?;
         self.consume_whitespace(false)?;
@@ -1492,7 +1528,7 @@ impl Lexer<'_> {
 
         if self.consume_namespaced_identifier_spilled().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
-            self.maybe_consume_poly_args_spilled_without_pos_recovery() &&
+            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
             self.source.next() == Some(b'(') {
             // Seems like we have a function call or an enum literal
@@ -1506,6 +1542,7 @@ impl Lexer<'_> {
         let position = self.source.pos();
 
         // Consume method identifier
+        debug_log!("consume_call_expression: {}", debug_line!(self.source));
         let method;
         if self.has_keyword(b"get") {
             self.consume_keyword(b"get")?;
@@ -1564,6 +1601,7 @@ impl Lexer<'_> {
         h: &mut Heap,
     ) -> Result<VariableExpressionId, ParseError2> {
         let position = self.source.pos();
+        debug_log!("consume_variable_expression: {}", debug_line!(self.source));
         let identifier = self.consume_namespaced_identifier()?;
         Ok(h.alloc_variable_expression(|this| VariableExpression {
             this,
@@ -2394,8 +2432,32 @@ impl Lexer<'_> {
                     module_id: None,
                     symbols: Vec::new()
                 }))
+            } else if self.has_identifier() {
+                let position = self.source.pos();
+                let name = self.consume_ident()?;
+                self.consume_whitespace(false)?;
+                let alias = if self.has_string(b"as") {
+                    self.consume_string(b"as")?;
+                    self.consume_whitespace(true)?;
+                    self.consume_ident()?
+                } else {
+                    name.clone()
+                };
+
+                h.alloc_import(|this| Import::Symbols(ImportSymbols{
+                    this,
+                    position,
+                    module_name: value,
+                    module_id: None,
+                    symbols: vec![AliasedSymbol{
+                        position,
+                        name,
+                        alias,
+                        definition_id: None
+                    }]
+                }))
             } else {
-                return Err(self.error_at_pos("Expected '*' or '{'"));
+                return Err(self.error_at_pos("Expected '*', '{' or a symbol name"));
             }
         } else {
             // No explicit alias or subimports, so implicit alias
