@@ -194,12 +194,6 @@ impl Lexer<'_> {
         let next = self.source.lookahead(keyword.len());
         if next.is_none() { return true; }
         return !is_ident_rest(next);
-        
-        if let Some(next) = self.source.lookahead(keyword.len()) {
-            !(next >= b'A' && next <= b'Z' || next >= b'a' && next <= b'z')
-        } else {
-            true
-        }
     }
     fn consume_keyword(&mut self, keyword: &[u8]) -> Result<(), ParseError2> {
         let len = keyword.len();
@@ -477,6 +471,71 @@ impl Lexer<'_> {
         Ok(())
     }
 
+    fn consume_namespaced_identifier2(&mut self, h: &mut Heap) -> Result<NamespacedIdentifier2, ParseError2> {
+        if self.has_reserved() {
+            return Err(self.error_at_pos("Encountered reserved keyword"));
+        }
+
+        // Consumes a part of the namespaced identifier, returns a boolean
+        // indicating whether polymorphic arguments were specified.
+        fn consume_part(
+            l: &mut Lexer, h: &mut Heap, ident: &mut NamespacedIdentifier2,
+            backup_pos: &mut InputPosition
+        ) -> Result<(), ParseError2> {
+            // Consume identifier
+            let ident_start = ident.value.len();
+            ident.value.extend(l.consume_ident()?);
+            ident.parts.push(NamespacedIdentifierPart::Identifier{
+                start: ident_start as u16,
+                end: ident.value.len() as u16
+            });
+
+            // Maybe consume polymorphic args.
+            *backup_pos = l.source.pos();
+            l.consume_whitespace(false)?;
+            let had_poly_args = match l.consume_polymorphic_args(h, true)? {
+                Some(args) => {
+                    let poly_start = ident.poly_args.len();
+                    ident.poly_args.extend(args);
+
+                    ident.parts.push(NamespacedIdentifierPart::PolyArgs{
+                        start: poly_start as u16,
+                        end: ident.poly_args.len() as u16,
+                    });
+
+                    *backup_pos = l.source.pos();
+                },
+                None => {}
+            };
+
+            Ok(had_poly_args)
+        }
+
+        let mut ident = NamespacedIdentifier2{
+            position: self.source.pos(),
+            value: Vec::new(),
+            poly_args: Vec::new(),
+            parts: Vec::new(),
+        };
+
+        // Keep consume parts separted by "::". We don't consume the trailing
+        // whitespace, hence we keep a backup position at the end of the last
+        // valid part of the namespaced identifier (i.e. the last ident, or the
+        // last encountered polymorphic arguments).
+        let mut backup_pos = self.source.pos();
+        consume_part(self, h, &mut ident, &mut backup_pos)?;
+        self.consume_whitespace(false)?;
+        while self.has_string(b"::") {
+            self.consume_string(b"::")?;
+            self.consume_whitespace(false)?;
+            consume_part(self, h, &mut ident, &mut backup_pos)?;
+            self.consume_whitespace(false)?;
+        }
+
+        self.source.seek(backup_pos);
+        Ok(ident)
+    }
+
     // Types and type annotations
 
     /// Consumes a type definition. When called the input position should be at
@@ -544,7 +603,7 @@ impl Lexer<'_> {
             // TODO: @cleanup: not particularly neat to have this special case
             //  where we enforce polyargs in the parser-phase
             self.consume_keyword(b"in")?;
-            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
+            let poly_args = self.consume_polymorphic_args(h, allow_inference)?.unwrap_or_default();
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
                 .map_err(|infer_error|  {
                     let msg = if infer_error {
@@ -557,7 +616,7 @@ impl Lexer<'_> {
             ParserTypeVariant::Input(poly_arg)
         } else if self.has_keyword(b"out") {
             self.consume_keyword(b"out")?;
-            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
+            let poly_args = self.consume_polymorphic_args(h, allow_inference)?.unwrap_or_default();
             let poly_arg = reduce_port_poly_args(h, &pos, poly_args)
                 .map_err(|infer_error| {
                     let msg = if infer_error {
@@ -570,9 +629,8 @@ impl Lexer<'_> {
             ParserTypeVariant::Output(poly_arg)
         } else {
             // Must be a symbolic type
-            let identifier = self.consume_namespaced_identifier()?;
-            let poly_args = self.consume_polymorphic_args(h, allow_inference)?;
-            ParserTypeVariant::Symbolic(SymbolicParserType{identifier, poly_args, variant: None})
+            let identifier = self.consume_namespaced_identifier2(h)?;
+            ParserTypeVariant::Symbolic(SymbolicParserType{identifier, variant: None})
         };
 
         // If the type was a basic type (not supporting polymorphic type
@@ -693,18 +751,11 @@ impl Lexer<'_> {
     /// Polymorphic arguments represent the specification of the parametric
     /// types of a polymorphic type: they specify the value of the polymorphic
     /// type's polymorphic variables.
-    fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Vec<ParserTypeId>, ParseError2> {
-        let backup_pos = self.source.pos();
-        match self.consume_comma_separated(
+    fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Option<Vec<ParserTypeId>>, ParseError2> {
+        self.consume_comma_separated(
             h, b'<', b'>', "Expected the end of the polymorphic argument list",
             |lexer, heap| lexer.consume_type2(heap, allow_inference)
-        )? {
-            Some(poly_args) => Ok(poly_args),
-            None => {
-                self.source.seek(backup_pos);
-                Ok(vec![])
-            }
-        }
+        )
     }
 
     /// Consumes polymorphic variables. These are identifiers that are used
@@ -1477,9 +1528,7 @@ impl Lexer<'_> {
         // Consume identifier and polymorphic arguments
         debug_log!("consume_struct_literal_expression: {}", debug_line!(self.source));
         let position = self.source.pos();
-        let identifier = self.consume_namespaced_identifier()?;
-        self.consume_whitespace(false)?;
-        let poly_args = self.consume_polymorphic_args(h, true)?;
+        let identifier = self.consume_namespaced_identifier2(h)?;
         self.consume_whitespace(false)?;
 
         // Consume fields
@@ -1507,7 +1556,6 @@ impl Lexer<'_> {
             position,
             value: Literal::Struct(LiteralStruct{
                 identifier,
-                poly_args,
                 fields,
                 definition: None,
             }),
@@ -1557,7 +1605,7 @@ impl Lexer<'_> {
             self.consume_keyword(b"create")?;
             method = Method::Create;
         } else {
-            let identifier = self.consume_namespaced_identifier()?;
+            let identifier = self.consume_namespaced_identifier2(h)?;
             method = Method::Symbolic(MethodSymbolic{
                 identifier,
                 definition: None
@@ -1566,7 +1614,7 @@ impl Lexer<'_> {
 
         // Consume polymorphic arguments
         self.consume_whitespace(false)?;
-        let poly_args = self.consume_polymorphic_args(h, true)?;
+        let poly_args = self.consume_polymorphic_args(h, true)?.unwrap_or_default();
 
         // Consume arguments to call
         self.consume_whitespace(false)?;
@@ -1779,7 +1827,7 @@ impl Lexer<'_> {
 
         let expect_whitespace = self.source.next() != Some(b'<');
         self.consume_whitespace(expect_whitespace)?;
-        let poly_args = self.consume_polymorphic_args(h, true)?;
+        let poly_args = self.consume_polymorphic_args(h, true)?.unwrap_or_default();
         let poly_arg_id = match poly_args.len() {
             0 => h.alloc_parser_type(|this| ParserType{
                 this, pos: position.clone(), variant: ParserTypeVariant::Inferred,

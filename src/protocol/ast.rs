@@ -6,10 +6,13 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Index, IndexMut};
 
 use super::arena::{Arena, Id};
-// use super::containers::StringAllocator;
-
-// TODO: @cleanup, transform wrapping types into type aliases where possible
 use crate::protocol::inputsource::*;
+
+/// Global limits to the AST, should be checked by lexer and parser. Some are
+/// arbitrary
+const MAX_LEVEL: usize = 128;
+const MAX_NAMESPACES: usize = 64;
+
 
 /// Helper macro that defines a type alias for a AST element ID. In this case 
 /// only used to alias the `Id<T>` types.
@@ -633,6 +636,133 @@ impl PartialEq<NamespacedIdentifier> for Identifier {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum NamespacedIdentifierPart {
+    // Regular identifier
+    Identifier{start: u16, end: u16},
+    // Polyargs associated with a preceding identifier
+    PolyArgs{start: u16, end: u16},
+}
+
+impl NamespacedIdentifierPart {
+    fn is_identifier(&self) -> bool {
+        match self {
+            NamespacedIdentifierPart::Identifier{..} => true,
+            NamespacedIdentifierPart::PolyArgs{..} => false,
+        }
+    }
+
+    fn as_identifier(&self) -> (u16, u16) {
+        match self {
+            NamespacedIdentifierPart::Identifier{start, end} => (*start, *end),
+            NamespacedIdentifierPart::PolyArgs{..} => {
+                unreachable!("Tried to obtain {:?} as Identifier", self);
+            }
+        }
+    }
+
+    fn as_poly_args(&self) -> (u16, u16) {
+        match self {
+            NamespacedIdentifierPart::PolyArgs{start, end} => (*start, *end),
+            NamespacedIdentifierPart::Identifier{..} => {
+                unreachable!("Tried to obtain {:?} as PolyArgs", self)
+            }
+        }
+    }
+}
+
+/// An identifier with optional namespaces and polymorphic variables
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NamespacedIdentifier2 {
+    pub position: InputPosition,
+    pub value: Vec<u8>, // Full name as it resides in the input source
+    pub poly_args: Vec<ParserTypeId>, // All poly args littered throughout the namespaced identifier
+    pub parts: Vec<NamespacedIdentifierPart>, // Indices into value/poly_args
+}
+
+impl NamespacedIdentifier2 {
+    pub fn iter(&self) -> NamespacedIdentifier2Iter {
+        return NamespacedIdentifier2Iter{
+            identifier: self,
+            element_idx: 0
+        }
+    }
+}
+
+impl PartialEq for NamespacedIdentifier2 {
+    fn eq(&self, other: &Self) -> bool {
+        return self.value == other.value
+    }
+}
+
+impl PartialEq<Identifier> for NamespacedIdentifier2 {
+    fn eq(&self, other: &Identifier) -> bool {
+        return self.value == other.value
+    }
+}
+
+#[derive(Debug)]
+pub struct NamespacedIdentifier2Iter<'a> {
+    identifier: &'a NamespacedIdentifier2,
+    element_idx: usize,
+}
+
+impl<'a> Iterator for NamespacedIdentifier2Iter<'a> {
+    type Item = (&'a [u8], Option<&'a [ParserTypeId]>);
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.get(self.element_idx) {
+            Some(result) => {
+                self.element_idx += 1;
+                Some(result)
+            },
+            None => None
+        }
+    }
+}
+
+impl<'a> NamespacedIdentifier2Iter<'a> {
+    pub fn num_returned(&self) -> usize {
+        return self.element_idx;
+    }
+
+    pub fn num_remaining(&self) -> usize {
+        return self.identifier.parts.len() - self.element_idx;
+    }
+
+    pub fn get(&self, idx: usize) -> Option<<Self as Iterator>::Item> {
+        if idx >= self.identifier.parts.len() { 
+            return None 
+        }
+
+        let cur_part = &self.identifier.parts[idx];
+        let next_part = self.identifier.parts.get(idx);
+
+        let (ident_start, ident_end) = cur_part.as_identifier();
+        let poly_slice = match next_part {
+            Some(part) => match part {
+                NamespacedIdentifierPart::Identifier{..} => None,
+                NamespacedIdentifierPart::PolyArgs{start, end} => Some(
+                    &self.identifier.poly_args[*start as usize..*end as usize]
+                ),
+            },
+            None => None
+        };
+
+        Some((
+            &self.identifier.value[ident_start as usize..ident_end as usize],
+            poly_slice
+        ))
+    }
+
+    pub fn prev(&self) -> Option<<Self as Iterator>::Item> {
+        if self.element_idx == 0 {
+            return None;
+        }
+
+        self.get(self.element_idx - 1)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NamespacedIdentifier {
     pub position: InputPosition,
     pub num_namespaces: u8,
@@ -771,12 +901,7 @@ pub struct ParserType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolicParserType {
     // Phase 1: parser
-    pub identifier: NamespacedIdentifier,
-    /// The user-specified polymorphic arguments. Zero-length implies that the
-    /// user did not specify any of them, and they're either not needed or all
-    /// need to be inferred. Otherwise the number of polymorphic arguments must
-    /// match those of the corresponding definition
-    pub poly_args: Vec<ParserTypeId>,
+    pub identifier: NamespacedIdentifier2,
     // Phase 2: validation/linking (for types in function/component bodies) and
     //  type table construction (for embedded types of structs/unions)
     pub variant: Option<SymbolicParserTypeVariant>
@@ -859,7 +984,7 @@ pub enum PrimitiveType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrimitiveSymbolic {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) identifier: NamespacedIdentifier, // TODO: @remove at some point, also remove NSIdent itself
     // Phase 2: typing
     pub(crate) definition: Option<DefinitionId>
 }
@@ -997,8 +1122,7 @@ pub struct LiteralStructField {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiteralStruct {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
-    pub(crate) poly_args: Vec<ParserTypeId>,
+    pub(crate) identifier: NamespacedIdentifier2,
     pub(crate) fields: Vec<LiteralStructField>,
     // Phase 2: linker
     pub(crate) definition: Option<DefinitionId>
@@ -1007,7 +1131,7 @@ pub struct LiteralStruct {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiteralEnum {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) identifier: NamespacedIdentifier2,
     pub(crate) poly_args: Vec<ParserTypeId>,
     // Phase 2: linker
     pub(crate) definition: Option<DefinitionId>,
@@ -1025,7 +1149,7 @@ pub enum Method {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MethodSymbolic {
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) identifier: NamespacedIdentifier2,
     pub(crate) definition: Option<DefinitionId>
 }
 
@@ -2461,7 +2585,7 @@ pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: NamespacedIdentifier,
+    pub identifier: NamespacedIdentifier2,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,

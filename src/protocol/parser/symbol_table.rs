@@ -308,20 +308,19 @@ impl SymbolTable {
         self.symbol_lookup.get(&SymbolKey{ module_id: within_module_id, symbol_name: identifier.clone() })
     }
 
-    /// Resolves a namespaced symbol. It will try to go as far as possible in
-    /// actually finding a definition or a namespace. So a namespace might be
-    /// resolved, after it which it finds an actual definition. It may be that
-    /// the namespaced identifier has more elements that should be checked
-    /// (i.e. an enum variant, or simply an erroneous instance of too many
-    /// chained identifiers). This function will return None if nothing could be
-    /// resolved at all.
+    /// Resolves a namespaced symbol. This method will go as far as possible in
+    /// going to the right symbol. It will halt the search when:
+    /// 1. Polymorphic arguments are encountered on the identifier.
+    /// 2. A non-namespace symbol is encountered.
+    /// 3. A part of the identifier couldn't be resolved to anything
     pub(crate) fn resolve_namespaced_symbol<'t, 'i>(
-        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier
-    ) -> Option<(&SymbolValue, NamespacedIdentifierIter<'i>)> {
+        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier2
+    ) -> (Option<&'t Symbol>, &'i NamespacedIdentifier2Iter) {
         let mut iter = identifier.iter();
         let mut symbol: Option<&SymbolValue> = None;
         let mut within_module_id = root_module_id;
-        while let Some(partial) = iter.next() {
+
+        while let Some((partial, poly_args)) = iter.next() {
             // Lookup the symbol within the currently iterated upon module
             let lookup_key = SymbolKey{ module_id: within_module_id, symbol_name: Vec::from(partial) };
             let new_symbol = self.symbol_lookup.get(&lookup_key);
@@ -329,7 +328,7 @@ impl SymbolTable {
             match new_symbol {
                 None => {
                     // Can't find anything
-                    break; 
+                    break;
                 },
                 Some(new_symbol) => {
                     // Found something, but if we already moved to another
@@ -339,21 +338,6 @@ impl SymbolTable {
                     match &new_symbol.symbol {
                         Symbol::Namespace(new_root_id) => {
                             if root_module_id != within_module_id {
-                                // Don't jump from module to module, keep the
-                                // old symbol (which must be a Namespace) and
-                                // break
-                                debug_assert!(symbol.is_some());
-                                debug_assert!(symbol.unwrap().is_namespace());
-                                debug_assert!(iter.num_returned() > 1);
-
-                                // For handling this error, we need to revert
-                                // the iterator by one
-                                let to_skip = iter.num_returned() - 1;
-                                iter = identifier.iter();
-                                for _ in 0..to_skip { iter.next(); }
-                                break;
-                            }
-
                             within_module_id = *new_root_id;
                             symbol = Some(new_symbol);
                         },
@@ -381,8 +365,8 @@ impl SymbolTable {
         }
 
         match symbol {
-            None => None,
-            Some(symbol) => Some((symbol, iter))
+            None => Ok(None),
+            Some(symbol) => Ok(Some((symbol, iter)))
         }
     }
 
