@@ -587,7 +587,7 @@ pub struct ImportModule {
     // Phase 1: parser
     pub position: InputPosition,
     pub module_name: Vec<u8>,
-    pub alias: Vec<u8>,
+    pub alias: Identifier,
     // Phase 2: module resolving
     pub module_id: Option<RootId>,
 }
@@ -596,8 +596,8 @@ pub struct ImportModule {
 pub struct AliasedSymbol {
     // Phase 1: parser
     pub position: InputPosition,
-    pub name: Vec<u8>,
-    pub alias: Vec<u8>,
+    pub name: Identifier,
+    pub alias: Identifier,
     // Phase 2: symbol resolving
     pub definition_id: Option<DefinitionId>,
 }
@@ -644,14 +644,14 @@ pub enum NamespacedIdentifierPart {
 }
 
 impl NamespacedIdentifierPart {
-    fn is_identifier(&self) -> bool {
+    pub(crate) fn is_identifier(&self) -> bool {
         match self {
             NamespacedIdentifierPart::Identifier{..} => true,
             NamespacedIdentifierPart::PolyArgs{..} => false,
         }
     }
 
-    fn as_identifier(&self) -> (u16, u16) {
+    pub(crate) fn as_identifier(&self) -> (u16, u16) {
         match self {
             NamespacedIdentifierPart::Identifier{start, end} => (*start, *end),
             NamespacedIdentifierPart::PolyArgs{..} => {
@@ -660,7 +660,7 @@ impl NamespacedIdentifierPart {
         }
     }
 
-    fn as_poly_args(&self) -> (u16, u16) {
+    pub(crate) fn as_poly_args(&self) -> (u16, u16) {
         match self {
             NamespacedIdentifierPart::PolyArgs{start, end} => (*start, *end),
             NamespacedIdentifierPart::Identifier{..} => {
@@ -670,7 +670,11 @@ impl NamespacedIdentifierPart {
     }
 }
 
-/// An identifier with optional namespaces and polymorphic variables
+/// An identifier with optional namespaces and polymorphic variables. Note that 
+/// we allow each identifier to be followed by polymorphic arguments during the 
+/// parsing phase (e.g. Foo<A,B>::Bar<C,D>::Qux). But in our current language 
+/// implementation we can only have valid namespaced identifier that contain one
+/// set of polymorphic arguments at the appropriate position.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NamespacedIdentifier2 {
     pub position: InputPosition,
@@ -685,6 +689,10 @@ impl NamespacedIdentifier2 {
             identifier: self,
             element_idx: 0
         }
+    }
+
+    pub fn has_poly_args(&self) -> bool {
+        return !self.poly_args.is_empty();
     }
 }
 

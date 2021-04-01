@@ -2394,6 +2394,7 @@ impl Lexer<'_> {
         self.consume_keyword(b"import")?;
         self.consume_whitespace(true)?;
         let mut value = Vec::new();
+        let mut last_ident_pos = self.source.pos();
         let mut ident = self.consume_ident()?;
         value.append(&mut ident);
         let mut last_ident_start = 0;
@@ -2401,6 +2402,7 @@ impl Lexer<'_> {
         while self.has_string(b".") {
             self.consume_string(b".")?;
             value.push(b'.');
+            last_ident_pos = self.source.pos();
             ident = self.consume_ident()?;
             last_ident_start = value.len();
             value.append(&mut ident);
@@ -2413,7 +2415,7 @@ impl Lexer<'_> {
         let import = if self.has_string(b"as") {
             self.consume_string(b"as")?;
             self.consume_whitespace(true)?;
-            let alias = self.consume_ident()?;
+            let alias = self.consume_identifier()?;
 
             h.alloc_import(|this| Import::Module(ImportModule{
                 this,
@@ -2433,7 +2435,7 @@ impl Lexer<'_> {
                     |lexer, _heap| {
                         // Symbol name
                         let position = lexer.source.pos();
-                        let name = lexer.consume_ident()?;
+                        let name = lexer.consume_identifier()?;
                         lexer.consume_whitespace(false)?;
 
                         // Symbol alias
@@ -2441,7 +2443,7 @@ impl Lexer<'_> {
                             // With alias
                             lexer.consume_string(b"as")?;
                             lexer.consume_whitespace(true)?;
-                            let alias = lexer.consume_ident()?;
+                            let alias = lexer.consume_identifier()?;
 
                             Ok(AliasedSymbol{
                                 position,
@@ -2482,12 +2484,12 @@ impl Lexer<'_> {
                 }))
             } else if self.has_identifier() {
                 let position = self.source.pos();
-                let name = self.consume_ident()?;
+                let name = self.consume_identifier()?;
                 self.consume_whitespace(false)?;
                 let alias = if self.has_string(b"as") {
                     self.consume_string(b"as")?;
                     self.consume_whitespace(true)?;
-                    self.consume_ident()?
+                    self.consume_identifier()?
                 } else {
                     name.clone()
                 };
@@ -2509,12 +2511,15 @@ impl Lexer<'_> {
             }
         } else {
             // No explicit alias or subimports, so implicit alias
-            let alias = Vec::from(&value[last_ident_start..]);
+            let alias_value = Vec::from(&value[last_ident_start..]);
             h.alloc_import(|this| Import::Module(ImportModule{
                 this,
                 position,
                 module_name: value,
-                alias,
+                alias: Identifier{
+                    position: last_ident_pos,
+                    value: Vec::from(alias_value),
+                },
                 module_id: None,
             }))
         };

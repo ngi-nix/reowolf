@@ -146,3 +146,8 @@ fn test_multi_symbol_import() {
     //     .compile()
     //     .expect_ok();
 }
+
+// TODO: Test incorrect imports:
+//  1. importing a module
+//  2. import something a module imports
+//  3. import something that doesn't exist in a module

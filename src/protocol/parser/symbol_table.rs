@@ -17,6 +17,29 @@ struct SymbolKey {
     symbol_name: Vec<u8>,
 }
 
+impl SymbolKey {
+    fn from_identifier(module_id: RootId, symbol: &Identifier) -> Self {
+        Self{ module_id, symbol_name: symbol.value.clone() }
+    }
+
+    fn from_namespaced_identifier(module_id: RootId, symbol: &NamespacedIdentifier2) -> Self {
+        // Strip polymorpic arguments from the identifier
+        let symbol_name = Vec::with_capacity(symbol.value.len());
+        debug_assert!(symbol.parts.len() > 0 && symbol.parts[0].is_identifier());
+
+        let mut iter = symbol.iter();
+        let (first_ident, _) = iter.next().unwrap();
+        symbol_name.extend(first_ident);
+
+        for (ident, _) in iter {
+            symbol_name.push(b':');
+            symbol_name.extend(ident);
+        }
+
+        Self{ module_id, symbol_name }
+    }
+}
+
 pub(crate) enum Symbol {
     Namespace(RootId),
     Definition((RootId, DefinitionId)),
@@ -144,7 +167,7 @@ impl SymbolTable {
                 let definition = &heap[*definition_id];
                 let identifier = definition.identifier();
                 if let Err(previous_position) = self.add_definition_symbol(
-                    module.root_id, identifier.position, &identifier.value,
+                    identifier.position, SymbolKey::from_identifier(module.root_id, &identifier),
                     module.root_id, *definition_id
                 ) {
                     return Err(
@@ -175,8 +198,8 @@ impl SymbolTable {
 
                         // Add the target module under its alias
                         if let Err(previous_position) = self.add_namespace_symbol(
-                            module.root_id, import.position,
-                            &import.alias, target_root_id
+                            import.position, SymbolKey::from_identifier(module.root_id, &import.alias),
+                            target_root_id
                         ) {
                             return Err(
                                 ParseError2::new_error(&module.source, import.position, "Symbol is multiply defined")
@@ -202,7 +225,7 @@ impl SymbolTable {
                                 let definition = &heap[*definition_id];
                                 let identifier = definition.identifier();
                                 if let Err(previous_position) = self.add_definition_symbol(
-                                    module.root_id, import.position, &identifier.value,
+                                    import.position, SymbolKey::from_identifier(module.root_id, identifier),
                                     target_root_id, *definition_id
                                 ) {
                                     return Err(
@@ -232,7 +255,8 @@ impl SymbolTable {
                                 // to "import a module's imported symbol". And so if we do find
                                 // a symbol match, we need to make sure it is a definition from
                                 // within that module by checking `source_root_id == target_root_id`
-                                let target_symbol = self.resolve_symbol(target_root_id, &symbol.name);
+                                let key = SymbolKey::from_identifier(target_root_id, &symbol.name);
+                                let target_symbol = self.symbol_lookup.get(&key);
                                 let symbol_definition_id = match target_symbol {
                                     Some(target_symbol) => {
                                         match target_symbol.symbol {
@@ -262,7 +286,7 @@ impl SymbolTable {
                                 let symbol_definition_id = symbol_definition_id.unwrap();
 
                                 if let Err(previous_position) = self.add_definition_symbol(
-                                    module.root_id, symbol.position, &symbol.alias,
+                                    symbol.position, SymbolKey::from_identifier(module.root_id, &symbol.alias),
                                     target_root_id, symbol_definition_id
                                 ) {
                                     return Err(
@@ -302,20 +326,16 @@ impl SymbolTable {
         self.module_lookup.get(identifier).map(|v| *v)
     }
 
-    /// Resolves a symbol within a particular module, indicated by its RootId,
-    /// with a single non-namespaced identifier
-    pub(crate) fn resolve_symbol(&self, within_module_id: RootId, identifier: &Vec<u8>) -> Option<&SymbolValue> {
-        self.symbol_lookup.get(&SymbolKey{ module_id: within_module_id, symbol_name: identifier.clone() })
-    }
-
     /// Resolves a namespaced symbol. This method will go as far as possible in
     /// going to the right symbol. It will halt the search when:
     /// 1. Polymorphic arguments are encountered on the identifier.
     /// 2. A non-namespace symbol is encountered.
     /// 3. A part of the identifier couldn't be resolved to anything
+    /// The returned iterator will always point to the next symbol (even if 
+    /// nothing was found)
     pub(crate) fn resolve_namespaced_symbol<'t, 'i>(
         &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier2
-    ) -> (Option<&'t Symbol>, &'i NamespacedIdentifier2Iter) {
+    ) -> (Option<&'t SymbolValue>, NamespacedIdentifier2Iter<'i>) {
         let mut iter = identifier.iter();
         let mut symbol: Option<&SymbolValue> = None;
         let mut within_module_id = root_module_id;
@@ -328,6 +348,7 @@ impl SymbolTable {
             match new_symbol {
                 None => {
                     // Can't find anything
+                    symbol = None;
                     break;
                 },
                 Some(new_symbol) => {
@@ -338,6 +359,14 @@ impl SymbolTable {
                     match &new_symbol.symbol {
                         Symbol::Namespace(new_root_id) => {
                             if root_module_id != within_module_id {
+                                // This new symbol is imported by a foreign
+                                // module, so this is an error
+                                debug_assert!(symbol.is_some());
+                                debug_assert!(symbol.unwrap().is_namespace());
+                                debug_assert!(iter.num_returned() > 1);
+                                symbol = None;
+                                break;
+                            }
                             within_module_id = *new_root_id;
                             symbol = Some(new_symbol);
                         },
@@ -347,13 +376,11 @@ impl SymbolTable {
                             // module.
                             if root_module_id != within_module_id && within_module_id != *definition_root_id {
                                 // This is an imported definition within the module
-                                // TODO: Maybe factor out? Dunno...
+                                // So keep the old 
                                 debug_assert!(symbol.is_some());
                                 debug_assert!(symbol.unwrap().is_namespace());
                                 debug_assert!(iter.num_returned() > 1);
-                                let to_skip = iter.num_returned() - 1;
-                                iter = identifier.iter();
-                                for _ in 0..to_skip { iter.next(); }
+                                symbol = None;
                                 break;
                             }
                             symbol = Some(new_symbol);
@@ -362,11 +389,17 @@ impl SymbolTable {
                     }
                 }
             }
+
+            if poly_args.is_some() {
+                // Polymorphic argument specification should also be a fully 
+                // resolved result.
+                break;
+            }
         }
 
         match symbol {
-            None => Ok(None),
-            Some(symbol) => Ok(Some((symbol, iter)))
+            None => (None, iter),
+            Some(symbol) => (Some(symbol), iter)
         }
     }
 
@@ -377,12 +410,8 @@ impl SymbolTable {
     // Note: I would love to return a reference to the value, but Rust is
     // preventing me from doing so... That, or I'm not smart enough...
     fn add_namespace_symbol(
-        &mut self, origin_module_id: RootId, origin_position: InputPosition, symbol_name: &Vec<u8>, target_module_id: RootId
+        &mut self, origin_position: InputPosition, key: SymbolKey, target_module_id: RootId
     ) -> Result<(), InputPosition> {
-        let key = SymbolKey{
-            module_id: origin_module_id,
-            symbol_name: symbol_name.clone()
-        };
         match self.symbol_lookup.entry(key) {
             Entry::Occupied(o) => Err(o.get().position),
             Entry::Vacant(v) => {
@@ -400,13 +429,9 @@ impl SymbolTable {
     /// together with the previous definition's source position (in the origin
     /// module's source file).
     fn add_definition_symbol(
-        &mut self, origin_module_id: RootId, origin_position: InputPosition, symbol_name: &Vec<u8>,
+        &mut self, origin_position: InputPosition, key: SymbolKey,
         target_module_id: RootId, target_definition_id: DefinitionId,
     ) -> Result<(), InputPosition> {
-        let key = SymbolKey{
-            module_id: origin_module_id,
-            symbol_name: symbol_name.clone()
-        };
         match self.symbol_lookup.entry(key) {
             Entry::Occupied(o) => Err(o.get().position),
             Entry::Vacant(v) => {

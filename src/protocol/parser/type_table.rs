@@ -857,14 +857,14 @@ impl TypeTable {
                     // polymorphic arguments. If so then we can halt the
                     // execution
                     for (poly_arg_idx, poly_arg) in poly_vars.iter().enumerate() {
-                        if *poly_arg == symbolic.identifier {
+                        if symbolic.identifier == *poly_arg {
                             set_resolve_result(ResolveResult::PolyArg(poly_arg_idx));
                             continue 'resolve_loop;
                         }
                     }
 
                     // Lookup the definition in the symbol table
-                    let symbol = ctx.symbols.resolve_namespaced_symbol(root_id, &symbolic.identifier);
+                    let (symbol, mut ident_iter) = ctx.symbols.resolve_namespaced_symbol(root_id, &symbolic.identifier);
                     if symbol.is_none() {
                         return Err(ParseError2::new_error(
                             &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
@@ -872,21 +872,35 @@ impl TypeTable {
                         ))
                     }
 
-                    let (symbol_value, mut ident_iter) = symbol.unwrap();
+                    let symbol_value = symbol.unwrap();
+                    let module_source = &ctx.modules[root_id.index as usize].source;
+
                     match symbol_value.symbol {
                         Symbol::Namespace(_) => {
                             // Reference to a namespace instead of a type
+                            let last_ident = ident_iter.prev();
                             return if ident_iter.num_remaining() == 0 {
+                                // Could also have polymorphic args, but we 
+                                // don't care, just throw this error: 
                                 Err(ParseError2::new_error(
-                                    &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
+                                    module_source, symbolic.identifier.position,
                                     "Expected a type, got a module name"
                                 ))
-                            } else {
-                                let next_identifier = ident_iter.next().unwrap();
+                            } else if last_ident.is_some() && last_ident.map(|(_, poly_args)| poly_args.is_some()).unwrap() {
+                                // Halted at a namespaced because we encountered
+                                // polymorphic arguments
                                 Err(ParseError2::new_error(
-                                    &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
-                                    &format!("Could not find symbol '{}' with this module", String::from_utf8_lossy(next_identifier))
+                                    module_source, symbolic.identifier.position,
+                                    "Illegal specification of polymorphic arguments to a module name"
                                 ))
+                            } else {
+                                // Impossible (with the current implementation 
+                                // of the symbol table)
+                                unreachable!(
+                                    "Got namespace symbol with {} returned symbols from {}",
+                                    ident_iter.num_returned(),
+                                    &String::from_utf8_lossy(&symbolic.identifier.value)
+                                );
                             }
                         },
                         Symbol::Definition((root_id, definition_id)) => {
@@ -896,7 +910,7 @@ impl TypeTable {
                                 // we found. Return the appropriate message
                                 return if definition.is_struct() || definition.is_enum() {
                                     Err(ParseError2::new_error(
-                                        &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
+                                        module_source, symbolic.identifier.position,
                                         &format!(
                                             "Unknown type '{}', did you mean to use '{}'?",
                                             String::from_utf8_lossy(&symbolic.identifier.value),
@@ -905,8 +919,8 @@ impl TypeTable {
                                     ))
                                 } else {
                                     Err(ParseError2::new_error(
-                                        &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
-                                        "Unknown type"
+                                        module_source, symbolic.identifier.position,
+                                        "Unknown datatype"
                                     ))
                                 }
                             }
@@ -914,7 +928,7 @@ impl TypeTable {
                             // Found a match, make sure it is a datatype
                             if !(definition.is_struct() || definition.is_enum()) {
                                 return Err(ParseError2::new_error(
-                                    &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
+                                    module_source, symbolic.identifier.position,
                                     "Embedded types must be datatypes (structs or enums)"
                                 ))
                             }
@@ -934,8 +948,11 @@ impl TypeTable {
                             // Note: because we're resolving parser types, not
                             // embedded types, we're parsing a tree, so we can't
                             // get stuck in a cyclic loop.
-                            for poly_arg_type_id in &symbolic.poly_args {
-                                self.parser_type_iter.push_back(*poly_arg_type_id);
+                            let last_ident = ident_iter.prev();
+                            if let Some((_, Some(poly_args))) = last_ident {
+                                for poly_arg_type_id in poly_args {
+                                    self.parser_type_iter.push_back(*poly_arg_type_id);
+                                }
                             }
                         }
                     }
@@ -1001,12 +1018,12 @@ impl TypeTable {
                 },
                 PTV::Symbolic(symbolic) => {
                     for (poly_arg_idx, poly_arg) in poly_args.iter_mut().enumerate() {
-                        if poly_arg.identifier == symbolic.identifier {
+                        if symbolic.identifier == poly_arg.identifier {
                             poly_arg.is_in_use = true;
                             // TODO: If we allow higher-kinded types in the future,
                             //  then we can't continue here, but must resolve the
                             //  polyargs as well
-                            debug_assert!(symbolic.poly_args.is_empty(), "got polymorphic arguments to a polymorphic variable");
+                            debug_assert!(!symbolic.identifier.has_poly_args(), "got polymorphic arguments to a polymorphic variable");
                             debug_assert!(symbolic.variant.is_none(), "symbolic parser type's variant already resolved");
                             symbolic.variant = Some(SymbolicParserTypeVariant::PolyArg(type_definition_id, poly_arg_idx));
                             continue 'type_loop;
@@ -1014,20 +1031,31 @@ impl TypeTable {
                     }
 
                     // Must match a definition
-                    let symbol = ctx.symbols.resolve_namespaced_symbol(root_id, &symbolic.identifier);
+                    let (symbol, _) = ctx.symbols.resolve_namespaced_symbol(root_id, &symbolic.identifier);
                     debug_assert!(symbol.is_some(), "could not resolve symbolic parser type when determining poly args");
                     let (symbol, ident_iter) = symbol.unwrap();
                     debug_assert_eq!(ident_iter.num_remaining(), 0, "no exact symbol match when determining poly args");
                     let (_root_id, definition_id) = symbol.as_definition().unwrap();
     
-                    // Must be a struct, enum, or union
+                    // Must be a struct, enum, or union, we checked this
                     let defined_type = self.lookup.get(&definition_id).unwrap();
                     if cfg!(debug_assertions) {
+                        // Make sure type class is correct
                         let type_class = defined_type.definition.type_class();
                         debug_assert!(
                             type_class == TypeClass::Struct || type_class == TypeClass::Enum || type_class == TypeClass::Union,
                             "embedded type's class is not struct, enum or union"
                         );
+                        // Make sure polymorphic arguments occurred at the end
+                        let num_poly = symbolic.identifier.iter()
+                            .map(|(_, v)| v)
+                            .filter(|v| v.is_some())
+                            .count();
+                        debug_assert!(num_poly <= 1, "more than one section with polymorphic arguments");
+                        if num_poly == 1 {
+                            let (_, poly_args) = symbolic.identifier.iter().last().unwrap();
+                            debug_assert!(poly_args.is_some(), "got poly args, but not at end of identifier");
+                        }
                     }
     
                     if symbolic.poly_args.len() != defined_type.poly_args.len() {
