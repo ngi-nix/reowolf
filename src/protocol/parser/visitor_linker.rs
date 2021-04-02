@@ -1239,7 +1239,7 @@ impl ValidityAndLinkerVisitor {
 
     /// Finds a variable in the visitor's scope that must appear before the
     /// specified relative position within that block.
-    fn find_variable(&self, ctx: &Ctx, mut relative_pos: u32, identifier: &NamespacedIdentifier2) -> Result<VariableId, ParseError2> {
+    fn find_variable(&self, ctx: &Ctx, mut relative_pos: u32, identifier: &NamespacedIdentifier) -> Result<VariableId, ParseError2> {
         debug_assert!(self.cur_scope.is_some());
         debug_assert!(identifier.parts.len() == 1, "implement namespaced seeking of target associated with identifier");
 
@@ -1373,7 +1373,7 @@ impl ValidityAndLinkerVisitor {
     //  borrowing errors
     fn find_symbol_of_type<'a>(
         &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable, types: &'a TypeTable,
-        identifier: &NamespacedIdentifier2, expected_type_class: TypeClass
+        identifier: &NamespacedIdentifier, expected_type_class: TypeClass
     ) -> Result<&'a DefinedType, ParseError2> {
         // Find symbol associated with identifier
         let (find_result, _) = find_type_definition(symbols, types, root_id, identifier)

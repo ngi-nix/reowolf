@@ -6,11 +6,11 @@ use super::type_table::*;
 /// Utility result type.
 pub(crate) enum FindTypeResult<'t, 'i> {
     // Found the type exactly
-    Found((&'t DefinedType, NamespacedIdentifier2Iter<'i>)),
+    Found((&'t DefinedType, NamespacedIdentifierIter<'i>)),
     // Could not match symbol
     SymbolNotFound{ident_pos: InputPosition},
     // Matched part of the namespaced identifier, but not completely
-    SymbolPartial{ident_pos: InputPosition, ident_iter: NamespacedIdentifier2Iter<'i>},
+    SymbolPartial{ident_pos: InputPosition, ident_iter: NamespacedIdentifierIter<'i>},
     // Symbol matched, but points to a namespace/module instead of a type
     SymbolNamespace{ident_pos: InputPosition, symbol_pos: InputPosition},
 }
@@ -20,7 +20,7 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
     /// Utility function to transform the `FindTypeResult` into a `Result` where
     /// `Ok` contains the resolved type, and `Err` contains a `ParseError` which
     /// can be readily returned. This is the most common use.
-    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<(&'t DefinedType, NamespacedIdentifier2Iter<'i>), ParseError2> {
+    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<(&'t DefinedType, NamespacedIdentifierIter<'i>), ParseError2> {
         match self {
             FindTypeResult::Found(defined_type) => Ok(defined_type),
             FindTypeResult::SymbolNotFound{ident_pos} => {
@@ -56,7 +56,7 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
 /// must be a type, not a namespace. 
 pub(crate) fn find_type_definition<'t, 'i>(
     symbols: &SymbolTable, types: &'t TypeTable, 
-    root_id: RootId, identifier: &'i NamespacedIdentifier2
+    root_id: RootId, identifier: &'i NamespacedIdentifier
 ) -> FindTypeResult<'t, 'i> {
     // Lookup symbol
     let (symbol, ident_iter) = symbols.resolve_namespaced_identifier(root_id, identifier);
@@ -94,7 +94,7 @@ pub(crate) enum MatchPolymorphResult<'t> {
     Matching,
     InferAll(usize),
     Mismatch{defined_type: &'t DefinedType, ident_position: InputPosition, num_specified: usize},
-    NoneExpected{defined_type: &'t DefinedType, ident_position: InputPosition, num_specified: usize},
+    NoneExpected{defined_type: &'t DefinedType, ident_position: InputPosition},
 }
 
 impl<'t> MatchPolymorphResult<'t> {
@@ -148,7 +148,7 @@ pub(crate) fn match_polymorphic_args_to_vars<'t>(
             return MatchPolymorphResult::NoneExpected{
                 defined_type,
                 ident_position, 
-                num_specified: poly_args.unwrap().len()};
+            };
         }
     } else {
         // Polymorphic variables on type

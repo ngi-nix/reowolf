@@ -22,7 +22,7 @@ impl SymbolKey {
         Self{ module_id, symbol_name: symbol.value.clone() }
     }
 
-    fn from_namespaced_identifier(module_id: RootId, symbol: &NamespacedIdentifier2) -> Self {
+    fn from_namespaced_identifier(module_id: RootId, symbol: &NamespacedIdentifier) -> Self {
         Self{ module_id, symbol_name: symbol.strip_poly_args() }
     }
 }
@@ -335,8 +335,8 @@ impl SymbolTable {
     /// The returned iterator will always point to the next symbol (even if 
     /// nothing was found)
     pub(crate) fn resolve_namespaced_identifier<'t, 'i>(
-        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier2
-    ) -> (Option<&'t SymbolValue>, NamespacedIdentifier2Iter<'i>) {
+        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier
+    ) -> (Option<&'t SymbolValue>, NamespacedIdentifierIter<'i>) {
         let mut iter = identifier.iter();
         let mut symbol: Option<&SymbolValue> = None;
         let mut within_module_id = root_module_id;

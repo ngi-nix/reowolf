@@ -629,9 +629,10 @@ impl PartialEq for Identifier {
     }
 }
 
-impl PartialEq<NamespacedIdentifier> for Identifier {
-    fn eq(&self, other: &NamespacedIdentifier) -> bool {
-        return self.value == other.value
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // A source identifier is in ASCII range.
+        write!(f, "{}", String::from_utf8_lossy(&self.value))
     }
 }
 
@@ -677,14 +678,14 @@ impl NamespacedIdentifierPart {
 /// set of polymorphic arguments at the appropriate position.
 /// TODO: @tokens Reimplement/rename once we have a tokenizer
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NamespacedIdentifier2 {
+pub struct NamespacedIdentifier {
     pub position: InputPosition,
     pub value: Vec<u8>, // Full name as it resides in the input source
     pub poly_args: Vec<ParserTypeId>, // All poly args littered throughout the namespaced identifier
     pub parts: Vec<NamespacedIdentifierPart>, // Indices into value/poly_args
 }
 
-impl NamespacedIdentifier2 {
+impl NamespacedIdentifier {
     /// Returns the identifier value without any of the specific polymorphic
     /// arguments.
     pub fn strip_poly_args(&self) -> Vec<u8> {
@@ -705,8 +706,8 @@ impl NamespacedIdentifier2 {
     }
 
     /// Returns an iterator of the elements in the namespaced identifier
-    pub fn iter(&self) -> NamespacedIdentifier2Iter {
-        return NamespacedIdentifier2Iter{
+    pub fn iter(&self) -> NamespacedIdentifierIter {
+        return NamespacedIdentifierIter{
             identifier: self,
             element_idx: 0
         }
@@ -766,12 +767,12 @@ impl NamespacedIdentifier2 {
 /// Iterator over elements of the namespaced identifier. The element index will
 /// only ever be at the start of an identifier element.
 #[derive(Debug)]
-pub struct NamespacedIdentifier2Iter<'a> {
-    identifier: &'a NamespacedIdentifier2,
+pub struct NamespacedIdentifierIter<'a> {
+    identifier: &'a NamespacedIdentifier,
     element_idx: usize,
 }
 
-impl<'a> Iterator for NamespacedIdentifier2Iter<'a> {
+impl<'a> Iterator for NamespacedIdentifierIter<'a> {
     type Item = (&'a [u8], Option<&'a [ParserTypeId]>);
     fn next(&mut self) -> Option<Self::Item> {
         match self.get(self.element_idx) {
@@ -787,7 +788,7 @@ impl<'a> Iterator for NamespacedIdentifier2Iter<'a> {
     }
 }
 
-impl<'a> NamespacedIdentifier2Iter<'a> {
+impl<'a> NamespacedIdentifierIter<'a> {
     /// Returns number of parts iterated over, may not correspond to number of
     /// times one called `next()` because returning an identifier with 
     /// polymorphic arguments increments the internal counter by 2.
@@ -862,95 +863,6 @@ impl<'a> NamespacedIdentifier2Iter<'a> {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NamespacedIdentifier {
-    pub position: InputPosition,
-    pub num_namespaces: u8,
-    pub value: Vec<u8>,
-}
-
-impl NamespacedIdentifier {
-    pub(crate) fn iter(&self) -> NamespacedIdentifierIter {
-        NamespacedIdentifierIter{
-            value: &self.value,
-            cur_offset: 0,
-            num_returned: 0,
-            num_total: self.num_namespaces
-        }
-    }
-}
-
-impl PartialEq for NamespacedIdentifier {
-    fn eq(&self, other: &Self) -> bool {
-        return self.value == other.value
-    }
-}
-
-impl PartialEq<Identifier> for NamespacedIdentifier {
-    fn eq(&self, other: &Identifier) -> bool {
-        return self.value == other.value;
-    }
-}
-
-// TODO: Just keep ref to NamespacedIdentifier
-pub(crate) struct NamespacedIdentifierIter<'a> {
-    value: &'a Vec<u8>,
-    cur_offset: usize,
-    num_returned: u8,
-    num_total: u8,
-}
-
-impl<'a> NamespacedIdentifierIter<'a> {
-    pub(crate) fn num_returned(&self) -> u8 {
-        return self.num_returned;
-    }
-    pub(crate) fn num_remaining(&self) -> u8 {
-        return self.num_total - self.num_returned
-    }
-    pub(crate) fn returned_section(&self) -> &[u8] {
-        // Offset always includes the two trailing ':' characters
-        let end = if self.cur_offset >= 2 { self.cur_offset - 2 } else { self.cur_offset };
-        return &self.value[..end]
-    }
-}
-
-impl<'a> Iterator for NamespacedIdentifierIter<'a> {
-    type Item = &'a [u8];
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur_offset >= self.value.len() {
-            debug_assert_eq!(self.num_returned, self.num_total);
-            None
-        } else {
-            debug_assert!(self.num_returned < self.num_total);
-            let start = self.cur_offset;
-            let mut end = start;
-            while end < self.value.len() - 1 {
-                if self.value[end] == b':' && self.value[end + 1] == b':' {
-                    self.cur_offset = end + 2;
-                    self.num_returned += 1;
-                    return Some(&self.value[start..end]);
-                }
-                end += 1;
-            }
-
-            // If NamespacedIdentifier is constructed properly, then we cannot
-            // end with "::" in the value, so
-            debug_assert!(end == 0 || (self.value[end - 1] != b':' && self.value[end] != b':'));
-            debug_assert_eq!(self.num_returned + 1, self.num_total);
-            self.cur_offset = self.value.len();
-            self.num_returned += 1;
-            return Some(&self.value[start..]);
-        }
-    }
-}
-
-impl Display for Identifier {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // A source identifier is in ASCII range.
-        write!(f, "{}", String::from_utf8_lossy(&self.value))
-    }
-}
-
 /// TODO: @types Remove the Message -> Byte hack at some point...
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ParserTypeVariant {
@@ -1001,7 +913,7 @@ pub struct ParserType {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolicParserType {
     // Phase 1: parser
-    pub identifier: NamespacedIdentifier2,
+    pub identifier: NamespacedIdentifier,
     // Phase 2: validation/linking (for types in function/component bodies) and
     //  type table construction (for embedded types of structs/unions)
     pub poly_args2: Vec<ParserTypeId>, // taken from identifier or inferred
@@ -1078,24 +990,7 @@ pub enum PrimitiveType {
     Short,
     Int,
     Long,
-    Symbolic(PrimitiveSymbolic)
 }
-
-// TODO: @cleanup, remove PartialEq implementations
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PrimitiveSymbolic {
-    // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier, // TODO: @remove at some point, also remove NSIdent itself
-    // Phase 2: typing
-    pub(crate) definition: Option<DefinitionId>
-}
-
-impl PartialEq for PrimitiveSymbolic {
-    fn eq(&self, other: &Self) -> bool {
-        self.identifier == other.identifier
-    }
-}
-impl Eq for PrimitiveSymbolic{}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Type {
@@ -1156,21 +1051,6 @@ impl Display for Type {
             PrimitiveType::Long => {
                 write!(f, "long")?;
             }
-            PrimitiveType::Symbolic(data) => {
-                // Type data is in ASCII range.
-                if let Some(id) = &data.definition {
-                    write!(
-                        f, "Symbolic({}, id: {})", 
-                        String::from_utf8_lossy(&data.identifier.value),
-                        id.index
-                    )?;
-                } else {
-                    write!(
-                        f, "Symbolic({}, id: Unresolved)",
-                        String::from_utf8_lossy(&data.identifier.value)
-                    )?;
-                }
-            }
         }
         if self.array {
             write!(f, "[]")
@@ -1223,7 +1103,7 @@ pub struct LiteralStructField {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiteralStruct {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier2,
+    pub(crate) identifier: NamespacedIdentifier,
     pub(crate) fields: Vec<LiteralStructField>,
     // Phase 2: linker
     pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier
@@ -1233,9 +1113,9 @@ pub struct LiteralStruct {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LiteralEnum {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier2,
-    pub(crate) poly_args: Vec<ParserTypeId>,
+    pub(crate) identifier: NamespacedIdentifier,
     // Phase 2: linker
+    pub(crate) poly_args2: Vec<ParserTypeId>,
     pub(crate) definition: Option<DefinitionId>,
     pub(crate) variant_idx: usize,
 }
@@ -1251,7 +1131,7 @@ pub enum Method {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MethodSymbolic {
-    pub(crate) identifier: NamespacedIdentifier2,
+    pub(crate) identifier: NamespacedIdentifier,
     pub(crate) definition: Option<DefinitionId>
 }
 
@@ -2687,7 +2567,7 @@ pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub identifier: NamespacedIdentifier2,
+    pub identifier: NamespacedIdentifier,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,

@@ -94,10 +94,10 @@ fn lowercase(x: u8) -> u8 {
     }
 }
 
-fn identifier_as_namespaced(identifier: Identifier) -> NamespacedIdentifier2 {
+fn identifier_as_namespaced(identifier: Identifier) -> NamespacedIdentifier {
     let identifier_len = identifier.value.len();
     debug_assert!(identifier_len < u16::max_value() as usize);
-    NamespacedIdentifier2{
+    NamespacedIdentifier{
         position: identifier.position,
         value: identifier.value,
         poly_args: Vec::new(),
@@ -441,50 +441,8 @@ impl Lexer<'_> {
         self.consume_ident()?;
         Ok(())
     }
-    fn has_namespaced_identifier(&self) -> bool { 
-        self.has_identifier() 
-    }
-    fn consume_namespaced_identifier(&mut self) -> Result<NamespacedIdentifier, ParseError2> {
-        if self.has_reserved() {
-            return Err(self.error_at_pos("Encountered reserved keyword"));
-        }
 
-        let position = self.source.pos();
-        let mut ns_ident = self.consume_ident()?;
-        let mut num_namespaces = 1;
-        while self.has_string(b"::") {
-            self.consume_string(b"::")?;
-            if num_namespaces >= MAX_NAMESPACES {
-                return Err(self.error_at_pos("Too many namespaces in identifier"));
-            }
-            let new_ident = self.consume_ident()?;
-            ns_ident.extend(b"::");
-            ns_ident.extend(new_ident);
-            num_namespaces += 1;
-        }
-
-        Ok(NamespacedIdentifier{
-            position,
-            value: ns_ident,
-            num_namespaces,
-        })
-    }
-    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError2> {
-        // TODO: @performance
-        if self.has_reserved() {
-            return Err(self.error_at_pos("Encountered reserved keyword"));
-        }
-
-        self.consume_ident()?;
-        while self.has_string(b"::") {
-            self.consume_string(b"::")?;
-            self.consume_ident()?;
-        }
-
-        Ok(())
-    }
-
-    fn consume_namespaced_identifier2(&mut self, h: &mut Heap) -> Result<NamespacedIdentifier2, ParseError2> {
+    fn consume_namespaced_identifier(&mut self, h: &mut Heap) -> Result<NamespacedIdentifier, ParseError2> {
         if self.has_reserved() {
             return Err(self.error_at_pos("Encountered reserved keyword"));
         }
@@ -496,7 +454,7 @@ impl Lexer<'_> {
         //  identifier and are instead dealing with a less-than operator. Ugly?
         //  Yes. Needs tokenizer? Yes. 
         fn consume_part(
-            l: &mut Lexer, h: &mut Heap, ident: &mut NamespacedIdentifier2,
+            l: &mut Lexer, h: &mut Heap, ident: &mut NamespacedIdentifier,
             backup_pos: &mut InputPosition
         ) -> Result<(), ParseError2> {
             // Consume identifier
@@ -531,7 +489,7 @@ impl Lexer<'_> {
             Ok(())
         }
 
-        let mut ident = NamespacedIdentifier2{
+        let mut ident = NamespacedIdentifier{
             position: self.source.pos(),
             value: Vec::new(),
             poly_args: Vec::new(),
@@ -554,6 +512,39 @@ impl Lexer<'_> {
 
         self.source.seek(backup_pos);
         Ok(ident)
+    }
+
+    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError2> {
+        if self.has_reserved() {
+            return Err(self.error_at_pos("Encountered reserved keyword"));
+        }
+
+        debug_log!("consume_nsident2_spilled: {}", debug_line!(self.source));
+
+        fn consume_part_spilled(l: &mut Lexer, backup_pos: &mut InputPosition) -> Result<(), ParseError2> {
+            l.consume_ident()?;
+            *backup_pos = l.source.pos();
+            l.consume_whitespace(false)?;
+            match l.maybe_consume_poly_args_spilled_without_pos_recovery() {
+                Ok(true) => { *backup_pos = l.source.pos(); },
+                Ok(false) => {},
+                Err(_) => { return Err(l.error_at_pos("Failed to parse poly args (spilled)")) },
+            }
+            Ok(())
+        }
+
+        let mut backup_pos = self.source.pos();
+        consume_part_spilled(self, &mut backup_pos)?;
+        self.consume_whitespace(false)?;
+        while self.has_string(b"::") {
+            self.consume_string(b"::")?;
+            self.consume_whitespace(false)?;
+            consume_part_spilled(self, &mut backup_pos)?;
+            self.consume_whitespace(false)?;
+        }
+
+        self.source.seek(backup_pos);
+        Ok(())
     }
 
     // Types and type annotations
@@ -649,7 +640,7 @@ impl Lexer<'_> {
             ParserTypeVariant::Output(poly_arg)
         } else {
             // Must be a symbolic type
-            let identifier = self.consume_namespaced_identifier2(h)?;
+            let identifier = self.consume_namespaced_identifier(h)?;
             ParserTypeVariant::Symbolic(SymbolicParserType{identifier, variant: None, poly_args2: Vec::new()})
         };
 
@@ -710,18 +701,13 @@ impl Lexer<'_> {
         if self.has_type_keyword() {
             self.consume_any_chars();
         } else {
-            let ident = self.consume_namespaced_identifier();
+            let ident = self.consume_namespaced_identifier_spilled();
             if ident.is_err() { return false; }
         }
 
         // Consume any polymorphic arguments that follow the type identifier
         let mut backup_pos = self.source.pos();
         if self.consume_whitespace(false).is_err() { return false; }
-        match self.maybe_consume_poly_args_spilled_without_pos_recovery() {
-            Ok(true) => backup_pos = self.source.pos(),
-            Ok(false) => {},
-            Err(()) => return false
-        }
         
         // Consume any array specifiers. Make sure we always leave the input
         // position at the end of the last array specifier if we do find a
@@ -1536,8 +1522,6 @@ impl Lexer<'_> {
         let backup_pos = self.source.pos();
         let result = self.consume_namespaced_identifier_spilled().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
-            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
-            self.consume_whitespace(false).is_ok() &&
             self.source.next() == Some(b'{');
 
         self.source.seek(backup_pos);
@@ -1548,7 +1532,7 @@ impl Lexer<'_> {
         // Consume identifier and polymorphic arguments
         debug_log!("consume_struct_literal_expression: {}", debug_line!(self.source));
         let position = self.source.pos();
-        let identifier = self.consume_namespaced_identifier2(h)?;
+        let identifier = self.consume_namespaced_identifier(h)?;
         self.consume_whitespace(false)?;
 
         // Consume fields
@@ -1597,8 +1581,6 @@ impl Lexer<'_> {
 
         if self.consume_namespaced_identifier_spilled().is_ok() &&
             self.consume_whitespace(false).is_ok() &&
-            self.maybe_consume_poly_args_spilled_without_pos_recovery().is_ok() &&
-            self.consume_whitespace(false).is_ok() &&
             self.source.next() == Some(b'(') {
             // Seems like we have a function call or an enum literal
             result = true;
@@ -1628,7 +1610,7 @@ impl Lexer<'_> {
             self.consume_keyword(b"create")?;
             method = Method::Create;
         } else {
-            let identifier = self.consume_namespaced_identifier2(h)?;
+            let identifier = self.consume_namespaced_identifier(h)?;
             method = Method::Symbolic(MethodSymbolic{
                 identifier,
                 definition: None
