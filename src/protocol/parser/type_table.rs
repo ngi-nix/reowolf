@@ -318,7 +318,7 @@ impl TypeTable {
         }
     }
 
-    pub(crate) fn build_base_types(&mut self, ctx: &mut TypeCtx) -> Result<(), ParseError2> {
+    pub(crate) fn build_base_types(&mut self, ctx: &mut TypeCtx) -> Result<(), ParseError> {
         // Make sure we're allowed to cast root_id to index into ctx.modules
         debug_assert!(self.lookup.is_empty());
         debug_assert!(self.iter.top().is_none());
@@ -380,7 +380,7 @@ impl TypeTable {
 
     /// This function will resolve just the basic definition of the type, it
     /// will not handle any of the monomorphized instances of the type.
-    fn resolve_base_definition<'a>(&'a mut self, ctx: &mut TypeCtx, definition_id: DefinitionId) -> Result<(), ParseError2> {
+    fn resolve_base_definition<'a>(&'a mut self, ctx: &mut TypeCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
         // Check if we have already resolved the base definition
         if self.lookup.contains_key(&definition_id) { return Ok(()); }
 
@@ -415,7 +415,7 @@ impl TypeTable {
     /// not instantiate any monomorphized instances of polymorphic enum
     /// definitions. If a subtype has to be resolved first then this function
     /// will return `false` after calling `ingest_resolve_result`.
-    fn resolve_base_enum_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError2> {
+    fn resolve_base_enum_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
         debug_assert!(ctx.heap[definition_id].is_enum());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base enum already resolved");
         
@@ -452,7 +452,7 @@ impl TypeTable {
             let tag_pos = first_tag_value.unwrap();
             let int_pos = first_int_value.unwrap();
             return Err(
-                ParseError2::new_error(
+                ParseError::new_error(
                     module_source, definition.position,
                     "Illegal combination of enum integer variant(s) and enum union variant(s)"
                 )
@@ -578,7 +578,7 @@ impl TypeTable {
     /// Resolves the basic struct definition to an entry in the type table. It
     /// will not instantiate any monomorphized instances of polymorphic struct
     /// definitions.
-    fn resolve_base_struct_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError2> {
+    fn resolve_base_struct_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
         debug_assert!(ctx.heap[definition_id].is_struct());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base struct already resolved");
 
@@ -633,7 +633,7 @@ impl TypeTable {
     /// Resolves the basic function definition to an entry in the type table. It
     /// will not instantiate any monomorphized instances of polymorphic function
     /// definitions.
-    fn resolve_base_function_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError2> {
+    fn resolve_base_function_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
         debug_assert!(ctx.heap[definition_id].is_function());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base function already resolved");
 
@@ -705,7 +705,7 @@ impl TypeTable {
     /// Resolves the basic component definition to an entry in the type table.
     /// It will not instantiate any monomorphized instancees of polymorphic
     /// component definitions.
-    fn resolve_base_component_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError2> {
+    fn resolve_base_component_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
         debug_assert!(ctx.heap[definition_id].is_component());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base component already resolved");
 
@@ -769,7 +769,7 @@ impl TypeTable {
     /// resolving the current type and exit to the outer resolving loop. In the
     /// latter case the `result` value was `ResolveResult::Unresolved`, implying
     /// that the type must be resolved first.
-    fn ingest_resolve_result(&mut self, ctx: &TypeCtx, result: ResolveResult) -> Result<bool, ParseError2> {
+    fn ingest_resolve_result(&mut self, ctx: &TypeCtx, result: ResolveResult) -> Result<bool, ParseError> {
         match result {
             ResolveResult::BuiltIn | ResolveResult::PolyArg(_) => Ok(true),
             ResolveResult::Resolved(_) => Ok(true),
@@ -777,7 +777,7 @@ impl TypeTable {
                 if self.iter.contains(root_id, definition_id) {
                     // Cyclic dependency encountered
                     // TODO: Allow this
-                    let mut error = ParseError2::new_error(
+                    let mut error = ParseError::new_error(
                         &ctx.modules[root_id.index as usize].source, ctx.heap[definition_id].position(),
                         "Evaluating this type definition results in a cyclic type"
                     );
@@ -817,7 +817,7 @@ impl TypeTable {
     /// tree is not yet resolved, then one may receive a (module, definition)
     /// tuple that does not correspond to the `parser_type_id` passed into this
     /// function.
-    fn resolve_base_parser_type(&mut self, ctx: &TypeCtx, poly_vars: &Vec<Identifier>, root_id: RootId, parser_type_id: ParserTypeId) -> Result<ResolveResult, ParseError2> {
+    fn resolve_base_parser_type(&mut self, ctx: &TypeCtx, poly_vars: &Vec<Identifier>, root_id: RootId, parser_type_id: ParserTypeId) -> Result<ResolveResult, ParseError> {
         use ParserTypeVariant as PTV;
 
         // Prepping iterator
@@ -866,7 +866,7 @@ impl TypeTable {
                     // Lookup the definition in the symbol table
                     let (symbol, mut ident_iter) = ctx.symbols.resolve_namespaced_identifier(root_id, &symbolic.identifier);
                     if symbol.is_none() {
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
                             "Could not resolve type"
                         ))
@@ -882,14 +882,14 @@ impl TypeTable {
                             return if ident_iter.num_remaining() == 0 {
                                 // Could also have polymorphic args, but we 
                                 // don't care, just throw this error: 
-                                Err(ParseError2::new_error(
+                                Err(ParseError::new_error(
                                     module_source, symbolic.identifier.position,
                                     "Expected a type, got a module name"
                                 ))
                             } else if last_ident.is_some() && last_ident.map(|(_, poly_args)| poly_args.is_some()).unwrap() {
                                 // Halted at a namespaced because we encountered
                                 // polymorphic arguments
-                                Err(ParseError2::new_error(
+                                Err(ParseError::new_error(
                                     module_source, symbolic.identifier.position,
                                     "Illegal specification of polymorphic arguments to a module name"
                                 ))
@@ -909,7 +909,7 @@ impl TypeTable {
                                 // Namespaced identifier is longer than the type
                                 // we found. Return the appropriate message
                                 return if definition.is_struct() || definition.is_enum() {
-                                    Err(ParseError2::new_error(
+                                    Err(ParseError::new_error(
                                         module_source, symbolic.identifier.position,
                                         &format!(
                                             "Unknown type '{}', did you mean to use '{}'?",
@@ -918,7 +918,7 @@ impl TypeTable {
                                         )
                                     ))
                                 } else {
-                                    Err(ParseError2::new_error(
+                                    Err(ParseError::new_error(
                                         module_source, symbolic.identifier.position,
                                         "Unknown datatype"
                                     ))
@@ -927,7 +927,7 @@ impl TypeTable {
 
                             // Found a match, make sure it is a datatype
                             if !(definition.is_struct() || definition.is_enum()) {
-                                return Err(ParseError2::new_error(
+                                return Err(ParseError::new_error(
                                     module_source, symbolic.identifier.position,
                                     "Embedded types must be datatypes (structs or enums)"
                                 ))
@@ -989,7 +989,7 @@ impl TypeTable {
         &mut self, ctx: &mut TypeCtx, 
         type_definition_id: DefinitionId, poly_args: &mut [PolyVar], 
         root_id: RootId, embedded_type_id: ParserTypeId,
-    ) -> Result<(), ParseError2> {
+    ) -> Result<(), ParseError> {
         use ParserTypeVariant as PTV;
 
         self.parser_type_iter.clear();
@@ -1065,7 +1065,7 @@ impl TypeTable {
                             format!("accepts {} polymorphic arguments", defined_type.poly_vars.len())
                         };
     
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             module_source, symbolic.identifier.position,
                             &format!(
                                 "The type '{}' {}, but {} polymorphic arguments were provided",
@@ -1090,14 +1090,14 @@ impl TypeTable {
     /// unique names
     fn check_identifier_collision<T: Sized, F: Fn(&T) -> &Identifier>(
         &self, ctx: &TypeCtx, root_id: RootId, items: &[T], getter: F, item_name: &'static str
-    ) -> Result<(), ParseError2> {
+    ) -> Result<(), ParseError> {
         for (item_idx, item) in items.iter().enumerate() {
             let item_ident = getter(item);
             for other_item in &items[0..item_idx] {
                 let other_item_ident = getter(other_item);
                 if item_ident == other_item_ident {
                     let module_source = &ctx.modules[root_id.index as usize].source;
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         module_source, item_ident.position, &format!("This {} is defined more than once", item_name)
                     ).with_postfixed_info(
                         module_source, other_item_ident.position, &format!("The other {} is defined here", item_name)
@@ -1114,14 +1114,14 @@ impl TypeTable {
     /// any symbols defined at the module scope.
     fn check_poly_args_collision(
         &self, ctx: &TypeCtx, root_id: RootId, poly_args: &[Identifier]
-    ) -> Result<(), ParseError2> {
+    ) -> Result<(), ParseError> {
         // Make sure polymorphic arguments are unique and none of the
         // identifiers conflict with any imported scopes
         for (arg_idx, poly_arg) in poly_args.iter().enumerate() {
             for other_poly_arg in &poly_args[..arg_idx] {
                 if poly_arg == other_poly_arg {
                     let module_source = &ctx.modules[root_id.index as usize].source;
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         module_source, poly_arg.position,
                         "This polymorphic argument is defined more than once"
                     ).with_postfixed_info(
@@ -1136,7 +1136,7 @@ impl TypeTable {
             if let Some(symbol) = ctx.symbols.resolve_symbol(root_id, &poly_arg.value) {
                 // We have a conflict
                 let module_source = &ctx.modules[root_id.index as usize].source;
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     module_source, poly_arg.position,
                     "This polymorphic argument conflicts with another symbol"
                 ).with_postfixed_info(

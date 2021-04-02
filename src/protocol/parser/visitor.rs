@@ -3,7 +3,7 @@ use crate::protocol::inputsource::*;
 use crate::protocol::parser::{symbol_table::*, type_table::*, LexedModule};
 
 type Unit = ();
-pub(crate) type VisitorResult = Result<Unit, ParseError2>;
+pub(crate) type VisitorResult = Result<Unit, ParseError>;
 
 /// Globally configured vector capacity for statement buffers in visitor 
 /// implementations

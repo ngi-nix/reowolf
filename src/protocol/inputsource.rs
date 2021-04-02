@@ -87,9 +87,6 @@ impl InputSource {
         self.column = pos.column;
         self.offset = pos.offset;
     }
-    // pub fn error<S: ToString>(&self, message: S) -> ParseError {
-    //     self.pos().parse_error(message)
-    // }
     pub fn is_eof(&self) -> bool {
         self.next() == None
     }
@@ -167,9 +164,6 @@ impl InputPosition {
         }
         &source.input[start..end]
     }
-    // fn parse_error<S: ToString>(&self, message: S) -> ParseError {
-    //     ParseError { position: *self, message: message.to_string(), backtrace: Backtrace::new() }
-    // }
     fn eval_error<S: ToString>(&self, message: S) -> EvalError {
         EvalError { position: *self, message: message.to_string(), backtrace: Backtrace::new() }
     }
@@ -278,11 +272,11 @@ impl fmt::Display for ParseErrorStatement {
 }
 
 #[derive(Debug)]
-pub struct ParseError2 {
+pub struct ParseError {
     pub(crate) statements: Vec<ParseErrorStatement>
 }
 
-impl fmt::Display for ParseError2 {
+impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.statements.is_empty() {
             return Ok(())
@@ -298,7 +292,7 @@ impl fmt::Display for ParseError2 {
     }
 }
 
-impl ParseError2 {
+impl ParseError {
     pub fn empty() -> Self {
         Self{ statements: Vec::new() }
     }

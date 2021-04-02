@@ -116,10 +116,10 @@ impl Lexer<'_> {
     pub fn new(source: &mut InputSource) -> Lexer {
         Lexer { source, level: 0 }
     }
-    fn error_at_pos(&self, msg: &str) -> ParseError2 {
-        ParseError2::new_error(self.source, self.source.pos(), msg)
+    fn error_at_pos(&self, msg: &str) -> ParseError {
+        ParseError::new_error(self.source, self.source.pos(), msg)
     }
-    fn consume_line(&mut self) -> Result<Vec<u8>, ParseError2> {
+    fn consume_line(&mut self) -> Result<Vec<u8>, ParseError> {
         let mut result: Vec<u8> = Vec::new();
         let mut next = self.source.next();
         while next.is_some() && next != Some(b'\n') && next != Some(b'\r') {
@@ -138,7 +138,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_whitespace(&mut self, expected: bool) -> Result<(), ParseError2> {
+    fn consume_whitespace(&mut self, expected: bool) -> Result<(), ParseError> {
         let mut found = false;
         let mut next = self.source.next();
         while next.is_some() {
@@ -208,7 +208,7 @@ impl Lexer<'_> {
         if next.is_none() { return true; }
         return !is_ident_rest(next);
     }
-    fn consume_keyword(&mut self, keyword: &[u8]) -> Result<(), ParseError2> {
+    fn consume_keyword(&mut self, keyword: &[u8]) -> Result<(), ParseError> {
         let len = keyword.len();
         for i in 0..len {
             let expected = Some(lowercase(keyword[i]));
@@ -228,7 +228,7 @@ impl Lexer<'_> {
     fn has_string(&self, string: &[u8]) -> bool {
         self.source.has(string)
     }
-    fn consume_string(&mut self, string: &[u8]) -> Result<(), ParseError2> {
+    fn consume_string(&mut self, string: &[u8]) -> Result<(), ParseError> {
         let len = string.len();
         for i in 0..len {
             let expected = Some(string[i]);
@@ -247,8 +247,8 @@ impl Lexer<'_> {
     /// returned.
     fn consume_comma_separated<T, F>(
         &mut self, h: &mut Heap, open: u8, close: u8, expected_end_msg: &str, func: F
-    ) -> Result<Option<Vec<T>>, ParseError2>
-        where F: Fn(&mut Lexer, &mut Heap) -> Result<T, ParseError2>
+    ) -> Result<Option<Vec<T>>, ParseError>
+        where F: Fn(&mut Lexer, &mut Heap) -> Result<T, ParseError>
     {
         if Some(open) != self.source.next() {
             return Ok(None)
@@ -264,7 +264,7 @@ impl Lexer<'_> {
                 self.source.consume();
                 break;
             } else if !had_comma {
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     &self.source, self.source.pos(), expected_end_msg
                 ));
             }
@@ -314,7 +314,7 @@ impl Lexer<'_> {
             }
         }
     }
-    fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError2> {
+    fn consume_ident(&mut self) -> Result<Vec<u8>, ParseError> {
         if !self.has_identifier() {
             return Err(self.error_at_pos("Expected identifier"));
         }
@@ -333,7 +333,7 @@ impl Lexer<'_> {
     fn has_integer(&mut self) -> bool {
         is_integer_start(self.source.next())
     }
-    fn consume_integer(&mut self) -> Result<i64, ParseError2> {
+    fn consume_integer(&mut self) -> Result<i64, ParseError> {
         let position = self.source.pos();
         let mut data = Vec::new();
         let mut next = self.source.next();
@@ -366,7 +366,7 @@ impl Lexer<'_> {
             };
 
             if let Err(_err) = parsed {
-                return Err(ParseError2::new_error(&self.source, position, "Invalid integer constant"));
+                return Err(ParseError::new_error(&self.source, position, "Invalid integer constant"));
             }
 
             Ok(parsed.unwrap())
@@ -426,7 +426,7 @@ impl Lexer<'_> {
         let next = self.source.next();
         is_ident_start(next)
     }
-    fn consume_identifier(&mut self) -> Result<Identifier, ParseError2> {
+    fn consume_identifier(&mut self) -> Result<Identifier, ParseError> {
         if self.has_statement_keyword() || self.has_type_keyword() || self.has_builtin_keyword() {
             return Err(self.error_at_pos("Expected identifier"));
         }
@@ -434,7 +434,7 @@ impl Lexer<'_> {
         let value = self.consume_ident()?;
         Ok(Identifier{ position, value })
     }
-    fn consume_identifier_spilled(&mut self) -> Result<(), ParseError2> {
+    fn consume_identifier_spilled(&mut self) -> Result<(), ParseError> {
         if self.has_statement_keyword() || self.has_type_keyword() || self.has_builtin_keyword() {
             return Err(self.error_at_pos("Expected identifier"));
         }
@@ -442,7 +442,7 @@ impl Lexer<'_> {
         Ok(())
     }
 
-    fn consume_namespaced_identifier(&mut self, h: &mut Heap) -> Result<NamespacedIdentifier, ParseError2> {
+    fn consume_namespaced_identifier(&mut self, h: &mut Heap) -> Result<NamespacedIdentifier, ParseError> {
         if self.has_reserved() {
             return Err(self.error_at_pos("Encountered reserved keyword"));
         }
@@ -456,7 +456,7 @@ impl Lexer<'_> {
         fn consume_part(
             l: &mut Lexer, h: &mut Heap, ident: &mut NamespacedIdentifier,
             backup_pos: &mut InputPosition
-        ) -> Result<(), ParseError2> {
+        ) -> Result<(), ParseError> {
             // Consume identifier
             if !ident.value.is_empty() {
                 ident.value.extend(b"::");
@@ -514,14 +514,14 @@ impl Lexer<'_> {
         Ok(ident)
     }
 
-    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError2> {
+    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError> {
         if self.has_reserved() {
             return Err(self.error_at_pos("Encountered reserved keyword"));
         }
 
         debug_log!("consume_nsident2_spilled: {}", debug_line!(self.source));
 
-        fn consume_part_spilled(l: &mut Lexer, backup_pos: &mut InputPosition) -> Result<(), ParseError2> {
+        fn consume_part_spilled(l: &mut Lexer, backup_pos: &mut InputPosition) -> Result<(), ParseError> {
             l.consume_ident()?;
             *backup_pos = l.source.pos();
             l.consume_whitespace(false)?;
@@ -552,7 +552,7 @@ impl Lexer<'_> {
     /// Consumes a type definition. When called the input position should be at
     /// the type specification. When done the input position will be at the end
     /// of the type specifications (hence may be at whitespace).
-    fn consume_type2(&mut self, h: &mut Heap, allow_inference: bool) -> Result<ParserTypeId, ParseError2> {
+    fn consume_type(&mut self, h: &mut Heap, allow_inference: bool) -> Result<ParserTypeId, ParseError> {
         // Small helper function to convert in/out polymorphic arguments. Not
         // pretty, but return boolean is true if the error is due to inference
         // not being allowed
@@ -577,7 +577,7 @@ impl Lexer<'_> {
         };
 
         // Consume the type
-        debug_log!("consume_type2: {}", debug_line!(self.source));
+        debug_log!("consume_type: {}", debug_line!(self.source));
         let pos = self.source.pos();
         let parser_type_variant = if self.has_keyword(b"msg") {
             self.consume_keyword(b"msg")?;
@@ -602,7 +602,7 @@ impl Lexer<'_> {
             ParserTypeVariant::String
         } else if self.has_keyword(b"auto") {
             if !allow_inference {
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                         &self.source, pos,
                         "Type inference is not allowed here"
                 ));
@@ -622,7 +622,7 @@ impl Lexer<'_> {
                     } else {
                         "Type 'in' only allows for 1 polymorphic argument"
                     };
-                    ParseError2::new_error(&self.source, pos, msg)
+                    ParseError::new_error(&self.source, pos, msg)
                 })?;
             ParserTypeVariant::Input(poly_arg)
         } else if self.has_keyword(b"out") {
@@ -635,7 +635,7 @@ impl Lexer<'_> {
                     } else {
                         "Type 'out' only allows for 1 polymorphic argument, but {} were specified"
                     };
-                    ParseError2::new_error(&self.source, pos, msg)
+                    ParseError::new_error(&self.source, pos, msg)
                 })?;
             ParserTypeVariant::Output(poly_arg)
         } else {
@@ -650,7 +650,7 @@ impl Lexer<'_> {
         if !parser_type_variant.supports_polymorphic_args() {
             self.consume_whitespace(false)?;
             if let Some(b'<') = self.source.next() {
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     &self.source, self.source.pos(),
                     "This type does not allow polymorphic arguments"
                 ));
@@ -681,7 +681,7 @@ impl Lexer<'_> {
                 // In case we're dealing with another array
                 self.consume_whitespace(false)?;
             } else {
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     &self.source, pos,
                     "Expected a closing ']'"
                 ));
@@ -757,10 +757,10 @@ impl Lexer<'_> {
     /// Polymorphic arguments represent the specification of the parametric
     /// types of a polymorphic type: they specify the value of the polymorphic
     /// type's polymorphic variables.
-    fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Option<Vec<ParserTypeId>>, ParseError2> {
+    fn consume_polymorphic_args(&mut self, h: &mut Heap, allow_inference: bool) -> Result<Option<Vec<ParserTypeId>>, ParseError> {
         self.consume_comma_separated(
             h, b'<', b'>', "Expected the end of the polymorphic argument list",
-            |lexer, heap| lexer.consume_type2(heap, allow_inference)
+            |lexer, heap| lexer.consume_type(heap, allow_inference)
         )
     }
 
@@ -770,7 +770,7 @@ impl Lexer<'_> {
     /// delimiters and the polymorphic variables are consumed. Otherwise the
     /// input position will stay where it is. If no polymorphic variables are
     /// present then an empty vector will be returned.
-    fn consume_polymorphic_vars(&mut self, h: &mut Heap) -> Result<Vec<Identifier>, ParseError2> {
+    fn consume_polymorphic_vars(&mut self, h: &mut Heap) -> Result<Vec<Identifier>, ParseError> {
         let backup_pos = self.source.pos();
         match self.consume_comma_separated(
             h, b'<', b'>', "Expected the end of the polymorphic variable list",
@@ -786,8 +786,8 @@ impl Lexer<'_> {
 
     // Parameters
 
-    fn consume_parameter(&mut self, h: &mut Heap) -> Result<ParameterId, ParseError2> {
-        let parser_type = self.consume_type2(h, false)?;
+    fn consume_parameter(&mut self, h: &mut Heap) -> Result<ParameterId, ParseError> {
+        let parser_type = self.consume_type(h, false)?;
         self.consume_whitespace(true)?;
         let position = self.source.pos();
         let identifier = self.consume_identifier()?;
@@ -795,14 +795,14 @@ impl Lexer<'_> {
             h.alloc_parameter(|this| Parameter { this, position, parser_type, identifier });
         Ok(id)
     }
-    fn consume_parameters(&mut self, h: &mut Heap) -> Result<Vec<ParameterId>, ParseError2> {
+    fn consume_parameters(&mut self, h: &mut Heap) -> Result<Vec<ParameterId>, ParseError> {
         match self.consume_comma_separated(
             h, b'(', b')', "Expected the end of the parameter list",
             |lexer, heap| lexer.consume_parameter(heap)
         )? {
             Some(params) => Ok(params),
             None => {
-                Err(ParseError2::new_error(
+                Err(ParseError::new_error(
                     &self.source, self.source.pos(),
                     "Expected a parameter list"
                 ))
@@ -814,7 +814,7 @@ impl Lexer<'_> {
     // Expressions
     // ====================
 
-    fn consume_paren_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_paren_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         self.consume_string(b"(")?;
         self.consume_whitespace(false)?;
         let result = self.consume_expression(h)?;
@@ -822,7 +822,7 @@ impl Lexer<'_> {
         self.consume_string(b")")?;
         Ok(result)
     }
-    fn consume_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         if self.level >= MAX_LEVEL {
             return Err(self.error_at_pos("Too deeply nested expression"));
         }
@@ -831,7 +831,7 @@ impl Lexer<'_> {
         self.level -= 1;
         result
     }
-    fn consume_assignment_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_assignment_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let result = self.consume_conditional_expression(h)?;
         self.consume_whitespace(false)?;
         if self.has_assignment_operator() {
@@ -867,7 +867,7 @@ impl Lexer<'_> {
             || self.has_string(b"^=")
             || self.has_string(b"|=")
     }
-    fn consume_assignment_operator(&mut self) -> Result<AssignmentOperator, ParseError2> {
+    fn consume_assignment_operator(&mut self) -> Result<AssignmentOperator, ParseError> {
         if self.has_string(b"=") {
             self.consume_string(b"=")?;
             Ok(AssignmentOperator::Set)
@@ -905,7 +905,7 @@ impl Lexer<'_> {
             Err(self.error_at_pos("Expected assignment operator"))
         }
     }
-    fn consume_conditional_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_conditional_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let result = self.consume_concat_expression(h)?;
         self.consume_whitespace(false)?;
         if self.has_string(b"?") {
@@ -932,7 +932,7 @@ impl Lexer<'_> {
             Ok(result)
         }
     }
-    fn consume_concat_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_concat_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_lor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"@") {
@@ -957,7 +957,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_lor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_lor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_land_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"||") {
@@ -982,7 +982,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_land_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_land_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_bor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"&&") {
@@ -1007,7 +1007,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_bor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_bor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_xor_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"|") && !self.has_string(b"||") && !self.has_string(b"|=") {
@@ -1032,7 +1032,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_xor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_xor_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_band_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"^") && !self.has_string(b"^=") {
@@ -1057,7 +1057,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_band_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_band_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_eq_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"&") && !self.has_string(b"&&") && !self.has_string(b"&=") {
@@ -1082,7 +1082,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_eq_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_eq_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_rel_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"==") || self.has_string(b"!=") {
@@ -1113,7 +1113,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_rel_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_rel_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_shift_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"<=")
@@ -1154,7 +1154,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_shift_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_shift_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_add_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"<<") && !self.has_string(b"<<=")
@@ -1187,7 +1187,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_add_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_add_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_mul_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"+") && !self.has_string(b"+=")
@@ -1220,7 +1220,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_mul_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_mul_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_prefix_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"*") && !self.has_string(b"*=")
@@ -1257,7 +1257,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_prefix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_prefix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         if self.has_string(b"+")
             || self.has_string(b"-")
             || self.has_string(b"~")
@@ -1309,7 +1309,7 @@ impl Lexer<'_> {
         }
         self.consume_postfix_expression(h)
     }
-    fn consume_postfix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_postfix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         let mut result = self.consume_primary_expression(h)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"++")
@@ -1420,7 +1420,7 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
-    fn consume_primary_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError2> {
+    fn consume_primary_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         if self.has_string(b"(") {
             return self.consume_paren_expression(h);
         }
@@ -1438,7 +1438,7 @@ impl Lexer<'_> {
         }
         Ok(self.consume_variable_expression(h)?.upcast())
     }
-    fn consume_array_expression(&mut self, h: &mut Heap) -> Result<ArrayExpressionId, ParseError2> {
+    fn consume_array_expression(&mut self, h: &mut Heap) -> Result<ArrayExpressionId, ParseError> {
         let position = self.source.pos();
         let mut elements = Vec::new();
         self.consume_string(b"{")?;
@@ -1472,7 +1472,7 @@ impl Lexer<'_> {
     fn consume_builtin_literal_expression(
         &mut self,
         h: &mut Heap,
-    ) -> Result<LiteralExpressionId, ParseError2> {
+    ) -> Result<LiteralExpressionId, ParseError> {
         let position = self.source.pos();
         let value;
         if self.has_keyword(b"null") {
@@ -1528,7 +1528,7 @@ impl Lexer<'_> {
         return result;
     }
 
-    fn consume_struct_literal_expression(&mut self, h: &mut Heap) -> Result<LiteralExpressionId, ParseError2> {
+    fn consume_struct_literal_expression(&mut self, h: &mut Heap) -> Result<LiteralExpressionId, ParseError> {
         // Consume identifier and polymorphic arguments
         debug_log!("consume_struct_literal_expression: {}", debug_line!(self.source));
         let position = self.source.pos();
@@ -1549,7 +1549,7 @@ impl Lexer<'_> {
             }
         )? {
             Some(fields) => fields,
-            None => return Err(ParseError2::new_error(
+            None => return Err(ParseError::new_error(
                 self.source, self.source.pos(),
                 "A struct literal must be followed by its field values"
             ))
@@ -1589,7 +1589,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError2> {
+    fn consume_call_expression(&mut self, h: &mut Heap) -> Result<CallExpressionId, ParseError> {
         let position = self.source.pos();
 
         // Consume method identifier
@@ -1657,7 +1657,7 @@ impl Lexer<'_> {
     fn consume_variable_expression(
         &mut self,
         h: &mut Heap,
-    ) -> Result<VariableExpressionId, ParseError2> {
+    ) -> Result<VariableExpressionId, ParseError> {
         let position = self.source.pos();
         debug_log!("consume_variable_expression: {}", debug_line!(self.source));
 
@@ -1686,7 +1686,7 @@ impl Lexer<'_> {
     /// will be wrapped in a block statement if it is not already a block
     /// statement. This is used to ensure that all `if`, `while` and `sync`
     /// statements have a block statement as body.
-    fn consume_statement(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError2> {
+    fn consume_statement(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError> {
         if self.level >= MAX_LEVEL {
             return Err(self.error_at_pos("Too deeply nested statement"));
         }
@@ -1708,7 +1708,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_statement_impl(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError2> {
+    fn consume_statement_impl(&mut self, h: &mut Heap, wrap_in_block: bool) -> Result<StatementId, ParseError> {
         // Parse and allocate statement
         let mut must_wrap = true;
         let mut stmt_id = if self.has_string(b"{") {
@@ -1786,7 +1786,7 @@ impl Lexer<'_> {
         self.source.seek(backup_pos);
         return result;
     }
-    fn consume_block_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError2> {
+    fn consume_block_statement(&mut self, h: &mut Heap) -> Result<StatementId, ParseError> {
         let position = self.source.pos();
         let mut statements = Vec::new();
         self.consume_string(b"{")?;
@@ -1819,7 +1819,7 @@ impl Lexer<'_> {
             .upcast())
         }
     }
-    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<(LocalStatementId, Option<ExpressionStatementId>), ParseError2> {
+    fn consume_local_statement(&mut self, h: &mut Heap) -> Result<(LocalStatementId, Option<ExpressionStatementId>), ParseError> {
         if self.has_keyword(b"channel") {
             let local_id = self.consume_channel_statement(h)?.upcast();
             Ok((local_id, None))
@@ -1831,7 +1831,7 @@ impl Lexer<'_> {
     fn consume_channel_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ChannelStatementId, ParseError2> {
+    ) -> Result<ChannelStatementId, ParseError> {
         // Consume channel statement and polymorphic argument if specified.
         // Needs a tiny bit of special parsing to ensure the right amount of
         // whitespace is present.
@@ -1846,7 +1846,7 @@ impl Lexer<'_> {
                 this, pos: position.clone(), variant: ParserTypeVariant::Inferred,
             }),
             1 => poly_args[0],
-            _ => return Err(ParseError2::new_error(
+            _ => return Err(ParseError::new_error(
                 &self.source, self.source.pos(),
                 "port construction using 'channel' accepts up to 1 polymorphic argument"
             ))
@@ -1894,9 +1894,9 @@ impl Lexer<'_> {
             next: None,
         }))
     }
-    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<(MemoryStatementId, ExpressionStatementId), ParseError2> {
+    fn consume_memory_statement(&mut self, h: &mut Heap) -> Result<(MemoryStatementId, ExpressionStatementId), ParseError> {
         let position = self.source.pos();
-        let parser_type = self.consume_type2(h, true)?;
+        let parser_type = self.consume_type(h, true)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
@@ -1949,7 +1949,7 @@ impl Lexer<'_> {
     fn consume_labeled_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<LabeledStatementId, ParseError2> {
+    ) -> Result<LabeledStatementId, ParseError> {
         let position = self.source.pos();
         let label = self.consume_identifier()?;
         self.consume_whitespace(false)?;
@@ -1965,14 +1965,14 @@ impl Lexer<'_> {
             in_sync: None,
         }))
     }
-    fn consume_skip_statement(&mut self, h: &mut Heap) -> Result<SkipStatementId, ParseError2> {
+    fn consume_skip_statement(&mut self, h: &mut Heap) -> Result<SkipStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"skip")?;
         self.consume_whitespace(false)?;
         self.consume_string(b";")?;
         Ok(h.alloc_skip_statement(|this| SkipStatement { this, position, next: None }))
     }
-    fn consume_if_statement(&mut self, h: &mut Heap) -> Result<IfStatementId, ParseError2> {
+    fn consume_if_statement(&mut self, h: &mut Heap) -> Result<IfStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"if")?;
         self.consume_whitespace(false)?;
@@ -1989,7 +1989,7 @@ impl Lexer<'_> {
         };
         Ok(h.alloc_if_statement(|this| IfStatement { this, position, test, true_body, false_body, end_if: None }))
     }
-    fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError2> {
+    fn consume_while_statement(&mut self, h: &mut Heap) -> Result<WhileStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"while")?;
         self.consume_whitespace(false)?;
@@ -2005,7 +2005,7 @@ impl Lexer<'_> {
             in_sync: None,
         }))
     }
-    fn consume_break_statement(&mut self, h: &mut Heap) -> Result<BreakStatementId, ParseError2> {
+    fn consume_break_statement(&mut self, h: &mut Heap) -> Result<BreakStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"break")?;
         self.consume_whitespace(false)?;
@@ -2022,7 +2022,7 @@ impl Lexer<'_> {
     fn consume_continue_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ContinueStatementId, ParseError2> {
+    ) -> Result<ContinueStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"continue")?;
         self.consume_whitespace(false)?;
@@ -2044,7 +2044,7 @@ impl Lexer<'_> {
     fn consume_synchronous_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<SynchronousStatementId, ParseError2> {
+    ) -> Result<SynchronousStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"synchronous")?;
         self.consume_whitespace(false)?;
@@ -2065,7 +2065,7 @@ impl Lexer<'_> {
             parent_scope: None,
         }))
     }
-    fn consume_return_statement(&mut self, h: &mut Heap) -> Result<ReturnStatementId, ParseError2> {
+    fn consume_return_statement(&mut self, h: &mut Heap) -> Result<ReturnStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"return")?;
         self.consume_whitespace(false)?;
@@ -2078,7 +2078,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(h.alloc_return_statement(|this| ReturnStatement { this, position, expression }))
     }
-    fn consume_assert_statement(&mut self, h: &mut Heap) -> Result<AssertStatementId, ParseError2> {
+    fn consume_assert_statement(&mut self, h: &mut Heap) -> Result<AssertStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"assert")?;
         self.consume_whitespace(false)?;
@@ -2096,7 +2096,7 @@ impl Lexer<'_> {
             next: None,
         }))
     }
-    fn consume_goto_statement(&mut self, h: &mut Heap) -> Result<GotoStatementId, ParseError2> {
+    fn consume_goto_statement(&mut self, h: &mut Heap) -> Result<GotoStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"goto")?;
         self.consume_whitespace(false)?;
@@ -2105,7 +2105,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(h.alloc_goto_statement(|this| GotoStatement { this, position, label, target: None }))
     }
-    fn consume_new_statement(&mut self, h: &mut Heap) -> Result<NewStatementId, ParseError2> {
+    fn consume_new_statement(&mut self, h: &mut Heap) -> Result<NewStatementId, ParseError> {
         let position = self.source.pos();
         self.consume_keyword(b"new")?;
         self.consume_whitespace(false)?;
@@ -2117,7 +2117,7 @@ impl Lexer<'_> {
     fn consume_expression_statement(
         &mut self,
         h: &mut Heap,
-    ) -> Result<ExpressionStatementId, ParseError2> {
+    ) -> Result<ExpressionStatementId, ParseError> {
         let position = self.source.pos();
         let expression = self.consume_expression(h)?;
         self.consume_whitespace(false)?;
@@ -2140,7 +2140,7 @@ impl Lexer<'_> {
             || self.has_type_keyword()
             || self.has_identifier()
     }
-    fn consume_symbol_definition(&mut self, h: &mut Heap) -> Result<DefinitionId, ParseError2> {
+    fn consume_symbol_definition(&mut self, h: &mut Heap) -> Result<DefinitionId, ParseError> {
         if self.has_keyword(b"struct") {
             Ok(self.consume_struct_definition(h)?.upcast())
         } else if self.has_keyword(b"enum") {
@@ -2151,7 +2151,7 @@ impl Lexer<'_> {
             Ok(self.consume_function_definition(h)?.upcast())
         }
     }
-    fn consume_struct_definition(&mut self, h: &mut Heap) -> Result<StructId, ParseError2> {
+    fn consume_struct_definition(&mut self, h: &mut Heap) -> Result<StructId, ParseError> {
         // Parse "struct" keyword, optional polyvars and its identifier
         let struct_pos = self.source.pos();
         self.consume_keyword(b"struct")?;
@@ -2166,7 +2166,7 @@ impl Lexer<'_> {
             h, b'{', b'}', "Expected the end of the list of struct fields",
             |lexer, heap| {
                 let position = lexer.source.pos();
-                let parser_type = lexer.consume_type2(heap, false)?;
+                let parser_type = lexer.consume_type(heap, false)?;
                 lexer.consume_whitespace(true)?;
                 let field = lexer.consume_identifier()?;
 
@@ -2174,7 +2174,7 @@ impl Lexer<'_> {
             }
         )? {
             Some(fields) => fields,
-            None => return Err(ParseError2::new_error(
+            None => return Err(ParseError::new_error(
                 self.source, struct_pos,
                 "An struct definition must be followed by its fields"
             )),
@@ -2189,7 +2189,7 @@ impl Lexer<'_> {
             fields,
         }))
     }
-    fn consume_enum_definition(&mut self, h: &mut Heap) -> Result<EnumId, ParseError2> {
+    fn consume_enum_definition(&mut self, h: &mut Heap) -> Result<EnumId, ParseError> {
         // Parse "enum" keyword, optional polyvars and its identifier
         let enum_pos = self.source.pos();
         self.consume_keyword(b"enum")?;
@@ -2229,7 +2229,7 @@ impl Lexer<'_> {
                         // Embedded type
                         lexer.source.consume();
                         lexer.consume_whitespace(false)?;
-                        let embedded_type = lexer.consume_type2(heap, false)?;
+                        let embedded_type = lexer.consume_type(heap, false)?;
                         lexer.consume_whitespace(false)?;
                         lexer.consume_string(b")")?;
                         EnumVariantValue::Type(embedded_type)
@@ -2243,7 +2243,7 @@ impl Lexer<'_> {
             }
         )? {
             Some(variants) => variants,
-            None => return Err(ParseError2::new_error(
+            None => return Err(ParseError::new_error(
                 self.source, enum_pos,
                 "An enum definition must be followed by its variants"
             )),
@@ -2257,7 +2257,7 @@ impl Lexer<'_> {
             variants,
         }))
     }
-    fn consume_component_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+    fn consume_component_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError> {
         // TODO: Cleanup
         if self.has_keyword(b"composite") {
             Ok(self.consume_composite_definition(h)?)
@@ -2265,7 +2265,7 @@ impl Lexer<'_> {
             Ok(self.consume_primitive_definition(h)?)
         }
     }
-    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+    fn consume_composite_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError> {
         // Parse keyword, optional polyvars and the identifier
         let position = self.source.pos();
         self.consume_keyword(b"composite")?;
@@ -2291,7 +2291,7 @@ impl Lexer<'_> {
             body
         }))
     }
-    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError2> {
+    fn consume_primitive_definition(&mut self, h: &mut Heap) -> Result<ComponentId, ParseError> {
         // Consume keyword, optional polyvars and identifier
         let position = self.source.pos();
         self.consume_keyword(b"primitive")?;
@@ -2317,10 +2317,10 @@ impl Lexer<'_> {
             body
         }))
     }
-    fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError2> {
+    fn consume_function_definition(&mut self, h: &mut Heap) -> Result<FunctionId, ParseError> {
         // Consume return type, optional polyvars and identifier
         let position = self.source.pos();
-        let return_type = self.consume_type2(h, false)?;
+        let return_type = self.consume_type(h, false)?;
         self.consume_whitespace(true)?;
         let identifier = self.consume_identifier()?;
         self.consume_whitespace(false)?;
@@ -2350,7 +2350,7 @@ impl Lexer<'_> {
             false
         }
     }
-    fn consume_pragma(&mut self, h: &mut Heap) -> Result<PragmaId, ParseError2> {
+    fn consume_pragma(&mut self, h: &mut Heap) -> Result<PragmaId, ParseError> {
         let position = self.source.pos();
         let next = self.source.next();
         if next != Some(b'#') {
@@ -2397,7 +2397,7 @@ impl Lexer<'_> {
     fn has_import(&self) -> bool {
         self.has_keyword(b"import")
     }
-    fn consume_import(&mut self, h: &mut Heap) -> Result<ImportId, ParseError2> {
+    fn consume_import(&mut self, h: &mut Heap) -> Result<ImportId, ParseError> {
         // Parse the word "import" and the name of the module
         let position = self.source.pos();
         self.consume_keyword(b"import")?;
@@ -2537,7 +2537,7 @@ impl Lexer<'_> {
         self.consume_string(b";")?;
         Ok(import)
     }
-    pub fn consume_protocol_description(&mut self, h: &mut Heap) -> Result<RootId, ParseError2> {
+    pub fn consume_protocol_description(&mut self, h: &mut Heap) -> Result<RootId, ParseError> {
         let position = self.source.pos();
         let mut pragmas = Vec::new();
         let mut imports = Vec::new();

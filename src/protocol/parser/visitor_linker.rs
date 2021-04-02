@@ -369,13 +369,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 // Nested synchronous statement
                 let old_sync = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, cur_sync_position, "Illegal nested synchronous statement")
+                    ParseError::new_error(&ctx.module.source, cur_sync_position, "Illegal nested synchronous statement")
                         .with_postfixed_info(&ctx.module.source, old_sync.position, "It is nested in this synchronous statement")
                 );
             }
 
             if !self.def_type.is_primitive() {
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     &ctx.module.source, cur_sync_position,
                     "Synchronous statements may only be used in primitive components"
                 ));
@@ -406,7 +406,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             let stmt = &ctx.heap[id];
             if !self.def_type.is_function() {
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, stmt.position, "Return statements may only appear in function bodies")
+                    ParseError::new_error(&ctx.module.source, stmt.position, "Return statements may only appear in function bodies")
                 );
             }
         } else {
@@ -429,7 +429,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 //  within components. Such a marker will cascade through any
                 //  functions that then call an asserting function
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, stmt.position, "Illegal assert statement in a function")
+                    ParseError::new_error(&ctx.module.source, stmt.position, "Illegal assert statement in a function")
                 );
             }
 
@@ -437,7 +437,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             // synchronous statement
             if self.in_sync.is_none() {
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, stmt.position, "Illegal assert statement outside of a synchronous block")
+                    ParseError::new_error(&ctx.module.source, stmt.position, "Illegal assert statement outside of a synchronous block")
                 );
             }
         } else {
@@ -469,7 +469,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 let goto_stmt = &ctx.heap[id];
                 let sync_stmt = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, goto_stmt.position, "Goto may not escape the surrounding synchronous block")
+                    ParseError::new_error(&ctx.module.source, goto_stmt.position, "Goto may not escape the surrounding synchronous block")
                         .with_postfixed_info(&ctx.module.source, target.position, "This is the target of the goto statement")
                         .with_postfixed_info(&ctx.module.source, sync_stmt.position, "Which will jump past this statement")
                 );
@@ -488,7 +488,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             if !self.def_type.is_composite() {
                 let new_stmt = &ctx.heap[id];
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, new_stmt.position, "Instantiating components may only be done in composite components")
+                    ParseError::new_error(&ctx.module.source, new_stmt.position, "Instantiating components may only be done in composite components")
                 );
             }
 
@@ -499,7 +499,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 // We're fine
             } else {
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, call_expr.position, "Must instantiate a component")
+                    ParseError::new_error(&ctx.module.source, call_expr.position, "Must instantiate a component")
                 );
             }
         } else {
@@ -738,7 +738,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
                     // Check if not found
                     if field.field_idx == FIELD_NOT_FOUND_SENTINEL {
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             &ctx.module.source, field.identifier.position,
                             &format!(
                                 "This field does not exist on the struct '{}'",
@@ -749,7 +749,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
 
                     // Check if specified more than once
                     if specified[field.field_idx] {
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             &ctx.module.source, field.identifier.position,
                             "This field is specified more than once"
                         ));
@@ -769,7 +769,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                         }
                     }
 
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, literal.identifier.position,
                         &format!("Not all fields are specified, [{}] are missing", not_specified)
                     ));
@@ -815,13 +815,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             },
             Method::Fires => {
                 if !self.def_type.is_primitive() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_none() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'fires' may only occur inside synchronous blocks"
                     ));
@@ -830,13 +830,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             },
             Method::Get => {
                 if !self.def_type.is_primitive() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'get' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_none() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'get' may only occur inside synchronous blocks"
                     ));
@@ -845,13 +845,13 @@ impl Visitor2 for ValidityAndLinkerVisitor {
             },
             Method::Put => {
                 if !self.def_type.is_primitive() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'put' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_none() {
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, call_expr.position,
                         "A call to 'put' may only occur inside synchronous blocks"
                     ));
@@ -891,7 +891,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         self.visit_call_poly_args(ctx, id)?;
         let call_expr = &mut ctx.heap[id];
         if num_expr_args != num_definition_args {
-            return Err(ParseError2::new_error(
+            return Err(ParseError::new_error(
                 &ctx.module.source, call_expr.position,
                 &format!(
                     "This call expects {} arguments, but {} were provided",
@@ -1079,7 +1079,7 @@ impl ValidityAndLinkerVisitor {
                             // Type refers to a polymorphic variable.
                             // TODO: @hkt Maybe allow higher-kinded types?
                             if symbolic.identifier.get_poly_args().is_some() {
-                                return Err(ParseError2::new_error(
+                                return Err(ParseError::new_error(
                                     &ctx.module.source, symbolic.identifier.position,
                                     "Polymorphic arguments to a polymorphic variable (higher-kinded types) are not allowed (yet)"
                                 ));
@@ -1100,7 +1100,7 @@ impl ValidityAndLinkerVisitor {
                         // TODO: @function_ptrs: Allow function pointers at some
                         //  point in the future
                         if found_type.definition.type_class().is_proc_type() {
-                            return Err(ParseError2::new_error(
+                            return Err(ParseError::new_error(
                                 &ctx.module.source, symbolic.identifier.position,
                                 &format!(
                                     "This identifier points to a {} type, expected a datatype",
@@ -1166,7 +1166,7 @@ impl ValidityAndLinkerVisitor {
 
     /// Adds a local variable to the current scope. It will also annotate the
     /// `Local` in the AST with its relative position in the block.
-    fn checked_local_add(&mut self, ctx: &mut Ctx, relative_pos: u32, id: LocalId) -> Result<(), ParseError2> {
+    fn checked_local_add(&mut self, ctx: &mut Ctx, relative_pos: u32, id: LocalId) -> Result<(), ParseError> {
         debug_assert!(self.cur_scope.is_some());
 
         // Make sure we do not conflict with any global symbols
@@ -1174,7 +1174,7 @@ impl ValidityAndLinkerVisitor {
             let ident = &ctx.heap[id].identifier;
             if let Some(symbol) = ctx.symbols.resolve_symbol(ctx.module.root_id, &ident.value) {
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, ident.position, "Local variable declaration conflicts with symbol")
+                    ParseError::new_error(&ctx.module.source, ident.position, "Local variable declaration conflicts with symbol")
                         .with_postfixed_info(&ctx.module.source, symbol.position, "Conflicting symbol is found here")
                 );
             }
@@ -1202,7 +1202,7 @@ impl ValidityAndLinkerVisitor {
                     local.identifier == other_local.identifier {
                     // Collision within this scope
                     return Err(
-                        ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
+                        ParseError::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
                             .with_postfixed_info(&ctx.module.source, other_local.position, "Previous variable is found here")
                     );
                 }
@@ -1217,7 +1217,7 @@ impl ValidityAndLinkerVisitor {
                     let parameter = &ctx.heap[*parameter_id];
                     if local.identifier == parameter.identifier {
                         return Err(
-                            ParseError2::new_error(&ctx.module.source, local.position, "Local variable name conflicts with parameter")
+                            ParseError::new_error(&ctx.module.source, local.position, "Local variable name conflicts with parameter")
                                 .with_postfixed_info(&ctx.module.source, parameter.position, "Parameter definition is found here")
                         );
                     }
@@ -1239,7 +1239,7 @@ impl ValidityAndLinkerVisitor {
 
     /// Finds a variable in the visitor's scope that must appear before the
     /// specified relative position within that block.
-    fn find_variable(&self, ctx: &Ctx, mut relative_pos: u32, identifier: &NamespacedIdentifier) -> Result<VariableId, ParseError2> {
+    fn find_variable(&self, ctx: &Ctx, mut relative_pos: u32, identifier: &NamespacedIdentifier) -> Result<VariableId, ParseError> {
         debug_assert!(self.cur_scope.is_some());
         debug_assert!(identifier.parts.len() == 1, "implement namespaced seeking of target associated with identifier");
 
@@ -1278,7 +1278,7 @@ impl ValidityAndLinkerVisitor {
                 }
 
                 // Variable could not be found
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     &ctx.module.source, identifier.position, "This variable is not declared"
                 ));
             } else {
@@ -1289,7 +1289,7 @@ impl ValidityAndLinkerVisitor {
 
     /// Adds a particular label to the current scope. Will return an error if
     /// there is another label with the same name visible in the current scope.
-    fn checked_label_add(&mut self, ctx: &mut Ctx, id: LabeledStatementId) -> Result<(), ParseError2> {
+    fn checked_label_add(&mut self, ctx: &mut Ctx, id: LabeledStatementId) -> Result<(), ParseError> {
         debug_assert!(self.cur_scope.is_some());
 
         // Make sure label is not defined within the current scope or any of the
@@ -1305,7 +1305,7 @@ impl ValidityAndLinkerVisitor {
                 if other_label.label == label.label {
                     // Collision
                     return Err(
-                        ParseError2::new_error(&ctx.module.source, label.position, "Label name conflicts with another label")
+                        ParseError::new_error(&ctx.module.source, label.position, "Label name conflicts with another label")
                             .with_postfixed_info(&ctx.module.source, other_label.position, "Other label is found here")
                     );
                 }
@@ -1328,7 +1328,7 @@ impl ValidityAndLinkerVisitor {
     /// Finds a particular labeled statement by its identifier. Once found it
     /// will make sure that the target label does not skip over any variable
     /// declarations within the scope in which the label was found.
-    fn find_label(&self, ctx: &Ctx, identifier: &Identifier) -> Result<LabeledStatementId, ParseError2> {
+    fn find_label(&self, ctx: &Ctx, identifier: &Identifier) -> Result<LabeledStatementId, ParseError> {
         debug_assert!(self.cur_scope.is_some());
 
         let mut scope = self.cur_scope.as_ref().unwrap();
@@ -1348,7 +1348,7 @@ impl ValidityAndLinkerVisitor {
                         let local = &ctx.heap[*local_id];
                         if local.relative_pos_in_block > relative_scope_pos && local.relative_pos_in_block < label.relative_pos_in_block {
                             return Err(
-                                ParseError2::new_error(&ctx.module.source, identifier.position, "This target label skips over a variable declaration")
+                                ParseError::new_error(&ctx.module.source, identifier.position, "This target label skips over a variable declaration")
                                     .with_postfixed_info(&ctx.module.source, label.position, "Because it jumps to this label")
                                     .with_postfixed_info(&ctx.module.source, local.position, "Which skips over this variable")
                             );
@@ -1361,7 +1361,7 @@ impl ValidityAndLinkerVisitor {
             debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
             scope = block.parent_scope.as_ref().unwrap();
             if !scope.is_block() {
-                return Err(ParseError2::new_error(&ctx.module.source, identifier.position, "Could not find this label"));
+                return Err(ParseError::new_error(&ctx.module.source, identifier.position, "Could not find this label"));
             }
 
         }
@@ -1374,14 +1374,14 @@ impl ValidityAndLinkerVisitor {
     fn find_symbol_of_type<'a>(
         &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable, types: &'a TypeTable,
         identifier: &NamespacedIdentifier, expected_type_class: TypeClass
-    ) -> Result<&'a DefinedType, ParseError2> {
+    ) -> Result<&'a DefinedType, ParseError> {
         // Find symbol associated with identifier
         let (find_result, _) = find_type_definition(symbols, types, root_id, identifier)
             .as_parse_error(source)?;
 
         let definition_type_class = find_result.definition.type_class();
         if expected_type_class != definition_type_class {
-            return Err(ParseError2::new_error(
+            return Err(ParseError::new_error(
                 source, identifier.position,
                 &format!(
                     "Expected to find a {}, this symbol points to a {}",
@@ -1421,7 +1421,7 @@ impl ValidityAndLinkerVisitor {
     /// ID will be returned, otherwise a parsing error is constructed.
     /// The provided input position should be the position of the break/continue
     /// statement.
-    fn resolve_break_or_continue_target(&self, ctx: &Ctx, position: InputPosition, label: &Option<Identifier>) -> Result<WhileStatementId, ParseError2> {
+    fn resolve_break_or_continue_target(&self, ctx: &Ctx, position: InputPosition, label: &Option<Identifier>) -> Result<WhileStatementId, ParseError> {
         let target = match label {
             Some(label) => {
                 let target_id = self.find_label(ctx, label)?;
@@ -1432,14 +1432,14 @@ impl ValidityAndLinkerVisitor {
                     // Even though we have a target while statement, the break might not be
                     // present underneath this particular labeled while statement
                     if !self.has_parent_while_scope(ctx, target_stmt.this) {
-                        ParseError2::new_error(&ctx.module.source, label.position, "Break statement is not nested under the target label's while statement")
+                        ParseError::new_error(&ctx.module.source, label.position, "Break statement is not nested under the target label's while statement")
                             .with_postfixed_info(&ctx.module.source, target.position, "The targeted label is found here");
                     }
 
                     target_stmt.this
                 } else {
                     return Err(
-                        ParseError2::new_error(&ctx.module.source, label.position, "Incorrect break target label, it must target a while loop")
+                        ParseError::new_error(&ctx.module.source, label.position, "Incorrect break target label, it must target a while loop")
                             .with_postfixed_info(&ctx.module.source, target.position, "The targeted label is found here")
                     );
                 }
@@ -1449,7 +1449,7 @@ impl ValidityAndLinkerVisitor {
                 // nested within that while statement
                 if self.in_while.is_none() {
                     return Err(
-                        ParseError2::new_error(&ctx.module.source, position, "Break statement is not nested under a while loop")
+                        ParseError::new_error(&ctx.module.source, position, "Break statement is not nested under a while loop")
                     );
                 }
 
@@ -1467,7 +1467,7 @@ impl ValidityAndLinkerVisitor {
                 debug_assert!(self.in_sync.is_some());
                 let sync_stmt = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
-                    ParseError2::new_error(&ctx.module.source, position, "Break may not escape the surrounding synchronous block")
+                    ParseError::new_error(&ctx.module.source, position, "Break may not escape the surrounding synchronous block")
                         .with_postfixed_info(&ctx.module.source, target_while.position, "The break escapes out of this loop")
                         .with_postfixed_info(&ctx.module.source, sync_stmt.position, "And would therefore escape this synchronous block")
                 );
@@ -1553,7 +1553,7 @@ impl ValidityAndLinkerVisitor {
             self.parser_type_buffer.truncate(old_num_types);
             Ok(())
         } else {
-            return Err(ParseError2::new_error(
+            return Err(ParseError::new_error(
                 &ctx.module.source, call_expr.position,
                 &format!(
                     "Expected {} polymorphic arguments (or none, to infer them), but {} were specified",

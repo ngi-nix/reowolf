@@ -551,11 +551,11 @@ impl<'a> ExpressionTester<'a> {
 
 pub(crate) struct AstErrTester {
     test_name: String,
-    error: ParseError2,
+    error: ParseError,
 }
 
 impl AstErrTester {
-    fn new(test_name: String, error: ParseError2) -> Self {
+    fn new(test_name: String, error: ParseError) -> Self {
         Self{ test_name, error }
     }
 
@@ -572,7 +572,7 @@ impl AstErrTester {
 
 pub(crate) struct ErrorTester<'a> {
     test_name: &'a str,
-    error: &'a ParseError2,
+    error: &'a ParseError,
 }
 
 impl<'a> ErrorTester<'a> {

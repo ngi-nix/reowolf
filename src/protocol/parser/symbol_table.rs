@@ -89,7 +89,7 @@ impl SymbolTable {
         Self{ module_lookup: HashMap::new(), symbol_lookup: HashMap::new() }
     }
 
-    pub(crate) fn build(&mut self, heap: &Heap, modules: &[LexedModule]) -> Result<(), ParseError2> {
+    pub(crate) fn build(&mut self, heap: &Heap, modules: &[LexedModule]) -> Result<(), ParseError> {
         // Sanity checks
         debug_assert!(self.module_lookup.is_empty());
         debug_assert!(self.symbol_lookup.is_empty());
@@ -129,7 +129,7 @@ impl SymbolTable {
                                 },
                                 None => {
                                     return Err(
-                                        ParseError2::new_error(&module.source, import.position, "Cannot resolve module")
+                                        ParseError::new_error(&module.source, import.position, "Cannot resolve module")
                                     );
                                 }
                             }
@@ -158,7 +158,7 @@ impl SymbolTable {
                     module.root_id, *definition_id
                 ) {
                     return Err(
-                        ParseError2::new_error(&module.source, definition.position(), "Symbol is multiply defined")
+                        ParseError::new_error(&module.source, definition.position(), "Symbol is multiply defined")
                             .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
                     )
                 }
@@ -176,11 +176,11 @@ impl SymbolTable {
                         // Find the module using its name
                         let target_root_id = self.resolve_module(&import.module_name);
                         if target_root_id.is_none() {
-                            return Err(ParseError2::new_error(&module.source, import.position, "Could not resolve module"));
+                            return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module"));
                         }
                         let target_root_id = target_root_id.unwrap();
                         if target_root_id == module.root_id {
-                            return Err(ParseError2::new_error(&module.source, import.position, "Illegal import of self"));
+                            return Err(ParseError::new_error(&module.source, import.position, "Illegal import of self"));
                         }
 
                         // Add the target module under its alias
@@ -189,7 +189,7 @@ impl SymbolTable {
                             target_root_id
                         ) {
                             return Err(
-                                ParseError2::new_error(&module.source, import.position, "Symbol is multiply defined")
+                                ParseError::new_error(&module.source, import.position, "Symbol is multiply defined")
                                     .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
                             );
                         }
@@ -198,11 +198,11 @@ impl SymbolTable {
                         // Find the target module using its name
                         let target_root_id = self.resolve_module(&import.module_name);
                         if target_root_id.is_none() {
-                            return Err(ParseError2::new_error(&module.source, import.position, "Could not resolve module of symbol imports"));
+                            return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module of symbol imports"));
                         }
                         let target_root_id = target_root_id.unwrap();
                         if target_root_id == module.root_id {
-                            return Err(ParseError2::new_error(&module.source, import.position, "Illegal import of self"));
+                            return Err(ParseError::new_error(&module.source, import.position, "Illegal import of self"));
                         }
 
                         // Determine which symbols to import
@@ -216,7 +216,7 @@ impl SymbolTable {
                                     target_root_id, *definition_id
                                 ) {
                                     return Err(
-                                        ParseError2::new_error(
+                                        ParseError::new_error(
                                             &module.source, import.position,
                                             &format!("Imported symbol '{}' is already defined", String::from_utf8_lossy(&identifier.value))
                                         )
@@ -267,7 +267,7 @@ impl SymbolTable {
 
                                 if symbol_definition_id.is_none() {
                                     return Err(
-                                        ParseError2::new_error(&module.source, symbol.position, "Could not resolve symbol")
+                                        ParseError::new_error(&module.source, symbol.position, "Could not resolve symbol")
                                     )
                                 }
                                 let symbol_definition_id = symbol_definition_id.unwrap();
@@ -277,7 +277,7 @@ impl SymbolTable {
                                     target_root_id, symbol_definition_id
                                 ) {
                                     return Err(
-                                        ParseError2::new_error(&module.source, symbol.position, "Symbol is multiply defined")
+                                        ParseError::new_error(&module.source, symbol.position, "Symbol is multiply defined")
                                             .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
                                     )
                                 }

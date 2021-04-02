@@ -20,17 +20,17 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
     /// Utility function to transform the `FindTypeResult` into a `Result` where
     /// `Ok` contains the resolved type, and `Err` contains a `ParseError` which
     /// can be readily returned. This is the most common use.
-    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<(&'t DefinedType, NamespacedIdentifierIter<'i>), ParseError2> {
+    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<(&'t DefinedType, NamespacedIdentifierIter<'i>), ParseError> {
         match self {
             FindTypeResult::Found(defined_type) => Ok(defined_type),
             FindTypeResult::SymbolNotFound{ident_pos} => {
-                Err(ParseError2::new_error(
+                Err(ParseError::new_error(
                     module_source, ident_pos,
                     "Could not resolve this identifier to a symbol"
                 ))
             },
             FindTypeResult::SymbolPartial{ident_pos, ident_iter} => {
-                Err(ParseError2::new_error(
+                Err(ParseError::new_error(
                     module_source, ident_pos, 
                     &format!(
                         "Could not fully resolve this identifier to a symbol, was only able to match '{}'",
@@ -39,7 +39,7 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
                 ))
             },
             FindTypeResult::SymbolNamespace{ident_pos, symbol_pos} => {
-                Err(ParseError2::new_error(
+                Err(ParseError::new_error(
                     module_source, ident_pos,
                     "This identifier was resolved to a namespace instead of a type"
                 ).with_postfixed_info(
@@ -98,7 +98,7 @@ pub(crate) enum MatchPolymorphResult<'t> {
 }
 
 impl<'t> MatchPolymorphResult<'t> {
-    pub(crate) fn as_parse_error(self, heap: &Heap, module_source: &InputSource) -> Result<usize, ParseError2> {
+    pub(crate) fn as_parse_error(self, heap: &Heap, module_source: &InputSource) -> Result<usize, ParseError> {
         match self {
             MatchPolymorphResult::Matching => Ok(0),
             MatchPolymorphResult::InferAll(count) => {
@@ -113,7 +113,7 @@ impl<'t> MatchPolymorphResult<'t> {
                     "arguments"
                 };
 
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     module_source, ident_position,
                     &format!(
                         "expected {} polymorphic {} (or none, to infer them) for the type {}, but {} were specified",
@@ -125,7 +125,7 @@ impl<'t> MatchPolymorphResult<'t> {
             },
             MatchPolymorphResult::NoneExpected{defined_type, ident_position, ..} => {
                 let type_identifier = heap[defined_type.ast_definition].identifier();
-                return Err(ParseError2::new_error(
+                return Err(ParseError::new_error(
                     module_source, ident_position,
                     &format!(
                         "the type {} is not polymorphic",

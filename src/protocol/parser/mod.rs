@@ -47,7 +47,7 @@ impl Parser {
         }
     }
 
-    pub fn feed(&mut self, mut source: InputSource) -> Result<RootId, ParseError2> {
+    pub fn feed(&mut self, mut source: InputSource) -> Result<RootId, ParseError> {
         // Lex the input source
         let mut lex = Lexer::new(&mut source);
         let pd = lex.consume_protocol_description(&mut self.heap)?;
@@ -64,7 +64,7 @@ impl Parser {
                 Pragma::Module(module) => {
                     if !module_name.is_empty() {
                         return Err(
-                            ParseError2::new_error(&source, module.position, "Double definition of module name in the same file")
+                            ParseError::new_error(&source, module.position, "Double definition of module name in the same file")
                                 .with_postfixed_info(&source, module_name_pos, "Previous definition was here")
                         )
                     }
@@ -75,7 +75,7 @@ impl Parser {
                 Pragma::Version(version) => {
                     if module_version.is_some() {
                         return Err(
-                            ParseError2::new_error(&source, version.position, "Double definition of module version")
+                            ParseError::new_error(&source, version.position, "Double definition of module version")
                                 .with_postfixed_info(&source, module_version_pos, "Previous definition was here")
                         )
                     }
@@ -108,7 +108,7 @@ impl Parser {
             };
 
             return Err(
-                ParseError2::new_error(&source, module_name_pos, &format!("Double definition of {} across files", module_name_msg))
+                ParseError::new_error(&source, module_name_pos, &format!("Double definition of {} across files", module_name_msg))
                     .with_postfixed_info(&prev_module.source, prev_module_pos, "Other definition was here")
             );
         }
@@ -123,7 +123,7 @@ impl Parser {
         Ok(pd)
     }
 
-    fn resolve_symbols_and_types(&mut self) -> Result<(), ParseError2> {
+    fn resolve_symbols_and_types(&mut self) -> Result<(), ParseError> {
         // Construct the symbol table to resolve any imports and/or definitions,
         // then use the symbol table to actually annotate all of the imports.
         // If the type table is constructed correctly then all imports MUST be
@@ -187,7 +187,7 @@ impl Parser {
         Ok(())
     }
 
-    pub fn parse(&mut self) -> Result<(), ParseError2> {
+    pub fn parse(&mut self) -> Result<(), ParseError> {
         self.resolve_symbols_and_types()?;
 
         // Validate and link all modules
@@ -230,7 +230,7 @@ impl Parser {
         for module in &self.modules {
             let root_id = module.root_id;
             if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
-                return Err(ParseError2::new_error(&self.modules[0].source, position, &message))
+                return Err(ParseError::new_error(&self.modules[0].source, position, &message))
             }
         }
 

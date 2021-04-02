@@ -1291,7 +1291,7 @@ macro_rules! debug_assert_ptrs_distinct {
 }
 
 impl TypeResolvingVisitor {
-    fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError2> {
+    fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError> {
         // Keep inferring until we can no longer make any progress
         while let Some(next_expr_id) = self.expr_queued.iter().next() {
             let next_expr_id = *next_expr_id;
@@ -1318,7 +1318,7 @@ impl TypeResolvingVisitor {
                     expr_type.parts[0] = InferenceTypePart::Int;
                 } else {
                     let expr = &ctx.heap[*expr_id];
-                    return Err(ParseError2::new_error(
+                    return Err(ParseError::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
                             "Could not fully infer the type of this expression (got '{}')",
@@ -1366,7 +1366,7 @@ impl TypeResolvingVisitor {
                         // TODO: Single clean function for function signatures and polyvars.
                         // TODO: Better error message
                         let expr = &ctx.heap[*expr_id];
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             &ctx.module.source, expr.position(),
                             &format!(
                                 "Could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
@@ -1422,7 +1422,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_expr(&mut self, ctx: &mut Ctx, id: ExpressionId) -> Result<(), ParseError2> {
+    fn progress_expr(&mut self, ctx: &mut Ctx, id: ExpressionId) -> Result<(), ParseError> {
         match &ctx.heap[id] {
             Expression::Assignment(expr) => {
                 let id = expr.this;
@@ -1471,7 +1471,7 @@ impl TypeResolvingVisitor {
         }
     }
 
-    fn progress_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> Result<(), ParseError2> {
+    fn progress_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> Result<(), ParseError> {
         use AssignmentOperator as AO;
 
         // TODO: Assignable check
@@ -1513,7 +1513,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> Result<(), ParseError2> {
+    fn progress_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> Result<(), ParseError> {
         // Note: test expression type is already enforced
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
@@ -1542,7 +1542,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> Result<(), ParseError2> {
+    fn progress_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> Result<(), ParseError> {
         // Note: our expression type might be fixed by our parent, but we still
         // need to make sure it matches the type associated with our operation.
         use BinaryOperator as BO;
@@ -1626,7 +1626,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> Result<(), ParseError2> {
+    fn progress_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> Result<(), ParseError> {
         use UnaryOperation as UO;
 
         let upcast_id = id.upcast();
@@ -1673,7 +1673,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_indexing_expr(&mut self, ctx: &mut Ctx, id: IndexingExpressionId) -> Result<(), ParseError2> {
+    fn progress_indexing_expr(&mut self, ctx: &mut Ctx, id: IndexingExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let subject_id = expr.subject;
@@ -1705,7 +1705,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_slicing_expr(&mut self, ctx: &mut Ctx, id: SlicingExpressionId) -> Result<(), ParseError2> {
+    fn progress_slicing_expr(&mut self, ctx: &mut Ctx, id: SlicingExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let subject_id = expr.subject;
@@ -1743,7 +1743,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> Result<(), ParseError2> {
+    fn progress_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         
         debug_log!("Select expr: {}", upcast_id.index);
@@ -1801,7 +1801,7 @@ impl TypeResolvingVisitor {
                             let struct_def = if let DefinedTypeVariant::Struct(struct_def) = &type_def.definition {
                                 struct_def
                             } else {
-                                return Err(ParseError2::new_error(
+                                return Err(ParseError::new_error(
                                     &ctx.module.source, field.identifier.position,
                                     &format!(
                                         "Can only apply field access to structs, got a subject of type '{}'",
@@ -1822,7 +1822,7 @@ impl TypeResolvingVisitor {
                             if field.definition.is_none() {
                                 let field_position = field.identifier.position;
                                 let ast_struct_def = ctx.heap[type_def.ast_definition].as_struct();
-                                return Err(ParseError2::new_error(
+                                return Err(ParseError::new_error(
                                     &ctx.module.source, field_position,
                                     &format!(
                                         "This field does not exist on the struct '{}'",
@@ -1841,7 +1841,7 @@ impl TypeResolvingVisitor {
                             return Ok(())
                         },
                         Err(()) => {
-                            return Err(ParseError2::new_error(
+                            return Err(ParseError::new_error(
                                 &ctx.module.source, field.identifier.position,
                                 &format!(
                                     "Can only apply field access to structs, got a subject of type '{}'",
@@ -1917,7 +1917,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> Result<(), ParseError2> {
+    fn progress_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let expr_elements = expr.elements.clone(); // TODO: @performance
@@ -1958,7 +1958,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError2> {
+    fn progress_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
 
@@ -2082,7 +2082,7 @@ impl TypeResolvingVisitor {
     // TODO: @cleanup, see how this can be cleaned up once I implement
     //  polymorphic struct/enum/union literals. These likely follow the same
     //  pattern as here.
-    fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError2> {
+    fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let extra = self.extra_data.get_mut(&upcast_id).unwrap();
@@ -2195,7 +2195,7 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_variable_expr(&mut self, ctx: &mut Ctx, id: VariableExpressionId) -> Result<(), ParseError2> {
+    fn progress_variable_expr(&mut self, ctx: &mut Ctx, id: VariableExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let var_expr = &ctx.heap[id];
         let var_id = var_expr.declaration.unwrap();
@@ -2214,7 +2214,7 @@ impl TypeResolvingVisitor {
         ) };
         if infer_res == DualInferenceResult::Incompatible {
             let var_decl = &ctx.heap[var_id];
-            return Err(ParseError2::new_error(
+            return Err(ParseError::new_error(
                 &ctx.module.source, var_decl.position(),
                 &format!(
                     "Conflicting types for this variable, previously assigned the type '{}'",
@@ -2268,7 +2268,7 @@ impl TypeResolvingVisitor {
                         let var_decl = &ctx.heap[var_id];
                         let link_decl = &ctx.heap[linked_id];
 
-                        return Err(ParseError2::new_error(
+                        return Err(ParseError::new_error(
                             &ctx.module.source, var_decl.position(),
                             &format!(
                                 "Conflicting types for this variable, assigned the type '{}'",
@@ -2311,7 +2311,7 @@ impl TypeResolvingVisitor {
     /// an array of T)
     fn apply_forced_constraint(
         &mut self, ctx: &mut Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
-    ) -> Result<bool, ParseError2> {
+    ) -> Result<bool, ParseError> {
         debug_assert_expr_ids_unique_and_known!(self, expr_id);
         let expr_type = self.expr_types.get_mut(&expr_id).unwrap();
         match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0) {
@@ -2345,7 +2345,7 @@ impl TypeResolvingVisitor {
         &mut self, ctx: &Ctx, expr_id: ExpressionId,
         arg1_id: ExpressionId, arg1_start_idx: usize,
         arg2_id: ExpressionId, arg2_start_idx: usize
-    ) -> Result<(bool, bool), ParseError2> {
+    ) -> Result<(bool, bool), ParseError> {
         debug_assert_expr_ids_unique_and_known!(self, arg1_id, arg2_id);
         let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
         let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
@@ -2375,7 +2375,7 @@ impl TypeResolvingVisitor {
         polymorph_data: &mut ExtraData, polymorph_progress: &mut HashSet<usize>,
         signature_type: *mut InferenceType, signature_start_idx: usize,
         expression_type: *mut InferenceType, expression_start_idx: usize
-    ) -> Result<(bool, bool), ParseError2> {
+    ) -> Result<(bool, bool), ParseError> {
         // Safety: cannot mutually infer the same types
         //         polymorph_data containers may not be modified
         debug_assert_ptrs_distinct!(signature_type, expression_type);
@@ -2400,7 +2400,7 @@ impl TypeResolvingVisitor {
                 (&*expression_type).display_name(&ctx.heap)
             ) };
 
-            return Err(ParseError2::new_error(
+            return Err(ParseError::new_error(
                 &ctx.module.source, outer_position,
                 "Failed to fully resolve the types of this expression"
             ).with_postfixed_info(
@@ -2503,7 +2503,7 @@ impl TypeResolvingVisitor {
         &mut self, ctx: &Ctx, expr_id: ExpressionId,
         arg1_id: ExpressionId, arg2_id: ExpressionId,
         start_idx: usize
-    ) -> Result<(bool, bool, bool), ParseError2> {
+    ) -> Result<(bool, bool, bool), ParseError> {
         // Safety: all expression IDs are always distinct, and we do not modify
         //  the container
         debug_assert_expr_ids_unique_and_known!(self, expr_id, arg1_id, arg2_id);
@@ -2547,7 +2547,7 @@ impl TypeResolvingVisitor {
     //  a lot more efficiently, methinks (disregarding the allocations here)
     fn apply_equal_n_constraint(
         &mut self, ctx: &Ctx, expr_id: ExpressionId, args: &[ExpressionId],
-    ) -> Result<Vec<bool>, ParseError2> {
+    ) -> Result<Vec<bool>, ParseError> {
         // Early exit
         match args.len() {
             0 => return Ok(vec!()),         // nothing to progress
@@ -2609,7 +2609,7 @@ impl TypeResolvingVisitor {
     /// of subexpressions before they have a chance to call this function.
     fn insert_initial_expr_inference_type(
         &mut self, ctx: &mut Ctx, expr_id: ExpressionId
-    ) -> Result<(), ParseError2> {
+    ) -> Result<(), ParseError> {
         use ExpressionParent as EP;
         use InferenceTypePart as ITP;
 
@@ -2985,14 +2985,14 @@ impl TypeResolvingVisitor {
     /// "if statement" or a "logical not" always expecting a boolean)
     fn construct_expr_type_error(
         &self, ctx: &Ctx, expr_id: ExpressionId, arg_id: ExpressionId
-    ) -> ParseError2 {
+    ) -> ParseError {
         // TODO: Expand and provide more meaningful information for humans
         let expr = &ctx.heap[expr_id];
         let arg_expr = &ctx.heap[arg_id];
         let expr_type = self.expr_types.get(&expr_id).unwrap();
         let arg_type = self.expr_types.get(&arg_id).unwrap();
 
-        return ParseError2::new_error(
+        return ParseError::new_error(
             &ctx.module.source, expr.position(),
             &format!(
                 "Incompatible types: this expression expected a '{}'", 
@@ -3010,7 +3010,7 @@ impl TypeResolvingVisitor {
     fn construct_arg_type_error(
         &self, ctx: &Ctx, expr_id: ExpressionId,
         arg1_id: ExpressionId, arg2_id: ExpressionId
-    ) -> ParseError2 {
+    ) -> ParseError {
         let expr = &ctx.heap[expr_id];
         let arg1 = &ctx.heap[arg1_id];
         let arg2 = &ctx.heap[arg2_id];
@@ -3018,7 +3018,7 @@ impl TypeResolvingVisitor {
         let arg1_type = self.expr_types.get(&arg1_id).unwrap();
         let arg2_type = self.expr_types.get(&arg2_id).unwrap();
 
-        return ParseError2::new_error(
+        return ParseError::new_error(
             &ctx.module.source, expr.position(),
             "Incompatible types: cannot apply this expression"
         ).with_postfixed_info(
@@ -3038,11 +3038,11 @@ impl TypeResolvingVisitor {
 
     fn construct_template_type_error(
         &self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
-    ) -> ParseError2 {
+    ) -> ParseError {
         let expr = &ctx.heap[expr_id];
         let expr_type = self.expr_types.get(&expr_id).unwrap();
 
-        return ParseError2::new_error(
+        return ParseError::new_error(
             &ctx.module.source, expr.position(),
             &format!(
                 "Incompatible types: got a '{}' but expected a '{}'",
@@ -3064,7 +3064,7 @@ impl TypeResolvingVisitor {
     /// and that an actual error has occurred.
     fn construct_poly_arg_error(
         ctx: &Ctx, poly_data: &ExtraData, expr_id: ExpressionId
-    ) -> ParseError2 {
+    ) -> ParseError {
         // Helper function to check for polymorph mismatch between two inference
         // types.
         fn has_poly_mismatch<'a>(type_a: &'a InferenceType, type_b: &'a InferenceType) -> Option<(usize, &'a [InferenceTypePart], &'a [InferenceTypePart])> {
@@ -3126,11 +3126,11 @@ impl TypeResolvingVisitor {
         }
 
         // Helper function to construct initial error
-        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &Expression) -> ParseError2 {
+        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &Expression) -> ParseError {
             match expr {
                 Expression::Call(expr) => {
                     let (poly_var, func_name) = get_poly_var_and_func_name(ctx, poly_var_idx, expr);
-                    return ParseError2::new_error(
+                    return ParseError::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
                             "Conflicting type for polymorphic variable '{}' of '{}'",
@@ -3141,7 +3141,7 @@ impl TypeResolvingVisitor {
                 Expression::Literal(expr) => {
                     let lit_struct = expr.value.as_struct();
                     let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, lit_struct.definition.unwrap());
-                    return ParseError2::new_error(
+                    return ParseError::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
                             "Conflicting type for polymorphic variable '{}' of instantiation of '{}'",
@@ -3152,7 +3152,7 @@ impl TypeResolvingVisitor {
                 Expression::Select(expr) => {
                     let field = expr.field.as_symbolic();
                     let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, field.definition.unwrap());
-                    return ParseError2::new_error(
+                    return ParseError::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
