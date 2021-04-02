@@ -237,7 +237,7 @@ impl ASTWriter {
                     .with_s_key("ImportModule");
 
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module_name);
-                self.kv(indent2).with_s_key("Alias").with_ascii_val(&import.alias);
+                self.kv(indent2).with_s_key("Alias").with_ascii_val(&import.alias.value);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
             },
@@ -255,8 +255,8 @@ impl ASTWriter {
                 let indent4 = indent3 + 1;
                 for symbol in &import.symbols {
                     self.kv(indent3).with_s_key("AliasedSymbol");
-                    self.kv(indent4).with_s_key("Name").with_ascii_val(&symbol.name);
-                    self.kv(indent4).with_s_key("Alias").with_ascii_val(&symbol.alias);
+                    self.kv(indent4).with_s_key("Name").with_ascii_val(&symbol.name.value);
+                    self.kv(indent4).with_s_key("Alias").with_ascii_val(&symbol.alias.value);
                     self.kv(indent4).with_s_key("Definition")
                         .with_opt_disp_val(symbol.definition_id.as_ref().map(|v| &v.index));
                 }
@@ -630,9 +630,9 @@ impl ASTWriter {
                         let indent4 = indent3 + 1;
 
                         // Polymorphic arguments
-                        if !data.poly_args.is_empty() {
+                        if !data.poly_args2.is_empty() {
                             self.kv(indent3).with_s_key("PolymorphicArguments");
-                            for poly_arg in &data.poly_args {
+                            for poly_arg in &data.poly_args2 {
                                 self.kv(indent4).with_s_key("Argument")
                                     .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
                             }
@@ -771,7 +771,7 @@ fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
                     target.push_str("{None}");
                 }
             }
-            embedded.extend(&symbolic.poly_args);
+            embedded.extend(&symbolic.poly_args2);
         }
     };
 

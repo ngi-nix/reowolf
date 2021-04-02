@@ -675,9 +675,9 @@ fn serialize_parser_type(buffer: &mut String, heap: &Heap, id: ParserTypeId) {
         },
         PTV::Symbolic(symbolic) => {
             buffer.push_str(&String::from_utf8_lossy(&symbolic.identifier.value));
-            if symbolic.poly_args.len() > 0 {
+            if symbolic.poly_args2.len() > 0 {
                 buffer.push('<');
-                for (poly_idx, poly_arg) in symbolic.poly_args.iter().enumerate() {
+                for (poly_idx, poly_arg) in symbolic.poly_args2.iter().enumerate() {
                     if poly_idx != 0 { buffer.push(','); }
                     serialize_parser_type(buffer, heap, *poly_arg);
                 }

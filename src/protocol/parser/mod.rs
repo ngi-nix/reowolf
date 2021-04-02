@@ -167,7 +167,7 @@ impl Parser {
 
                     for symbol in &mut import.symbols {
                         debug_assert!(symbol.definition_id.is_none(), "symbol import already resolved");
-                        let (_, target_definition_id) = self.symbol_table.resolve_symbol(module_root_id, &symbol.alias)
+                        let (_, target_definition_id) = self.symbol_table.resolve_identifier(module_root_id, &symbol.alias)
                             .expect("symbol import is resolved by symbol table")
                             .as_definition()
                             .expect("symbol import does not resolve to namespace symbol");

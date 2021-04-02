@@ -23,20 +23,7 @@ impl SymbolKey {
     }
 
     fn from_namespaced_identifier(module_id: RootId, symbol: &NamespacedIdentifier2) -> Self {
-        // Strip polymorpic arguments from the identifier
-        let symbol_name = Vec::with_capacity(symbol.value.len());
-        debug_assert!(symbol.parts.len() > 0 && symbol.parts[0].is_identifier());
-
-        let mut iter = symbol.iter();
-        let (first_ident, _) = iter.next().unwrap();
-        symbol_name.extend(first_ident);
-
-        for (ident, _) in iter {
-            symbol_name.push(b':');
-            symbol_name.extend(ident);
-        }
-
-        Self{ module_id, symbol_name }
+        Self{ module_id, symbol_name: symbol.strip_poly_args() }
     }
 }
 
@@ -326,6 +313,20 @@ impl SymbolTable {
         self.module_lookup.get(identifier).map(|v| *v)
     }
 
+    pub(crate) fn resolve_symbol<'t>(
+        &'t self, root_module_id: RootId, identifier: &[u8]
+    ) -> Option<&'t SymbolValue> {
+        let lookup_key = SymbolKey{ module_id: root_module_id, symbol_name: Vec::from(identifier) };
+        self.symbol_lookup.get(&lookup_key)
+    }
+
+    pub(crate) fn resolve_identifier<'t>(
+        &'t self, root_module_id: RootId, identifier: &Identifier
+    ) -> Option<&'t SymbolValue> {
+        let lookup_key = SymbolKey::from_identifier(root_module_id, identifier);
+        self.symbol_lookup.get(&lookup_key)
+    }
+
     /// Resolves a namespaced symbol. This method will go as far as possible in
     /// going to the right symbol. It will halt the search when:
     /// 1. Polymorphic arguments are encountered on the identifier.
@@ -333,7 +334,7 @@ impl SymbolTable {
     /// 3. A part of the identifier couldn't be resolved to anything
     /// The returned iterator will always point to the next symbol (even if 
     /// nothing was found)
-    pub(crate) fn resolve_namespaced_symbol<'t, 'i>(
+    pub(crate) fn resolve_namespaced_identifier<'t, 'i>(
         &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier2
     ) -> (Option<&'t SymbolValue>, NamespacedIdentifier2Iter<'i>) {
         let mut iter = identifier.iter();

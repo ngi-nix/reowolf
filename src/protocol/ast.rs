@@ -675,6 +675,7 @@ impl NamespacedIdentifierPart {
 /// parsing phase (e.g. Foo<A,B>::Bar<C,D>::Qux). But in our current language 
 /// implementation we can only have valid namespaced identifier that contain one
 /// set of polymorphic arguments at the appropriate position.
+/// TODO: @tokens Reimplement/rename once we have a tokenizer
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NamespacedIdentifier2 {
     pub position: InputPosition,
@@ -684,6 +685,26 @@ pub struct NamespacedIdentifier2 {
 }
 
 impl NamespacedIdentifier2 {
+    /// Returns the identifier value without any of the specific polymorphic
+    /// arguments.
+    pub fn strip_poly_args(&self) -> Vec<u8> {
+        debug_assert!(!self.parts.is_empty() && self.parts[0].is_identifier());
+
+        let mut result = Vec::with_capacity(self.value.len());
+        let mut iter = self.iter();
+        let (first_ident, _) = iter.next().unwrap();
+        result.extend(first_ident);
+
+        for (ident, _) in iter.next() {
+            result.push(b':');
+            result.push(b':');
+            result.extend(ident);
+        }
+
+        result
+    }
+
+    /// Returns an iterator of the elements in the namespaced identifier
     pub fn iter(&self) -> NamespacedIdentifier2Iter {
         return NamespacedIdentifier2Iter{
             identifier: self,
@@ -691,23 +712,59 @@ impl NamespacedIdentifier2 {
         }
     }
 
-    pub fn has_poly_args(&self) -> bool {
-        return !self.poly_args.is_empty();
+    pub fn get_poly_args(&self) -> Option<&[ParserTypeId]> {
+        let has_poly_args = self.parts.iter().any(|v| !v.is_identifier());
+        if has_poly_args {
+            Some(&self.poly_args)
+        } else {
+            None
+        }
+    }
+
+    // Check if two namespaced identifiers match eachother when not considering
+    // the polymorphic arguments
+    pub fn matches_namespaced_identifier(&self, other: &Self) -> bool {
+        let mut iter_self = self.iter();
+        let mut iter_other = other.iter();
+
+        loop {
+            let val_self = iter_self.next();
+            let val_other = iter_other.next();
+            if val_self.is_some() != val_other.is_some() {
+                // One is longer than the other
+                return false;
+            }
+            if val_self.is_none() {
+                // Both are none
+                return true;
+            }
+
+            // Both are something
+            let (val_self, _) = val_self.unwrap();
+            let (val_other, _) = val_other.unwrap();
+            if val_self != val_other { return false; }
+        }
+    }
+
+    // Check if the namespaced identifier matches an identifier when not 
+    // considering the polymorphic arguments
+    pub fn matches_identifier(&self, other: &Identifier) -> bool {
+        let mut iter = self.iter();
+        let (first_ident, _) = iter.next().unwrap();
+        if first_ident != other.value { 
+            return false;
+        }
+
+        if iter.next().is_some() {
+            return false;
+        }
+
+        return true;
     }
 }
 
-impl PartialEq for NamespacedIdentifier2 {
-    fn eq(&self, other: &Self) -> bool {
-        return self.value == other.value
-    }
-}
-
-impl PartialEq<Identifier> for NamespacedIdentifier2 {
-    fn eq(&self, other: &Identifier) -> bool {
-        return self.value == other.value
-    }
-}
-
+/// Iterator over elements of the namespaced identifier. The element index will
+/// only ever be at the start of an identifier element.
 #[derive(Debug)]
 pub struct NamespacedIdentifier2Iter<'a> {
     identifier: &'a NamespacedIdentifier2,
@@ -718,9 +775,12 @@ impl<'a> Iterator for NamespacedIdentifier2Iter<'a> {
     type Item = (&'a [u8], Option<&'a [ParserTypeId]>);
     fn next(&mut self) -> Option<Self::Item> {
         match self.get(self.element_idx) {
-            Some(result) => {
+            Some((ident, poly)) => {
                 self.element_idx += 1;
-                Some(result)
+                if poly.is_some() {
+                    self.element_idx += 1;
+                }
+                Some((ident, poly))
             },
             None => None
         }
@@ -728,6 +788,9 @@ impl<'a> Iterator for NamespacedIdentifier2Iter<'a> {
 }
 
 impl<'a> NamespacedIdentifier2Iter<'a> {
+    /// Returns number of parts iterated over, may not correspond to number of
+    /// times one called `next()` because returning an identifier with 
+    /// polymorphic arguments increments the internal counter by 2.
     pub fn num_returned(&self) -> usize {
         return self.element_idx;
     }
@@ -736,13 +799,25 @@ impl<'a> NamespacedIdentifier2Iter<'a> {
         return self.identifier.parts.len() - self.element_idx;
     }
 
+    pub fn returned_section(&self) -> &[u8] {
+        if self.element_idx == 0 { return &self.identifier.value[0..0]; }
+
+        let last_idx = match &self.identifier.parts[self.element_idx - 1] {
+            NamespacedIdentifierPart::Identifier{end, ..} => *end,
+            NamespacedIdentifierPart::PolyArgs{end, ..} => *end,
+        };
+
+        return &self.identifier.value[..last_idx as usize];
+    }
+
+    /// Returns a specific element from the namespaced identifier
     pub fn get(&self, idx: usize) -> Option<<Self as Iterator>::Item> {
         if idx >= self.identifier.parts.len() { 
             return None 
         }
 
         let cur_part = &self.identifier.parts[idx];
-        let next_part = self.identifier.parts.get(idx);
+        let next_part = self.identifier.parts.get(idx + 1);
 
         let (ident_start, ident_end) = cur_part.as_identifier();
         let poly_slice = match next_part {
@@ -761,12 +836,29 @@ impl<'a> NamespacedIdentifier2Iter<'a> {
         ))
     }
 
-    pub fn prev(&self) -> Option<<Self as Iterator>::Item> {
-        if self.element_idx == 0 {
+    /// Returns the previously returend index into the parts array of the 
+    /// identifier.
+    pub fn prev_idx(&self) -> Option<usize> {
+        if self.element_idx == 0 { 
             return None;
+        };
+        
+        if self.identifier.parts[self.element_idx - 1].is_identifier() { 
+            return Some(self.element_idx - 1);
         }
 
-        self.get(self.element_idx - 1)
+        // Previous part had polymorphic arguments, so the one before that must
+        // be an identifier (if well formed)
+        debug_assert!(self.element_idx >= 2 && self.identifier.parts[self.element_idx - 2].is_identifier());
+        return Some(self.element_idx - 2)
+    }
+
+    /// Returns the previously returned result from `next()`
+    pub fn prev(&self) -> Option<<Self as Iterator>::Item> {
+        match self.prev_idx() {
+            None => None,
+            Some(idx) => self.get(idx)
+        }
     }
 }
 
@@ -912,6 +1004,7 @@ pub struct SymbolicParserType {
     pub identifier: NamespacedIdentifier2,
     // Phase 2: validation/linking (for types in function/component bodies) and
     //  type table construction (for embedded types of structs/unions)
+    pub poly_args2: Vec<ParserTypeId>, // taken from identifier or inferred
     pub variant: Option<SymbolicParserTypeVariant>
 }
 
@@ -1133,6 +1226,7 @@ pub struct LiteralStruct {
     pub(crate) identifier: NamespacedIdentifier2,
     pub(crate) fields: Vec<LiteralStructField>,
     // Phase 2: linker
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier
     pub(crate) definition: Option<DefinitionId>
 }
 

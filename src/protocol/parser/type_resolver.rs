@@ -2767,9 +2767,9 @@ impl TypeResolvingVisitor {
         let literal = ctx.heap[lit_id].value.as_struct();
 
         // Handle polymorphic arguments
-        let mut poly_vars = Vec::with_capacity(literal.poly_args.len());
+        let mut poly_vars = Vec::with_capacity(literal.poly_args2.len());
         let mut total_num_poly_parts = 0;
-        for poly_arg_type_id in literal.poly_args.clone() { // TODO: @performance
+        for poly_arg_type_id in literal.poly_args2.clone() { // TODO: @performance
             let inference_type = self.determine_inference_type_from_parser_type(
                 ctx, poly_arg_type_id, true
             ); 
@@ -2931,7 +2931,7 @@ impl TypeResolvingVisitor {
                     match symbolic.variant.as_ref().unwrap() {
                         SymbolicParserTypeVariant::PolyArg(_, arg_idx) => {
                             let arg_idx = *arg_idx;
-                            debug_assert!(symbolic.poly_args.is_empty()); // TODO: @hkt
+                            debug_assert!(symbolic.poly_args2.is_empty()); // TODO: @hkt
 
                             if parser_type_in_body {
                                 // Polymorphic argument refers to definition's
@@ -2960,14 +2960,14 @@ impl TypeResolvingVisitor {
                                     Definition::Enum(v) => v.poly_vars.len(),
                                     _ => unreachable!(),
                                 };
-                                debug_assert_eq!(symbolic.poly_args.len(), num_poly);
+                                debug_assert_eq!(symbolic.poly_args2.len(), num_poly);
                             }
 
-                            infer_type.push(ITP::Instance(*definition_id, symbolic.poly_args.len()));
-                            let mut poly_arg_idx = symbolic.poly_args.len();
+                            infer_type.push(ITP::Instance(*definition_id, symbolic.poly_args2.len()));
+                            let mut poly_arg_idx = symbolic.poly_args2.len();
                             while poly_arg_idx > 0 {
                                 poly_arg_idx -= 1;
-                                to_consider.push_front(symbolic.poly_args[poly_arg_idx]);
+                                to_consider.push_front(symbolic.poly_args2[poly_arg_idx]);
                             }
                         }
                     }

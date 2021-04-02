@@ -6,10 +6,10 @@ const MAX_NAMESPACES: u8 = 8; // only three levels are supported at the moment
 
 macro_rules! debug_log {
     ($format:literal) => {
-        enabled_debug_print!(false, "lexer", $format);
+        enabled_debug_print!(true, "lexer", $format);
     };
     ($format:literal, $($args:expr),*) => {
-        enabled_debug_print!(false, "lexer", $format, $($args),*);
+        enabled_debug_print!(true, "lexer", $format, $($args),*);
     };
 }
 
@@ -91,6 +91,19 @@ fn lowercase(x: u8) -> u8 {
         x - b'A' + b'a'
     } else {
         x
+    }
+}
+
+fn identifier_as_namespaced(identifier: Identifier) -> NamespacedIdentifier2 {
+    let identifier_len = identifier.value.len();
+    debug_assert!(identifier_len < u16::max_value() as usize);
+    NamespacedIdentifier2{
+        position: identifier.position,
+        value: identifier.value,
+        poly_args: Vec::new(),
+        parts: vec![
+            NamespacedIdentifierPart::Identifier{start: 0, end: identifier_len as u16}
+        ],
     }
 }
 
@@ -478,6 +491,10 @@ impl Lexer<'_> {
 
         // Consumes a part of the namespaced identifier, returns a boolean
         // indicating whether polymorphic arguments were specified.
+        // TODO: Continue here: if we fail to properly parse the polymorphic
+        //  arguments, assume we have reached the end of the namespaced 
+        //  identifier and are instead dealing with a less-than operator. Ugly?
+        //  Yes. Needs tokenizer? Yes. 
         fn consume_part(
             l: &mut Lexer, h: &mut Heap, ident: &mut NamespacedIdentifier2,
             backup_pos: &mut InputPosition
@@ -630,7 +647,7 @@ impl Lexer<'_> {
         } else {
             // Must be a symbolic type
             let identifier = self.consume_namespaced_identifier2(h)?;
-            ParserTypeVariant::Symbolic(SymbolicParserType{identifier, variant: None})
+            ParserTypeVariant::Symbolic(SymbolicParserType{identifier, variant: None, poly_args2: Vec::new()})
         };
 
         // If the type was a basic type (not supporting polymorphic type
@@ -1557,6 +1574,7 @@ impl Lexer<'_> {
             value: Literal::Struct(LiteralStruct{
                 identifier,
                 fields,
+                poly_args2: Vec::new(),
                 definition: None,
             }),
             parent: ExpressionParent::None,
@@ -1590,8 +1608,10 @@ impl Lexer<'_> {
         let position = self.source.pos();
 
         // Consume method identifier
+        // TODO: @token Replace this conditional polymorphic arg parsing once we have a tokenizer.
         debug_log!("consume_call_expression: {}", debug_line!(self.source));
         let method;
+        let mut consume_poly_args_explicitly = true;
         if self.has_keyword(b"get") {
             self.consume_keyword(b"get")?;
             method = Method::Get;
@@ -1609,12 +1629,17 @@ impl Lexer<'_> {
             method = Method::Symbolic(MethodSymbolic{
                 identifier,
                 definition: None
-            })
-        }
+            });
+            consume_poly_args_explicitly = false;
+        };
 
         // Consume polymorphic arguments
-        self.consume_whitespace(false)?;
-        let poly_args = self.consume_polymorphic_args(h, true)?.unwrap_or_default();
+        let poly_args = if consume_poly_args_explicitly {
+            self.consume_whitespace(false)?;
+            self.consume_polymorphic_args(h, true)?.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         // Consume arguments to call
         self.consume_whitespace(false)?;
@@ -1650,7 +1675,10 @@ impl Lexer<'_> {
     ) -> Result<VariableExpressionId, ParseError2> {
         let position = self.source.pos();
         debug_log!("consume_variable_expression: {}", debug_line!(self.source));
-        let identifier = self.consume_namespaced_identifier()?;
+
+        // TODO: @token Reimplement when tokenizer is implemented, prevent ambiguities
+        let identifier = identifier_as_namespaced(self.consume_identifier()?);
+
         Ok(h.alloc_variable_expression(|this| VariableExpression {
             this,
             position,
@@ -1911,11 +1939,7 @@ impl Lexer<'_> {
         let variable_expr_id = h.alloc_variable_expression(|this| VariableExpression{
             this,
             position: identifier.position.clone(),
-            identifier: NamespacedIdentifier {
-                position: identifier.position.clone(),
-                num_namespaces: 1,
-                value: identifier.value.clone(),
-            },
+            identifier: identifier_as_namespaced(identifier),
             declaration: None,
             parent: ExpressionParent::None,
             concrete_type: Default::default()

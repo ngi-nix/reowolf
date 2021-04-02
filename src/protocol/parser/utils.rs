@@ -6,11 +6,11 @@ use super::type_table::*;
 /// Utility result type.
 pub(crate) enum FindTypeResult<'t, 'i> {
     // Found the type exactly
-    Found(&'t DefinedType),
+    Found((&'t DefinedType, NamespacedIdentifier2Iter<'i>)),
     // Could not match symbol
     SymbolNotFound{ident_pos: InputPosition},
     // Matched part of the namespaced identifier, but not completely
-    SymbolPartial{ident_pos: InputPosition, symbol_pos: InputPosition, ident_iter: NamespacedIdentifierIter<'i>},
+    SymbolPartial{ident_pos: InputPosition, symbol_pos: InputPosition, ident_iter: NamespacedIdentifier2Iter<'i>},
     // Symbol matched, but points to a namespace/module instead of a type
     SymbolNamespace{ident_pos: InputPosition, symbol_pos: InputPosition},
 }
@@ -20,7 +20,7 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
     /// Utility function to transform the `FindTypeResult` into a `Result` where
     /// `Ok` contains the resolved type, and `Err` contains a `ParseError` which
     /// can be readily returned. This is the most common use.
-    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<&'t DefinedType, ParseError2> {
+    pub(crate) fn as_parse_error(self, module_source: &InputSource) -> Result<(&'t DefinedType, NamespacedIdentifier2Iter<'i>), ParseError2> {
         match self {
             FindTypeResult::Found(defined_type) => Ok(defined_type),
             FindTypeResult::SymbolNotFound{ident_pos} => {
@@ -59,16 +59,16 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
 /// must be a type, not a namespace. 
 pub(crate) fn find_type_definition<'t, 'i>(
     symbols: &SymbolTable, types: &'t TypeTable, 
-    root_id: RootId, identifier: &'i NamespacedIdentifier
+    root_id: RootId, identifier: &'i NamespacedIdentifier2
 ) -> FindTypeResult<'t, 'i> {
     // Lookup symbol
-    let symbol = symbols.resolve_namespaced_symbol(root_id, identifier);
+    let (symbol, ident_iter) = symbols.resolve_namespaced_identifier(root_id, identifier);
     if symbol.is_none() { 
         return FindTypeResult::SymbolNotFound{ident_pos: identifier.position};
     }
     
     // Make sure we resolved it exactly
-    let (symbol, ident_iter) = symbol.unwrap();
+    let symbol = symbol.unwrap();
     if ident_iter.num_remaining() != 0 { 
         return FindTypeResult::SymbolPartial{
             ident_pos: identifier.position, 
@@ -89,7 +89,88 @@ pub(crate) fn find_type_definition<'t, 'i>(
             // able to match the definition's ID to an entry in the type table.
             let definition = types.get_base_definition(&definition_id);
             debug_assert!(definition.is_some());
-            FindTypeResult::Found(definition.unwrap())
+            FindTypeResult::Found((definition.unwrap(), ident_iter))
         }
     }
+}
+
+pub(crate) enum MatchPolymorphResult<'t> {
+    Matching,
+    InferAll(usize),
+    Mismatch{defined_type: &'t DefinedType, ident_position: InputPosition, num_specified: usize},
+    NoneExpected{defined_type: &'t DefinedType, ident_position: InputPosition, num_specified: usize},
+}
+
+impl<'t> MatchPolymorphResult<'t> {
+    pub(crate) fn as_parse_error(self, heap: &Heap, module_source: &InputSource) -> Result<usize, ParseError2> {
+        match self {
+            MatchPolymorphResult::Matching => Ok(0),
+            MatchPolymorphResult::InferAll(count) => {
+                debug_assert!(count > 0);
+                Ok(count)
+            },
+            MatchPolymorphResult::Mismatch{defined_type, ident_position, num_specified} => {
+                let type_identifier = heap[defined_type.ast_definition].identifier();
+                let args_name = if defined_type.poly_vars.len() == 1 {
+                    "argument"
+                } else {
+                    "arguments"
+                };
+
+                return Err(ParseError2::new_error(
+                    module_source, ident_position,
+                    &format!(
+                        "expected {} polymorphic {} (or none, to infer them) for the type {}, but {} were specified",
+                        defined_type.poly_vars.len(), args_name, 
+                        &String::from_utf8_lossy(&type_identifier.value),
+                        num_specified
+                    )
+                ))
+            },
+            MatchPolymorphResult::NoneExpected{defined_type, ident_position, ..} => {
+                let type_identifier = heap[defined_type.ast_definition].identifier();
+                return Err(ParseError2::new_error(
+                    module_source, ident_position,
+                    &format!(
+                        "the type {} is not polymorphic",
+                        &String::from_utf8_lossy(&type_identifier.value)
+                    )
+                ))
+            }
+        }
+    }
+}
+
+/// Attempt to match the polymorphic arguments to the number of polymorphic
+/// variables in the definition.
+pub(crate) fn match_polymorphic_args_to_vars<'t>(
+    defined_type: &'t DefinedType, poly_args: Option<&[ParserTypeId]>, ident_position: InputPosition
+) -> MatchPolymorphResult<'t> {
+    if defined_type.poly_vars.is_empty() {
+        // No polymorphic variables on type
+        if poly_args.is_some() {
+            return MatchPolymorphResult::NoneExpected{
+                defined_type,
+                ident_position, 
+                num_specified: poly_args.unwrap().len()};
+        }
+    } else {
+        // Polymorphic variables on type
+        let has_specified = poly_args.map_or(false, |a| a.len() != 0);
+        if !has_specified {
+            // Implicitly infer all of the polymorphic arguments
+            return MatchPolymorphResult::InferAll(defined_type.poly_vars.len());
+        }
+
+        let num_specified = poly_args.unwrap().len();
+        if num_specified != defined_type.poly_vars.len() {
+            return MatchPolymorphResult::Mismatch{
+                defined_type,
+                ident_position,
+                num_specified,
+            };
+        }
+    }
+
+    MatchPolymorphResult::Matching
 }
