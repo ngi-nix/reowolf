@@ -16,6 +16,8 @@ pub(crate) enum FindTypeResult<'t, 'i> {
 }
 
 // TODO: @cleanup Find other uses of this pattern
+// TODO: Hindsight is 20/20: this belongs in the visitor_linker, not in a 
+//  separate file.
 impl<'t, 'i> FindTypeResult<'t, 'i> {
     /// Utility function to transform the `FindTypeResult` into a `Result` where
     /// `Ok` contains the resolved type, and `Err` contains a `ParseError` which

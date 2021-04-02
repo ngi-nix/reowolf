@@ -39,3 +39,35 @@ fn test_struct_monomorphs() {
         .for_variable("e", |v| {v.assert_concrete_type("Number<Number<short>>");} );
     });
 }
+
+#[test]
+fn test_enum_monomorphs() {
+    Tester::new_single_source_expect_ok(
+        "no polymorph",
+        "
+        enum Answer{ Yes, No }
+        int do_it() { auto a = Answer::Yes; return 0; }
+        "
+    ).for_enum("Answer", |e| { e
+        .assert_num_monomorphs(0);
+    });
+
+    Tester::new_single_source_expect_ok(
+        "single polymorph",
+        "
+        enum Answer<T> { Yes, No }
+        int instantiator() {
+            auto a = Answer<byte>::Yes;
+            auto b = Answer<byte>::No;
+            auto c = Answer<int>::Yes;
+            auto d = Answer<Answer<Answer<long>>>::No;
+            return 0;
+        }
+        "
+    ).for_enum("Answer", |e| { e
+        .assert_num_monomorphs(3)
+        .assert_has_monomorph("byte")
+        .assert_has_monomorph("int")
+        .assert_has_monomorph("Answer<Answer<long>>");
+    });
+}

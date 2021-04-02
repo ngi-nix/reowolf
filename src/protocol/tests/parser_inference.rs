@@ -215,6 +215,98 @@ fn test_struct_inference() {
 }
 
 #[test]
+fn test_enum_inference() {
+    Tester::new_single_source_expect_ok(
+        "no polymorphic vars",
+        "
+        enum Choice { A, B }
+        int test_instances() {
+            auto foo = Choice::A;
+            auto bar = Choice::B;
+            return 0;
+        }
+        "
+    ).for_function("test_instances", |f| { f
+        .for_variable("foo", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Choice");
+        })
+        .for_variable("bar", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Choice");
+        });
+    });
+
+    Tester::new_single_source_expect_ok(
+        "one polymorphic var",
+        "
+        enum Choice<T>{
+            A,
+            B,
+        }
+        int fix_as_byte(Choice<byte> arg) { return 0; }
+        int fix_as_int(Choice<int> arg) { return 0; }
+        int test_instances() {
+            auto choice_byte = Choice::A;
+            auto choice_int1 = Choice::B;
+            Choice<auto> choice_int2 = Choice::B;
+            fix_as_byte(choice_byte);
+            fix_as_int(choice_int1);
+            return fix_as_int(choice_int2);
+        }
+        "
+    ).for_function("test_instances", |f| { f
+        .for_variable("choice_byte", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Choice<byte>");
+        })
+        .for_variable("choice_int1", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Choice<int>");
+        })
+        .for_variable("choice_int2", |v| { v
+            .assert_parser_type("Choice<auto>")
+            .assert_concrete_type("Choice<int>");
+        });
+    });
+
+    Tester::new_single_source_expect_ok(
+        "two polymorphic vars",
+        "
+        enum Choice<T1, T2>{ A, B, }
+        int fix_t1<T>(Choice<byte, T> arg) { return 0; }
+        int fix_t2<T>(Choice<T, int> arg) { return 0; }
+        int test_instances() {
+            Choice<byte, auto> choice1 = Choice::A;
+            Choice<auto, int> choice2 = Choice::A;
+            Choice<auto, auto> choice3 = Choice::B;
+            auto choice4 = Choice::B;
+            fix_t1(choice1); fix_t1(choice2); fix_t1(choice3); fix_t1(choice4);
+            fix_t2(choice1); fix_t2(choice2); fix_t2(choice3); fix_t2(choice4);
+            return 0;
+        }
+        "
+    ).for_function("test_instances", |f| { f
+        .for_variable("choice1", |v| { v
+            .assert_parser_type("Choice<byte,auto>")
+            .assert_concrete_type("Choice<byte,int>");
+        })
+        .for_variable("choice2", |v| { v
+            .assert_parser_type("Choice<auto,int>")
+            .assert_concrete_type("Choice<byte,int>");
+        })
+        .for_variable("choice3", |v| { v
+            .assert_parser_type("Choice<auto,auto>")
+            .assert_concrete_type("Choice<byte,int>");
+        })
+        .for_variable("choice4", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Choice<byte,int>");
+        });
+    });
+}
+
+#[test]
 fn test_failed_polymorph_inference() {
     Tester::new_single_source_expect_err(
         "function call inference mismatch",

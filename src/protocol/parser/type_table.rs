@@ -168,6 +168,13 @@ impl DefinedTypeVariant {
             _ => unreachable!("Cannot convert {} to struct variant", self.type_class())
         }
     }
+
+    pub(crate) fn as_enum(&self) -> &EnumType {
+        match self {
+            DefinedTypeVariant::Enum(v) => v,
+            _ => unreachable!("Cannot convert {} to enum variant", self.type_class())
+        }
+    }
 }
 
 /// `EnumType` is the classical C/C++ enum type. It has various variants with
@@ -176,14 +183,14 @@ impl DefinedTypeVariant {
 /// value multiple times, we assume the user is an expert and we consider both
 /// variants to be equal to one another.
 pub struct EnumType {
-    variants: Vec<EnumVariant>,
-    representation: PrimitiveType,
+    pub(crate) variants: Vec<EnumVariant>,
+    pub(crate) representation: PrimitiveType,
 }
 
 // TODO: Also support maximum u64 value
 pub struct EnumVariant {
-    identifier: Identifier,
-    value: i64,
+    pub(crate) identifier: Identifier,
+    pub(crate) value: i64,
 }
 
 /// `UnionType` is the algebraic datatype (or sum type, or discriminated union).

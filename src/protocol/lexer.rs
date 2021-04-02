@@ -514,7 +514,9 @@ impl Lexer<'_> {
         Ok(ident)
     }
 
-    fn consume_namespaced_identifier_spilled(&mut self) -> Result<(), ParseError> {
+    // Consumes a spilled namespaced identifier and returns the number of
+    // namespaces that we encountered.
+    fn consume_namespaced_identifier_spilled(&mut self) -> Result<usize, ParseError> {
         if self.has_reserved() {
             return Err(self.error_at_pos("Encountered reserved keyword"));
         }
@@ -534,6 +536,7 @@ impl Lexer<'_> {
         }
 
         let mut backup_pos = self.source.pos();
+        let mut num_namespaces = 1;
         consume_part_spilled(self, &mut backup_pos)?;
         self.consume_whitespace(false)?;
         while self.has_string(b"::") {
@@ -541,10 +544,11 @@ impl Lexer<'_> {
             self.consume_whitespace(false)?;
             consume_part_spilled(self, &mut backup_pos)?;
             self.consume_whitespace(false)?;
+            num_namespaces += 1;
         }
 
         self.source.seek(backup_pos);
-        Ok(())
+        Ok(num_namespaces)
     }
 
     // Types and type annotations
@@ -1436,6 +1440,9 @@ impl Lexer<'_> {
         if self.has_call_expression() {
             return Ok(self.consume_call_expression(h)?.upcast());
         }
+        if self.has_enum_literal() {
+            return Ok(self.consume_enum_literal(h)?.upcast());
+        }
         Ok(self.consume_variable_expression(h)?.upcast())
     }
     fn consume_array_expression(&mut self, h: &mut Heap) -> Result<ArrayExpressionId, ParseError> {
@@ -1513,7 +1520,37 @@ impl Lexer<'_> {
             concrete_type: ConcreteType::default(),
         }))
     }
-
+    fn has_enum_literal(&mut self) -> bool {
+        // An enum literal is always:
+        //      maybe_a_namespace::EnumName<maybe_one_of_these>::Variant
+        // So may for now be distinguished from other literals/variables by 
+        // first checking for struct literals and call expressions, then for
+        // enum literals, finally for variable expressions. It is different
+        // from a variable expression in that it _always_ contains multiple
+        // elements to the enum.
+        let backup_pos = self.source.pos();
+        let result = match self.consume_namespaced_identifier_spilled() {
+            Ok(num_namespaces) => num_namespaces > 1,
+            Err(_) => false,
+        };
+        self.source.seek(backup_pos);
+        result
+    }
+    fn consume_enum_literal(&mut self, h: &mut Heap) -> Result<LiteralExpressionId, ParseError> {
+        let identifier = self.consume_namespaced_identifier(h)?;
+        Ok(h.alloc_literal_expression(|this| LiteralExpression{
+            this,
+            position: identifier.position,
+            value: Literal::Enum(LiteralEnum{
+                identifier,
+                poly_args2: Vec::new(),
+                definition: None,
+                variant_idx: 0,
+            }),
+            parent: ExpressionParent::None,
+            concrete_type: ConcreteType::default(),
+        }))
+    }
     fn has_struct_literal(&mut self) -> bool {
         // A struct literal is written as:
         //      namespace::StructName<maybe_one_of_these, auto>{ field: expr }
@@ -2234,8 +2271,12 @@ impl Lexer<'_> {
                         lexer.consume_string(b")")?;
                         EnumVariantValue::Type(embedded_type)
                     },
+                    Some(b'}') => {
+                        // End of enum
+                        EnumVariantValue::None
+                    }
                     _ => {
-                        return Err(lexer.error_at_pos("Expected ',', '=', or '('"));
+                        return Err(lexer.error_at_pos("Expected ',', '=', '}' or '('"));
                     }
                 };
 

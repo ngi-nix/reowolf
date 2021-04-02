@@ -276,15 +276,30 @@ impl ASTWriter {
 
         match &heap[def_id] {
             Definition::Struct(_) => todo!("implement Definition::Struct"),
-            Definition::Enum(_) => todo!("implement Definition::Enum"),
+            Definition::Enum(def) => {
+                self.kv(indent).with_id(PREFIX_ENUM_ID, def.this.0.index)
+                    .with_s_key("DefinitionEnum");
+
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                for poly_var_id in &def.poly_vars {
+                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                }
+
+                self.kv(indent2).with_s_key("Variants");
+                for variant in &def.variants {
+                    self.kv(indent3).with_s_key("Variant");
+                    self.kv(indent4).with_s_key("Name")
+                        .with_ascii_val(&variant.identifier.value);
+                    // TODO: Attached value
+                }
+            },
             Definition::Function(def) => {
                 self.kv(indent).with_id(PREFIX_FUNCTION_ID, def.this.0.index)
                     .with_s_key("DefinitionFunction");
 
                 self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar");
-                    self.kv(indent4).with_s_key("Name").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
                 }
 
                 self.kv(indent2).with_s_key("ReturnParserType").with_custom_val(|s| write_parser_type(s, heap, &heap[def.return_type]));
@@ -306,8 +321,7 @@ impl ASTWriter {
 
                 self.kv(indent2).with_s_key("PolymorphicVariables");
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar");
-                    self.kv(indent4).with_s_key("Name").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
                 }
 
                 self.kv(indent2).with_s_key("Parameters");
@@ -644,6 +658,19 @@ impl ASTWriter {
                             self.kv(indent4).with_s_key("Index").with_disp_val(&field.field_idx);
                             self.kv(indent4).with_s_key("ParserType");
                             self.write_expr(heap, field.value, indent4 + 1);
+                        }
+                    },
+                    Literal::Enum(data) => {
+                        val.with_s_val("Enum");
+                        let indent4 = indent3 + 1;
+
+                        // Polymorphic arguments
+                        if !data.poly_args2.is_empty() {
+                            self.kv(indent3).with_s_key("PolymorphicArguments");
+                            for poly_arg in &data.poly_args2 {
+                                self.kv(indent4).with_s_key("Argument")
+                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
+                            }
                         }
                     }
                 }

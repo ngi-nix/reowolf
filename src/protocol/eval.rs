@@ -88,6 +88,7 @@ impl Value {
             }
             Literal::Character(_data) => unimplemented!(),
             Literal::Struct(_data) => unimplemented!(),
+            Literal::Enum(_data) => unimplemented!(),
         }
     }
     fn set(&mut self, index: &Value, value: &Value) -> Option<Value> {

@@ -699,6 +699,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         const FIELD_NOT_FOUND_SENTINEL: usize = usize::max_value();
+        const VARIANT_NOT_FOUND_SENTINEL: usize = FIELD_NOT_FOUND_SENTINEL;
 
         let constant_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
@@ -790,6 +791,43 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 }
 
                 self.expression_buffer.truncate(old_num_exprs);
+            },
+            Literal::Enum(literal) => {
+                let upcast_id = id.upcast();
+
+                // Retrieve and set type of enumeration
+                let (definition, ident_iter) = self.find_symbol_of_type_variant(
+                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types, 
+                    &literal.identifier, TypeClass::Enum
+                )?;
+                literal.definition = Some(definition.ast_definition);
+
+                // Make sure the variant exists
+                let (variant_ident, _) = ident_iter.prev().unwrap();
+                let enum_definition = definition.definition.as_enum();
+                literal.variant_idx = VARIANT_NOT_FOUND_SENTINEL;
+
+                for (variant_idx, variant) in enum_definition.variants.iter().enumerate() {
+                    if variant.identifier.value == variant_ident {
+                        literal.variant_idx = variant_idx;
+                        break;
+                    }
+                }
+
+                if literal.variant_idx == VARIANT_NOT_FOUND_SENTINEL {
+                    let variant = String::from_utf8_lossy(variant_ident).to_string();
+                    let literal = ctx.heap[id].value.as_enum();
+                    let enum_definition = ctx.heap[definition.ast_definition].as_enum();
+                    return Err(ParseError::new_error(
+                        &ctx.module.source, literal.identifier.position,
+                        &format!(
+                            "The variant '{}' does not exist on the enum '{}'",
+                            &variant, &String::from_utf8_lossy(&enum_definition.identifier.value)
+                        )
+                    ))
+                }
+
+                self.visit_literal_poly_args(ctx, id)?;
             }
         }
 
@@ -1371,10 +1409,11 @@ impl ValidityAndLinkerVisitor {
     /// a definition of a particular type.
     // Note: root_id, symbols and types passed in explicitly to prevent
     //  borrowing errors
-    fn find_symbol_of_type<'a>(
-        &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable, types: &'a TypeTable,
-        identifier: &NamespacedIdentifier, expected_type_class: TypeClass
-    ) -> Result<&'a DefinedType, ParseError> {
+    fn find_symbol_of_type<'t>(
+        &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable, 
+        types: &'t TypeTable, identifier: &NamespacedIdentifier, 
+        expected_type_class: TypeClass
+    ) -> Result<&'t DefinedType, ParseError> {
         // Find symbol associated with identifier
         let (find_result, _) = find_type_definition(symbols, types, root_id, identifier)
             .as_parse_error(source)?;
@@ -1391,6 +1430,90 @@ impl ValidityAndLinkerVisitor {
         }
 
         Ok(find_result)
+    }
+
+    /// Finds a particular enum/union using a namespaced identifier. We allow 
+    /// for one more element to exist in the namespaced identifier that 
+    /// supposedly resolves to the enum/union variant.
+    fn find_symbol_of_type_variant<'t, 'i>(
+        &self, source: &InputSource, root_id: RootId, symbols: &SymbolTable,
+        types: &'t TypeTable, identifier: &'i NamespacedIdentifier,
+        expected_type_class: TypeClass
+    ) -> Result<(&'t DefinedType, NamespacedIdentifierIter<'i>), ParseError> {
+        debug_assert!(expected_type_class == TypeClass::Enum || expected_type_class == TypeClass::Union);
+        let (symbol, mut ident_iter) = symbols.resolve_namespaced_identifier(root_id, identifier);
+
+        if symbol.is_none() {
+            return Err(ParseError::new_error(
+                source, identifier.position, 
+                "Could not resolve this identifier to a symbol"
+            ));
+        }
+
+        let symbol = symbol.unwrap();
+        match symbol.symbol {
+            Symbol::Namespace(_) => {
+                return Err(ParseError::new_error(
+                    source, identifier.position, 
+                    "This identifier was resolved to a namespace instead of a type"
+                ))
+            },
+            Symbol::Definition((_, definition_id)) => {
+                let definition = types.get_base_definition(&definition_id);
+                debug_assert!(definition.is_some());
+                let definition = definition.unwrap();
+
+                let definition_type_class = definition.definition.type_class();
+                if expected_type_class != definition_type_class {
+                    return Err(ParseError::new_error(
+                        source, identifier.position,
+                        &format!(
+                            "Expected to find a {}, this symbols points to a {}",
+                            expected_type_class, definition_type_class
+                        )
+                    ));
+                }
+
+                // Make sure we have a variant (that doesn't contain any 
+                // polymorphic args)
+                let next_part = ident_iter.next();
+                if next_part.is_none() {
+                    return Err(ParseError::new_error(
+                        source, identifier.position,
+                        &format!(
+                            "This identifier points to the type '{}', did you mean to instantiate a variant?",
+                            String::from_utf8_lossy(&identifier.value)
+                        )
+                    ));
+                }
+                let (_, next_polyargs) = next_part.unwrap();
+
+                // Now we make sure that there aren't even more identifiers, and
+                // make sure that the variant does not contain any polymorphic
+                // arguments. In that case we can simplify the later visit of
+                // the (optional) polymorphic args of the enum.
+                let returned_section = ident_iter.returned_section();
+                if ident_iter.num_remaining() != 0 {
+                    return Err(ParseError::new_error(
+                        source, identifier.position,
+                        &format!(
+                            "Too many identifiers, did you mean to write '{}'",
+                            &String::from_utf8_lossy(returned_section)
+                        )
+                    ));
+                }
+
+                if next_polyargs.is_some() {
+                    return Err(ParseError::new_error(
+                        source, identifier.position,
+                        "Encountered polymorphic args to an enum variant. These can only be specified for the enum type."
+                    ))
+                }
+
+                // We're absolutely fine
+                Ok((definition, ident_iter))
+            }
+        }
     }
 
     /// This function will check if the provided while statement ID has a block
@@ -1566,18 +1689,26 @@ impl ValidityAndLinkerVisitor {
     fn visit_literal_poly_args(&mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId) -> VisitorResult {
         // TODO: @token Revisit when tokenizer is implemented
         let literal_expr = &mut ctx.heap[lit_id];
-        if let Literal::Struct(literal) = &mut literal_expr.value {
-            literal.poly_args2.extend(&literal.identifier.poly_args);
+        match &mut literal_expr.value {
+            Literal::Struct(literal) => {
+                literal.poly_args2.extend(&literal.identifier.poly_args);
+            },
+            Literal::Enum(literal) => {
+                literal.poly_args2.extend(&literal.identifier.poly_args);
+            },
+            _ => {
+                debug_assert!(false, "called visit_literal_poly_args on a non-polymorphic literal");
+                unreachable!();
+            }
         }
 
         let literal_expr = &ctx.heap[lit_id];
         let literal_pos = literal_expr.position;
-        let num_poly_args_to_infer = match &literal_expr.value {
+        let (num_poly_args_to_infer, poly_args_to_visit) = match &literal_expr.value {
             Literal::Null | Literal::False | Literal::True |
             Literal::Character(_) | Literal::Integer(_) => {
                 // Not really an error, but a programmer error as we're likely
                 // doing work twice
-                debug_assert!(false, "called visit_literal_poly_args on a non-polymorphic literal");
                 unreachable!();
             },
             Literal::Struct(literal) => {
@@ -1590,18 +1721,29 @@ impl ValidityAndLinkerVisitor {
                     defined_type, maybe_poly_args, literal.identifier.position
                 ).as_parse_error(&ctx.heap, &ctx.module.source)?;
 
-                // Visit all specified parser types
-                let old_num_types = self.parser_type_buffer.len();
-                self.parser_type_buffer.extend(&literal.poly_args2);
-                while self.parser_type_buffer.len() > old_num_types {
-                    let parser_type_id = self.parser_type_buffer.pop().unwrap();
-                    self.visit_parser_type(ctx, parser_type_id)?;
-                }
-                self.parser_type_buffer.truncate(old_num_types);
+                (num_to_infer, &literal.poly_args2)
+            },
+            Literal::Enum(literal) => {
+                let defined_type = ctx.types.get_base_definition(literal.definition.as_ref().unwrap())
+                    .unwrap();
+                let maybe_poly_args = literal.identifier.get_poly_args();
+                let num_to_infer = match_polymorphic_args_to_vars(
+                    defined_type, maybe_poly_args, literal.identifier.position
+                ).as_parse_error(&ctx.heap, &ctx.module.source)?;
 
-                num_to_infer
+                println!("DEBUG: poly args 2: {:?}", &literal.poly_args2);
+                (num_to_infer, &literal.poly_args2)
             }
         };
+
+        // Visit all specified parser types in the polymorphic arguments
+        let old_num_types = self.parser_type_buffer.len();
+        self.parser_type_buffer.extend(poly_args_to_visit);
+        while self.parser_type_buffer.len() > old_num_types {
+            let parser_type_id = self.parser_type_buffer.pop().unwrap();
+            self.visit_parser_type(ctx, parser_type_id)?;
+        }
+        self.parser_type_buffer.truncate(old_num_types);
 
         if num_poly_args_to_infer != 0 {
             for _ in 0..num_poly_args_to_infer {
@@ -1610,13 +1752,14 @@ impl ValidityAndLinkerVisitor {
                 }));
             }
 
-            let literal = match &mut ctx.heap[lit_id].value {
-                Literal::Struct(literal) => literal,
+            let poly_args = match &mut ctx.heap[lit_id].value {
+                Literal::Struct(literal) => &mut literal.poly_args2,
+                Literal::Enum(literal) => &mut literal.poly_args2,
                 _ => unreachable!(),
             };
-            literal.poly_args2.reserve(num_poly_args_to_infer);
+            poly_args.reserve(num_poly_args_to_infer);
             for _ in 0..num_poly_args_to_infer {
-                literal.poly_args2.push(self.parser_type_buffer.pop().unwrap());
+                poly_args.push(self.parser_type_buffer.pop().unwrap());
             }
         }
 

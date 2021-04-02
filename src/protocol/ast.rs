@@ -1071,6 +1071,7 @@ pub enum Literal {
     Character(LiteralCharacter),
     Integer(LiteralInteger),
     Struct(LiteralStruct),
+    Enum(LiteralEnum),
 }
 
 impl Literal {
@@ -1087,6 +1088,14 @@ impl Literal {
             literal
         } else {
             unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
+        }
+    }
+
+    pub(crate) fn as_enum(&self) -> &LiteralEnum {
+        if let Literal::Enum(literal) = self {
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Enum", self)
         }
     }
 }
@@ -1106,7 +1115,7 @@ pub struct LiteralStruct {
     pub(crate) identifier: NamespacedIdentifier,
     pub(crate) fields: Vec<LiteralStructField>,
     // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
     pub(crate) definition: Option<DefinitionId>
 }
 
@@ -1115,9 +1124,9 @@ pub struct LiteralEnum {
     // Phase 1: parser
     pub(crate) identifier: NamespacedIdentifier,
     // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>,
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
     pub(crate) definition: Option<DefinitionId>,
-    pub(crate) variant_idx: usize,
+    pub(crate) variant_idx: usize, // as present in the type table
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
