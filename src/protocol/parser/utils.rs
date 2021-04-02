@@ -1,4 +1,4 @@
-use crate::protocol::ast::*;
+    use crate::protocol::ast::*;
 use crate::protocol::inputsource::*;
 use super::symbol_table::*;
 use super::type_table::*;
@@ -10,7 +10,7 @@ pub(crate) enum FindTypeResult<'t, 'i> {
     // Could not match symbol
     SymbolNotFound{ident_pos: InputPosition},
     // Matched part of the namespaced identifier, but not completely
-    SymbolPartial{ident_pos: InputPosition, symbol_pos: InputPosition, ident_iter: NamespacedIdentifier2Iter<'i>},
+    SymbolPartial{ident_pos: InputPosition, ident_iter: NamespacedIdentifier2Iter<'i>},
     // Symbol matched, but points to a namespace/module instead of a type
     SymbolNamespace{ident_pos: InputPosition, symbol_pos: InputPosition},
 }
@@ -29,15 +29,12 @@ impl<'t, 'i> FindTypeResult<'t, 'i> {
                     "Could not resolve this identifier to a symbol"
                 ))
             },
-            FindTypeResult::SymbolPartial{ident_pos, symbol_pos, ident_iter} => {
+            FindTypeResult::SymbolPartial{ident_pos, ident_iter} => {
                 Err(ParseError2::new_error(
                     module_source, ident_pos, 
-                    "Could not fully resolve this identifier to a symbol"
-                ).with_postfixed_info(
-                    module_source, symbol_pos, 
                     &format!(
-                        "The partial identifier '{}' was matched to this symbol",
-                        String::from_utf8_lossy(ident_iter.returned_section()),
+                        "Could not fully resolve this identifier to a symbol, was only able to match '{}'",
+                        &String::from_utf8_lossy(ident_iter.returned_section())
                     )
                 ))
             },
@@ -71,8 +68,7 @@ pub(crate) fn find_type_definition<'t, 'i>(
     let symbol = symbol.unwrap();
     if ident_iter.num_remaining() != 0 { 
         return FindTypeResult::SymbolPartial{
-            ident_pos: identifier.position, 
-            symbol_pos: symbol.position, 
+            ident_pos: identifier.position,
             ident_iter
         };
     }

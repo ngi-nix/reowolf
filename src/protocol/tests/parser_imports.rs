@@ -147,6 +147,103 @@ fn test_multi_symbol_import() {
     //     .expect_ok();
 }
 
+#[test]
+fn test_illegal_import_use() {
+    Tester::new("unexpected polymorphic args")
+        .with_source("
+        #module external
+        struct Foo { byte f }
+        ")
+        .with_source("
+        import external;
+        byte caller() {
+            auto foo = external::Foo<int>{ f: 0 };
+            return foo.f;
+        }
+        ")
+        .compile()
+        .expect_err()
+        .error(|e| { e
+            .assert_msg_has(0, "the type Foo is not polymorphic");
+        });
+
+    Tester::new("mismatched polymorphic args")
+        .with_source("
+        #module external
+        struct Foo<T>{ T f }
+        ")
+        .with_source("
+        import external;
+        byte caller() {
+            auto foo = external::Foo<byte, int>{ f: 0 };
+            return foo.f;
+        }")
+        .compile()
+        .expect_err()
+        .error(|e| { e
+            .assert_msg_has(0, "expected 1 polymorphic")
+            .assert_msg_has(0, "2 were specified");
+        });
+
+    Tester::new("module as type")
+        .with_source("
+        #module external
+        ")
+        .with_source("
+        import external;
+        byte caller() {
+            auto foo = external{ f: 0 };
+            return 0;
+        }
+        ")
+        .compile()
+        .expect_err()
+        .error(|e| { e
+            .assert_msg_has(0, "resolved to a namespace");
+        });
+
+    Tester::new("more namespaces than needed, not polymorphic")
+        .with_source("
+        #module external
+        struct Foo { byte f }
+        ")
+        .with_source("
+        import external;
+        byte caller() {
+            auto foo = external::Foo::f{ f: 0 };
+            return 0;
+        }")
+        .compile()
+        .expect_err()
+        .error(|e| { e
+            .assert_msg_has(0, "not fully resolve this identifier")
+            .assert_msg_has(0, "able to match 'external::Foo'");
+        });
+
+    Tester::new("import from another import")
+        .with_source("
+        #module mod1
+        struct Foo { byte f }
+        ")
+        .with_source("
+        #module mod2
+        import mod1::Foo;
+        struct Bar { Foo f }
+        ")
+        .with_source("
+        import mod2;
+        byte caller() {
+            auto bar = mod2::Bar{ f: mod2::Foo{ f: 0 } };
+            return var.f.f;
+        }")
+        .compile()
+        .expect_err()
+        .error(|e| { e
+            .assert_msg_has(0, "Could not resolve this identifier")
+            .assert_occurs_at(0, "mod2::Foo");
+        });
+}
+
 // TODO: Test incorrect imports:
 //  1. importing a module
 //  2. import something a module imports

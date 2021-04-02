@@ -500,6 +500,9 @@ impl Lexer<'_> {
             backup_pos: &mut InputPosition
         ) -> Result<(), ParseError2> {
             // Consume identifier
+            if !ident.value.is_empty() {
+                ident.value.extend(b"::");
+            }
             let ident_start = ident.value.len();
             ident.value.extend(l.consume_ident()?);
             ident.parts.push(NamespacedIdentifierPart::Identifier{
@@ -510,7 +513,7 @@ impl Lexer<'_> {
             // Maybe consume polymorphic args.
             *backup_pos = l.source.pos();
             l.consume_whitespace(false)?;
-            let had_poly_args = match l.consume_polymorphic_args(h, true)? {
+            match l.consume_polymorphic_args(h, true)? {
                 Some(args) => {
                     let poly_start = ident.poly_args.len();
                     ident.poly_args.extend(args);
@@ -525,7 +528,7 @@ impl Lexer<'_> {
                 None => {}
             };
 
-            Ok(had_poly_args)
+            Ok(())
         }
 
         let mut ident = NamespacedIdentifier2{
