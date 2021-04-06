@@ -761,17 +761,24 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 if !specified.iter().all(|v| *v) {
                     // Some fields were not specified
                     let mut not_specified = String::new();
+                    let mut num_not_specified = 0;
                     for (def_field_idx, is_specified) in specified.iter().enumerate() {
                         if !is_specified {
                             if !not_specified.is_empty() { not_specified.push_str(", ") }
                             let field_ident = &definition.fields[def_field_idx].identifier;
                             not_specified.push_str(&String::from_utf8_lossy(&field_ident.value));
+                            num_not_specified += 1;
                         }
                     }
 
+                    debug_assert!(num_not_specified > 0);
+                    let msg = if num_not_specified == 1 {
+                        format!("Not all fields are specified, '{}' is missing", not_specified)
+                    } else {
+                        format!("Not all fields are specified, [{}] are missing", not_specified)
+                    };
                     return Err(ParseError::new_error(
-                        &ctx.module.source, literal.identifier.position,
-                        &format!("Not all fields are specified, [{}] are missing", not_specified)
+                        &ctx.module.source, literal.identifier.position, &msg
                     ));
                 }
 
@@ -907,7 +914,7 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     return Err(ParseError::new_error(
                         &ctx.module.source, literal.identifier.position,
                         &format!(
-                            "This variant '{}' of union '{}' expects {} embedded values, but {} were specified",
+                            "The variant '{}' of union '{}' expects {} embedded values, but {} were specified",
                             variant, &String::from_utf8_lossy(&union_definition.identifier.value),
                             union_variant.embedded.len(), literal.values.len()
                         ),

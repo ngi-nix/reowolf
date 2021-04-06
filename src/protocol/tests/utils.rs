@@ -656,6 +656,26 @@ impl<'a> ErrorTester<'a> {
         self
     }
 
+    // TODO: @tokenizer This should really be removed, as compilation should be
+    //  deterministic, but we're currently using rather inefficient hashsets for
+    //  the type inference, so remove once compiler architecture has changed.
+    pub(crate) fn assert_any_msg_has(self, msg: &str) -> Self {
+        let mut is_present = false;
+        for statement in &self.error.statements {
+            if statement.message.contains(msg) {
+                is_present = true;
+                break;
+            }
+        }
+
+        assert!(
+            is_present, "[{}] Expected an error statement to contain '{}' for {}",
+            self.test_name, msg, self.assert_postfix()
+        );
+        
+        self
+    }
+
     /// Seeks the index of the pattern in the context message, then checks if
     /// the input position corresponds to that index.
     pub (crate) fn assert_occurs_at(self, idx: usize, pattern: &str) -> Self {

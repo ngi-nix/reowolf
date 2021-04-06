@@ -1426,6 +1426,7 @@ impl TypeResolvingVisitor {
                         let definition_id = match &lit_expr.value {
                             Literal::Struct(literal) => literal.definition.as_ref().unwrap(),
                             Literal::Enum(literal) => literal.definition.as_ref().unwrap(),
+                            Literal::Union(literal) => literal.definition.as_ref().unwrap(),
                             _ => unreachable!("post-inference monomorph for non-struct, non-enum literal")
                         };
                         if !ctx.types.has_monomorph(definition_id, &monomorph_types) {
@@ -3038,7 +3039,7 @@ impl TypeResolvingVisitor {
         let mut embedded = Vec::with_capacity(variant_definition.embedded.len());
         for embedded_id in &variant_definition.embedded {
             let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, *embedded_id, true
+                ctx, *embedded_id, false
             );
             embedded.push(inference_type);
         }
@@ -3195,10 +3196,11 @@ impl TypeResolvingVisitor {
                             // TODO: @cleanup
                             if cfg!(debug_assertions) {
                                 let definition = &ctx.heap[*definition_id];
-                                debug_assert!(definition.is_struct() || definition.is_enum()); // TODO: @function_ptrs
+                                debug_assert!(definition.is_struct() || definition.is_enum() || definition.is_union()); // TODO: @function_ptrs
                                 let num_poly = match definition {
                                     Definition::Struct(v) => v.poly_vars.len(),
                                     Definition::Enum(v) => v.poly_vars.len(),
+                                    Definition::Union(v) => v.poly_vars.len(),
                                     _ => unreachable!(),
                                 };
                                 debug_assert_eq!(symbolic.poly_args2.len(), num_poly);

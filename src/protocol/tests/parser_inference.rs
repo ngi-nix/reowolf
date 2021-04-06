@@ -366,8 +366,8 @@ fn test_failed_polymorph_inference() {
         "
     ).error(|e| { e
         .assert_num(2)
-        .assert_msg_has(0, "the type 'Uninteresting<byte>'")
-        .assert_msg_has(1, "type 'Uninteresting<int>'");
+        .assert_any_msg_has("type 'Uninteresting<byte>'")
+        .assert_any_msg_has("type 'Uninteresting<int>'");
     });
 
     Tester::new_single_source_expect_err(

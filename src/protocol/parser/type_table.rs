@@ -535,7 +535,7 @@ impl TypeTable {
 
         // Ensure union names and polymorphic args do not conflict
         self.check_identifier_collision(
-            ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
+            ctx, root_id, &variants, |variant| &variant.identifier, "union variant"
         )?;
         self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
@@ -915,7 +915,7 @@ impl TypeTable {
                             }
 
                             // Found a match, make sure it is a datatype
-                            if !(definition.is_struct() || definition.is_enum()) {
+                            if !(definition.is_struct() || definition.is_enum() || definition.is_union()) {
                                 return Err(ParseError::new_error(
                                     module_source, symbolic.identifier.position,
                                     "Embedded types must be datatypes (structs or enums)"
