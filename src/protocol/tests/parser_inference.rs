@@ -351,6 +351,25 @@ fn test_failed_polymorph_inference() {
         .assert_msg_has(2, "inferred it to 'byte'");
     });
 
+    // Cannot really test literal inference error, but this comes close
+    Tester::new_single_source_expect_err(
+        "enum literal inference mismatch",
+        "
+        enum Uninteresting<T>{ Variant }
+        int fix_t<T>(Uninteresting<T> arg) { return 0; }
+        int call() {
+            auto a = Uninteresting::Variant;
+            fix_t<byte>(a);
+            fix_t<int>(a);
+            return 4;
+        }
+        "
+    ).error(|e| { e
+        .assert_num(2)
+        .assert_msg_has(0, "the type 'Uninteresting<byte>'")
+        .assert_msg_has(1, "type 'Uninteresting<int>'");
+    });
+
     Tester::new_single_source_expect_err(
         "field access inference mismatch",
         "
@@ -372,7 +391,7 @@ fn test_failed_polymorph_inference() {
 
     // TODO: Needs better error messages anyway, but this failed before
     Tester::new_single_source_expect_err(
-        "by nested field access",
+        "nested field access inference mismatch",
         "
         struct Node<T1, T2>{ T1 l, T2 r }
         Node<T1, T2> construct<T1, T2>(T1 l, T2 r) { return Node{ l: l, r: r }; }

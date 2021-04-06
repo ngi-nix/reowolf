@@ -244,14 +244,12 @@ impl InferenceType {
     fn new(has_body_marker: bool, is_done: bool, parts: Vec<InferenceTypePart>) -> Self {
         if cfg!(debug_assertions) {
             debug_assert!(!parts.is_empty());
-            if !has_body_marker {
-                debug_assert!(!parts.iter().any(|v| {
-                    if let InferenceTypePart::MarkerBody(_) = v { true } else { false }
-                }));
-            }
-            if is_done {
-                debug_assert!(parts.iter().all(|v| v.is_concrete()));
-            }
+            let parts_body_marker = parts.iter().any(|v| {
+                if let InferenceTypePart::MarkerBody(_) = v { true } else { false }
+            });
+            debug_assert_eq!(has_body_marker, parts_body_marker);
+            let parts_done = parts.iter().all(|v| v.is_concrete());
+            debug_assert_eq!(is_done, parts_done, "{:?}", parts);
         }
         Self{ has_body_marker: has_body_marker, is_done, parts }
     }
@@ -1231,6 +1229,16 @@ impl Visitor2 for TypeResolvingVisitor {
                 // reason we may still have to apply inference to this 
                 // polymorphic variable
                 self.insert_initial_enum_polymorph_data(ctx, id);
+            },
+            Literal::Union(literal) => {
+                // May carry subexpressions and polymorphic arguments
+                // TODO: @performance
+                let expr_ids = literal.values.clone();
+                self.insert_initial_union_polymorph_data(ctx, id);
+
+                for expr_id in expr_ids {
+                    self.visit_expr(ctx, expr_id)?;
+                }
             }
         }
 
@@ -2113,6 +2121,93 @@ impl TypeResolvingVisitor {
                 );
 
                 progress_expr
+            },
+            Literal::Union(data) => {
+                let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                for poly in &extra.poly_vars {
+                    debug_log!(" * Poly: {}", poly.display_name(&ctx.heap));
+                }
+                let mut poly_progress = HashSet::new();
+                debug_assert_eq!(extra.embedded.len(), data.values.len());
+
+                debug_log!(" * During (inferring types from variant values and union type):");
+
+                // Mutually infer union variant values
+                for (value_idx, value_expr_id) in data.values.iter().enumerate() {
+                    let value_expr_id = *value_expr_id;
+                    let signature_type: *mut _ = &mut extra.embedded[value_idx];
+                    let value_type: *mut _ = self.expr_types.get_mut(&value_expr_id).unwrap();
+                    let (_, progress_arg) = Self::apply_equal2_signature_constraint(
+                        ctx, upcast_id, Some(value_expr_id), extra, &mut poly_progress,
+                        signature_type, 0, value_type, 0 
+                    )?;
+
+                    debug_log!(
+                        "   - Value {} type | sig: {}, field: {}", value_idx,
+                        unsafe{&*signature_type}.display_name(&ctx.heap),
+                        unsafe{&*value_type}.display_name(&ctx.heap)
+                    );
+
+                    if progress_arg {
+                        self.expr_queued.insert(value_expr_id);
+                    }
+                }
+
+                debug_log!("   - Field poly progress | {:?}", poly_progress);
+
+                // Infer type of union itself
+                let signature_type: *mut _ = &mut extra.returned;
+                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let (_, progress_expr) = Self::apply_equal2_signature_constraint(
+                    ctx, upcast_id, None, extra, &mut poly_progress,
+                    signature_type, 0, expr_type, 0
+                )?;
+
+                debug_log!(
+                    "   - Ret type | sig: {}, expr: {}",
+                    unsafe{&*signature_type}.display_name(&ctx.heap),
+                    unsafe{&*expr_type}.display_name(&ctx.heap)
+                );
+                debug_log!("   - Ret poly progress | {:?}", poly_progress);
+
+                if progress_expr {
+                    // TODO: @cleanup, borrowing rules
+                    if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
+                        self.expr_queued.insert(parent_id);
+                    }
+                }
+
+                debug_log!(" * During (reinferring from progress polyvars):");
+            
+                // For all embedded values of the union variant
+                for value_idx in 0..extra.embedded.len() {
+                    let signature_type: *mut _ = &mut extra.embedded[value_idx];
+                    let value_expr_id = data.values[value_idx];
+                    let value_type: *mut _ = self.expr_types.get_mut(&value_expr_id).unwrap();
+                    
+                    let progress_arg = Self::apply_equal2_polyvar_constraint(
+                        &ctx.heap, extra, &poly_progress, signature_type, value_type
+                    );
+
+                    debug_log!(
+                        "   - Value {} type | sig: {}, value: {}", value_idx,
+                        unsafe{&*signature_type}.display_name(&ctx.heap),
+                        unsafe{&*value_type}.display_name(&ctx.heap)
+                    );
+                    if progress_arg {
+                        self.expr_queued.insert(value_expr_id);
+                    }
+                }
+
+                // And for the union type itself
+                let signature_type: *mut _ = &mut extra.returned;
+                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+
+                let progress_expr = Self::apply_equal2_polyvar_constraint(
+                    &ctx.heap, extra, &poly_progress, signature_type, expr_type
+                );
+
+                progress_expr
             }
         };
 
@@ -2862,7 +2957,7 @@ impl TypeResolvingVisitor {
         }
 
         debug_assert_eq!(parts.len(), parts_reserved);
-        let return_type = InferenceType::new(true, return_type_done, parts);
+        let return_type = InferenceType::new(!poly_vars.is_empty(), return_type_done, parts);
 
         self.extra_data.insert(lit_id.upcast(), ExtraData{
             poly_vars, 
@@ -2872,6 +2967,8 @@ impl TypeResolvingVisitor {
     }
 
     /// Inserts the extra polymorphic data struct for enum expressions. These
+    /// can never be determined from the enum itself, but may be inferred from
+    /// the use of the enum.
     fn insert_initial_enum_polymorph_data(
         &mut self, ctx: &Ctx, lit_id: LiteralExpressionId
     ) {
@@ -2902,12 +2999,70 @@ impl TypeResolvingVisitor {
         }
 
         debug_assert_eq!(parts.len(), parts_reserved);
-        let enum_type = InferenceType::new(true, enum_type_done, parts);
+        let enum_type = InferenceType::new(!poly_vars.is_empty(), enum_type_done, parts);
 
         self.extra_data.insert(lit_id.upcast(), ExtraData{
             poly_vars,
             embedded: Vec::new(),
             returned: enum_type,
+        });
+    }
+
+    /// Inserts the extra polymorphic data struct for unions. The polymorphic
+    /// arguments may be partially determined from embedded values in the union.
+    fn insert_initial_union_polymorph_data(
+        &mut self, ctx: &Ctx, lit_id: LiteralExpressionId
+    ) {
+        use InferenceTypePart as ITP;
+        let literal = ctx.heap[lit_id].value.as_union();
+
+        // Construct the polymorphic variables
+        let mut poly_vars = Vec::with_capacity(literal.poly_args2.len());
+        let mut total_num_poly_parts = 0;
+        for poly_arg_type_id in literal.poly_args2.clone() { // TODO: @performance
+            let inference_type = self.determine_inference_type_from_parser_type(
+                ctx, poly_arg_type_id, true
+            );
+            total_num_poly_parts += inference_type.parts.len();
+            poly_vars.push(inference_type);
+        }
+
+        // Handle any of the embedded values in the variant, if specified
+        let definition_id = literal.definition.unwrap();
+        let union_definition = ctx.types.get_base_definition(&definition_id)
+            .unwrap()
+            .definition.as_union();
+        let variant_definition = &union_definition.variants[literal.variant_idx];
+        debug_assert_eq!(variant_definition.embedded.len(), literal.values.len());
+
+        let mut embedded = Vec::with_capacity(variant_definition.embedded.len());
+        for embedded_id in &variant_definition.embedded {
+            let inference_type = self.determine_inference_type_from_parser_type(
+                ctx, *embedded_id, true
+            );
+            embedded.push(inference_type);
+        }
+
+        // Handle the type of the union itself
+        let parts_reserved = 1 + poly_vars.len() + total_num_poly_parts;
+        let mut parts = Vec::with_capacity(parts_reserved);
+        parts.push(ITP::Instance(definition_id, poly_vars.len()));
+        let mut union_type_done = true;
+        for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+            if !poly_var.is_done { union_type_done = false; }
+
+            parts.push(ITP::MarkerBody(poly_var_idx));
+            
+            parts.extend(poly_var.parts.iter().cloned());
+        }
+
+        debug_assert_eq!(parts_reserved, parts.len());
+        let union_type = InferenceType::new(!poly_vars.is_empty(), union_type_done, parts);
+
+        self.extra_data.insert(lit_id.upcast(), ExtraData{
+            poly_vars,
+            embedded,
+            returned: union_type
         });
     }
 
@@ -2949,7 +3104,7 @@ impl TypeResolvingVisitor {
 
         self.extra_data.insert(select_id.upcast(), ExtraData{
             poly_vars,
-            embedded: vec![InferenceType::new(true, false, struct_parts)],
+            embedded: vec![InferenceType::new(num_poly_vars != 0, num_poly_vars == 0, struct_parts)],
             returned: field_type
         });
     }
@@ -3185,7 +3340,7 @@ impl TypeResolvingVisitor {
                 Method::Symbolic(symbolic) => {
                     let definition = &ctx.heap[symbolic.definition.unwrap()];
                     let poly_var = match definition {
-                        Definition::Struct(_) | Definition::Enum(_) => unreachable!(),
+                        Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => unreachable!(),
                         Definition::Function(definition) => {
                             String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string()
                         },
@@ -3201,14 +3356,27 @@ impl TypeResolvingVisitor {
 
         fn get_poly_var_and_type_name(ctx: &Ctx, poly_var_idx: usize, definition_id: DefinitionId) -> (String, String) {
             let definition = &ctx.heap[definition_id];
-            match definition {
-                Definition::Enum(_) | Definition::Function(_) | Definition::Component(_) =>
-                    unreachable!("get_poly_var_and_type_name called on non-struct value"),
-                Definition::Struct(definition) => (
-                    String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string(),
-                    String::from_utf8_lossy(&definition.identifier.value).to_string()
+            let (poly_var_name, type_name) = match definition {
+                Definition::Function(_) | Definition::Component(_) =>
+                    unreachable!("get_poly_var_and_type_name called on unsupported type"),
+                Definition::Enum(definition) => (
+                    &definition.poly_vars[poly_var_idx].value,
+                    &definition.identifier.value
                 ),
-            }
+                Definition::Struct(definition) => (
+                    &definition.poly_vars[poly_var_idx].value,
+                    &definition.identifier.value
+                ),
+                Definition::Union(definition) => (
+                    &definition.poly_vars[poly_var_idx].value,
+                    &definition.identifier.value
+                ),
+            };
+
+            (
+                String::from_utf8_lossy(poly_var_name).to_string(),
+                String::from_utf8_lossy(type_name).to_string()
+            )
         }
 
         // Helper function to construct initial error
@@ -3225,8 +3393,14 @@ impl TypeResolvingVisitor {
                     )
                 },
                 Expression::Literal(expr) => {
-                    let lit_struct = expr.value.as_struct();
-                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, lit_struct.definition.unwrap());
+                    let definition_id = match &expr.value {
+                        Literal::Struct(v) => v.definition.unwrap(),
+                        Literal::Enum(v) => v.definition.unwrap(),
+                        Literal::Union(v) => v.definition.unwrap(),
+                        _ => unreachable!(),
+                    };
+
+                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, definition_id);
                     return ParseError::new_error(
                         &ctx.module.source, expr.position(),
                         &format!(
@@ -3258,14 +3432,18 @@ impl TypeResolvingVisitor {
                     expr.arguments.clone(),
                     "return type"
                 ),
-            Expression::Literal(expr) => 
-                (
-                    expr.value.as_struct().fields
-                        .iter()
+            Expression::Literal(expr) => {
+                let expressions = match &expr.value {
+                    Literal::Struct(v) => v.fields.iter()
                         .map(|f| f.value)
                         .collect(),
-                    "literal"
-                ),
+                    Literal::Enum(_) => Vec::new(),
+                    Literal::Union(v) => v.values.clone(),
+                    _ => unreachable!()
+                };
+
+                ( expressions, "literal" )
+            },
             Expression::Select(expr) =>
                 // Select expression uses the polymorphic variables of the 
                 // struct it is accessing, so get the subject expression.
@@ -3410,7 +3588,7 @@ mod tests {
 
         for (lhs, rhs) in pairs.iter() {
             let mut lhs_type = IT::new(false, false, lhs.clone());
-            let mut rhs_type = IT::new(false, false, rhs.clone());
+            let mut rhs_type = IT::new(false, true, rhs.clone());
             let result = unsafe{ IT::infer_subtrees_for_both_types(
                 &mut lhs_type, 0, &mut rhs_type, 0
             ) };
@@ -3418,7 +3596,7 @@ mod tests {
             assert_eq!(lhs_type.parts, rhs_type.parts);
 
             let mut lhs_type = IT::new(false, false, lhs.clone());
-            let rhs_type = IT::new(false, false, rhs.clone());
+            let rhs_type = IT::new(false, true, rhs.clone());
             let result = IT::infer_subtree_for_single_type(
                 &mut lhs_type, 0, &rhs_type.parts, 0
             );

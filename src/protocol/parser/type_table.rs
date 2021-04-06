@@ -1145,7 +1145,7 @@ impl TypeTable {
 
     fn enum_tag_type(min_tag_value: i64, max_tag_value: i64) -> PrimitiveType {
         // TODO: @consistency tag values should be handled correctly
-        debug_assert!(min_tag_value < max_tag_value);
+        debug_assert!(min_tag_value <= max_tag_value);
         let abs_max_value = min_tag_value.abs().max(max_tag_value.abs());
         if abs_max_value <= u8::max_value() as i64 {
             PrimitiveType::Byte
