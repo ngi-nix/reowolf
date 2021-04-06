@@ -26,6 +26,9 @@ pub(crate) trait Visitor: Sized {
     fn visit_enum_definition(&mut self, _h: &mut Heap, _def: EnumId) -> VisitorResult {
         Ok(())
     }
+    fn visit_union_definition(&mut self, _h: &mut Heap, _def: UnionId) -> VisitorResult {
+        Ok(())
+    }
     fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
         recursive_component_definition(self, h, def)
     }
@@ -241,6 +244,7 @@ fn recursive_symbol_definition<T: Visitor>(
     match h[def].clone() {
         Definition::Struct(def) => this.visit_struct_definition(h, def.this),
         Definition::Enum(def) => this.visit_enum_definition(h, def.this),
+        Definition::Union(def) => this.visit_union_definition(h, def.this),
         Definition::Component(cdef) => this.visit_component_definition(h, cdef.this),
         Definition::Function(fdef) => this.visit_function_definition(h, fdef.this),
     }

@@ -699,7 +699,6 @@ impl Visitor2 for ValidityAndLinkerVisitor {
         debug_assert!(!self.performing_breadth_pass);
 
         const FIELD_NOT_FOUND_SENTINEL: usize = usize::max_value();
-        const VARIANT_NOT_FOUND_SENTINEL: usize = FIELD_NOT_FOUND_SENTINEL;
 
         let constant_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
@@ -793,9 +792,42 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 self.expression_buffer.truncate(old_num_exprs);
             },
             Literal::Enum(literal) => {
-                let upcast_id = id.upcast();
+                // TODO: @tokenizer, remove this horrible hack once we have a 
+                //  tokenizer and can distinguish types during AST-construction.
+                //  For now see this horrible hack and weep!
+                let (symbol, _) = ctx.symbols.resolve_namespaced_identifier(
+                    ctx.module.root_id, &literal.identifier
+                );
+                if let Some(symbol) = symbol {
+                    if let Symbol::Definition((_, definition_id)) = &symbol.symbol {
+                        if let Some(defined_type) = ctx.types.get_base_definition(definition_id) {
+                            if defined_type.definition.type_class() == TypeClass::Union {
+                                // Transmute into union literal and call this function again
+                                let old_identifier = literal.identifier.clone();
+                                let lit_expr = &ctx.heap[id];
+                                let old_position = lit_expr.position;
 
-                // Retrieve and set type of enumeration
+                                ctx.heap[id] = LiteralExpression{
+                                    this: id,
+                                    position: old_position,
+                                    value: Literal::Union(LiteralUnion{
+                                        identifier: old_identifier,
+                                        values: vec!(),
+                                        poly_args2: Vec::new(),
+                                        definition: None,
+                                        variant_idx: 0,
+                                    }),
+                                    parent: ExpressionParent::None,
+                                    concrete_type: ConcreteType::default()
+                                };
+
+                                return self.visit_literal_expr(ctx, id);
+                            }
+                        }
+                    }
+                }
+
+                // Retrieve and set definion of enumeration
                 let (definition, ident_iter) = self.find_symbol_of_type_variant(
                     &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types, 
                     &literal.identifier, TypeClass::Enum
@@ -805,29 +837,98 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                 // Make sure the variant exists
                 let (variant_ident, _) = ident_iter.prev().unwrap();
                 let enum_definition = definition.definition.as_enum();
-                literal.variant_idx = VARIANT_NOT_FOUND_SENTINEL;
 
-                for (variant_idx, variant) in enum_definition.variants.iter().enumerate() {
-                    if variant.identifier.value == variant_ident {
+                match enum_definition.variants.iter().position(|variant| {
+                    variant.identifier.value == variant_ident
+                }) {
+                    Some(variant_idx) => {
                         literal.variant_idx = variant_idx;
-                        break;
+                    },
+                    None => {
+                        // Reborrow
+                        let variant = String::from_utf8_lossy(variant_ident).to_string();
+                        let literal = ctx.heap[id].value.as_enum();
+                        let enum_definition = ctx.heap[definition.ast_definition].as_enum();
+                        return Err(ParseError::new_error(
+                            &ctx.module.source, literal.identifier.position,
+                            &format!(
+                                "The variant '{}' does not exist on the enum '{}'",
+                                &variant, &String::from_utf8_lossy(&enum_definition.identifier.value)
+                            )
+                        ));
                     }
                 }
 
-                if literal.variant_idx == VARIANT_NOT_FOUND_SENTINEL {
+                self.visit_literal_poly_args(ctx, id)?;
+            },
+            Literal::Union(literal) => {
+                let upcast_id = id.upcast();
+
+                // Retrieve and set definition of union
+                let (definition, ident_iter) = self.find_symbol_of_type_variant(
+                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types,
+                    &literal.identifier, TypeClass::Union
+                )?;
+                literal.definition = Some(definition.ast_definition);
+                
+                // Make sure the variant exists
+                let (variant_ident, _) = ident_iter.prev().unwrap();
+                let union_definition = definition.definition.as_union();
+
+                match union_definition.variants.iter().position(|variant| {
+                    variant.identifier.value == variant_ident
+                }) {
+                    Some(variant_idx) => {
+                        literal.variant_idx = variant_idx;
+                    },
+                    None => {
+                        // Reborrow
+                        let variant = String::from_utf8_lossy(variant_ident).to_string();
+                        let literal = ctx.heap[id].value.as_union();
+                        let union_definition = ctx.heap[definition.ast_definition].as_union();
+                        return Err(ParseError::new_error(
+                            &ctx.module.source, literal.identifier.position,
+                            &format!(
+                                "The variant '{}' does not exist on the union '{}'",
+                                &variant, &String::from_utf8_lossy(&union_definition.identifier.value)
+                            )
+                        ));
+                    }
+                }
+
+                // Make sure the number of specified values matches the expected
+                // number of embedded values in the union variant.
+                let union_variant = &union_definition.variants[literal.variant_idx];
+                if union_variant.embedded.len() != literal.values.len() {
+                    // Reborrow
                     let variant = String::from_utf8_lossy(variant_ident).to_string();
-                    let literal = ctx.heap[id].value.as_enum();
-                    let enum_definition = ctx.heap[definition.ast_definition].as_enum();
+                    let literal = ctx.heap[id].value.as_union();
+                    let union_definition = ctx.heap[definition.ast_definition].as_union();
                     return Err(ParseError::new_error(
                         &ctx.module.source, literal.identifier.position,
                         &format!(
-                            "The variant '{}' does not exist on the enum '{}'",
-                            &variant, &String::from_utf8_lossy(&enum_definition.identifier.value)
-                        )
+                            "This variant '{}' of union '{}' expects {} embedded values, but {} were specified",
+                            variant, &String::from_utf8_lossy(&union_definition.identifier.value),
+                            union_variant.embedded.len(), literal.values.len()
+                        ),
                     ))
                 }
 
+                // Traverse embedded values of union (if any) and evaluate the
+                // polymorphic arguments
+                let old_num_exprs = self.expression_buffer.len();
+                self.expression_buffer.extend(&literal.values);
+                let new_num_exprs = self.expression_buffer.len();
+
                 self.visit_literal_poly_args(ctx, id)?;
+
+                for expr_idx in old_num_exprs..new_num_exprs {
+                    let expr_id = self.expression_buffer[expr_idx];
+                    self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
+                    self.visit_expr(ctx, expr_id)?;
+                }
+
+                self.expression_buffer.truncate(old_num_exprs);
             }
         }
 
@@ -903,6 +1004,45 @@ impl Visitor2 for ValidityAndLinkerVisitor {
                     TypeClass::Component
                 } else {
                     // Expect to find a function
+                    // TODO: @tokenizer, remove this ambiguity when tokenizer is implemented. Hacked
+                    //  in here for now.
+                    let (symbol, _) = ctx.symbols.resolve_namespaced_identifier(
+                        ctx.module.root_id, &symbolic.identifier
+                    );
+                    if let Some(symbol) = symbol {
+                        if let Symbol::Definition((_, definition_id)) = symbol.symbol {
+                            if let Some(defined_type) = ctx.types.get_base_definition(&definition_id) {
+                                if defined_type.definition.type_class() == TypeClass::Union {
+                                    // Transmute into union literal and call the appropriate traverser
+                                    let call_expr = &ctx.heap[id];
+                                    let old_position = call_expr.position.clone();
+                                    let old_arguments = call_expr.arguments.clone();
+                                    let old_identifier = match &call_expr.method {
+                                        Method::Symbolic(v) => v.identifier.clone(),
+                                        _ => unreachable!(),
+                                    };
+
+                                    let expr_id = id.upcast();
+                                    let lit_id = LiteralExpressionId(expr_id);
+                                    ctx.heap[expr_id] = Expression::Literal(LiteralExpression{
+                                        this: lit_id,
+                                        position: old_position,
+                                        value: Literal::Union(LiteralUnion{
+                                            identifier: old_identifier,
+                                            values: old_arguments,
+                                            poly_args2: Vec::new(),
+                                            definition: None,
+                                            variant_idx: 0,
+                                        }),
+                                        parent: ExpressionParent::None,
+                                        concrete_type: ConcreteType::default(),
+                                    });
+                                    
+                                    return self.visit_literal_expr(ctx, lit_id);
+                                }
+                            }
+                        }
+                    }
                     TypeClass::Function
                 };
 
@@ -1697,6 +1837,9 @@ impl ValidityAndLinkerVisitor {
             Literal::Enum(literal) => {
                 literal.poly_args2.extend(&literal.identifier.poly_args);
             },
+            Literal::Union(literal) => {
+                literal.poly_args2.extend(&literal.identifier.poly_args);
+            }
             _ => {
                 debug_assert!(false, "called visit_literal_poly_args on a non-polymorphic literal");
                 unreachable!();
@@ -1732,7 +1875,16 @@ impl ValidityAndLinkerVisitor {
                     defined_type, maybe_poly_args, literal.identifier.position
                 ).as_parse_error(&ctx.heap, &ctx.module.source)?;
 
-                println!("DEBUG: poly args 2: {:?}", &literal.poly_args2);
+                (num_to_infer, &literal.poly_args2)
+            },
+            Literal::Union(literal) => {
+                let defined_type = ctx.types.get_base_definition(literal.definition.as_ref().unwrap())
+                    .unwrap();
+                let maybe_poly_args = literal.identifier.get_poly_args();
+                let num_to_infer = match_polymorphic_args_to_vars(
+                    defined_type, maybe_poly_args, literal.identifier.position
+                ).as_parse_error(&ctx.heap, &ctx.module.source)?;
+
                 (num_to_infer, &literal.poly_args2)
             }
         };
@@ -1756,6 +1908,7 @@ impl ValidityAndLinkerVisitor {
             let poly_args = match &mut ctx.heap[lit_id].value {
                 Literal::Struct(literal) => &mut literal.poly_args2,
                 Literal::Enum(literal) => &mut literal.poly_args2,
+                Literal::Union(literal) => &mut literal.poly_args2,
                 _ => unreachable!(),
             };
             poly_args.reserve(num_poly_args_to_infer);

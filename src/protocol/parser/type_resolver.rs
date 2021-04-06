@@ -907,7 +907,7 @@ impl TypeResolvingVisitor {
                         })
                     }
                 },
-                Definition::Enum(_) | Definition::Struct(_) => {},
+                Definition::Enum(_) | Definition::Struct(_) | Definition::Union(_) => {},
             }
         }
     }
@@ -2792,8 +2792,8 @@ impl TypeResolvingVisitor {
                         let return_type = self.determine_inference_type_from_parser_type(ctx, definition.return_type, false);
                         (parameter_types, return_type)
                     },
-                    Definition::Struct(_) | Definition::Enum(_) => {
-                        unreachable!("insert initial polymorph data for struct/enum");
+                    Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => {
+                        unreachable!("insert initial polymorph data for struct/enum/union");
                     }
                 }
             }

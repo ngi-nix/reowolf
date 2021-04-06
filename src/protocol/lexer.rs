@@ -2182,6 +2182,8 @@ impl Lexer<'_> {
             Ok(self.consume_struct_definition(h)?.upcast())
         } else if self.has_keyword(b"enum") {
             Ok(self.consume_enum_definition(h)?.upcast())
+        } else if self.has_keyword(b"union") {
+            Ok(self.consume_union_definition(h)?.upcast())
         } else if self.has_keyword(b"composite") || self.has_keyword(b"primitive") {
             Ok(self.consume_component_definition(h)?.upcast())
         } else {
@@ -2262,21 +2264,12 @@ impl Lexer<'_> {
                         let value = lexer.consume_integer()?;
                         EnumVariantValue::Integer(value)
                     },
-                    Some(b'(') => {
-                        // Embedded type
-                        lexer.source.consume();
-                        lexer.consume_whitespace(false)?;
-                        let embedded_type = lexer.consume_type(heap, false)?;
-                        lexer.consume_whitespace(false)?;
-                        lexer.consume_string(b")")?;
-                        EnumVariantValue::Type(embedded_type)
-                    },
                     Some(b'}') => {
                         // End of enum
                         EnumVariantValue::None
                     }
                     _ => {
-                        return Err(lexer.error_at_pos("Expected ',', '=', '}' or '('"));
+                        return Err(lexer.error_at_pos("Expected ',', '}' or '='"));
                     }
                 };
 
@@ -2294,6 +2287,69 @@ impl Lexer<'_> {
             this,
             position: enum_pos,
             identifier: enum_ident,
+            poly_vars,
+            variants,
+        }))
+    }
+    fn consume_union_definition(&mut self, h: &mut Heap) -> Result<UnionId, ParseError> {
+        // Parse "union" keyword, optional polyvars and the identifier
+        let union_pos = self.source.pos();
+        self.consume_keyword(b"union")?;
+        self.consume_whitespace(true)?;
+        let union_ident = self.consume_identifier()?;
+        self.consume_whitespace(false)?;
+        let poly_vars = self.consume_polymorphic_vars(h)?;
+        self.consume_whitespace(false)?;
+
+        let variants = match self.consume_comma_separated(
+            h, b'{', b'}', "Expected end of union variant list",
+            |lexer, heap| {
+                // Variant identifier
+                let position = lexer.source.pos();
+                let identifier = lexer.consume_identifier()?;
+                lexer.consume_whitespace(false)?;
+
+                // Optional variant value
+                let next = lexer.source.next();
+                let value = match next {
+                    Some(b',') | Some(b'}') => {
+                        // Continue parsing using `consume_comma_separated`
+                        UnionVariantValue::None
+                    },
+                    Some(b'(') => {
+                        // Embedded type(s)
+                        let embedded = lexer.consume_comma_separated(
+                            heap, b'(', b')', "Expected end of embedded type list of union variant",
+                            |lexer, heap| {
+                                lexer.consume_type(heap, false)
+                            }
+                        )?.unwrap();
+
+                        if embedded.is_empty() {
+                            return Err(lexer.error_at_pos("Expected at least one embedded type"));
+                        }
+
+                        UnionVariantValue::Embedded(embedded)
+                    },
+                    _ => {
+                        return Err(lexer.error_at_pos("Expected ',', '}' or '('"));
+                    },
+                };
+
+                Ok(UnionVariantDefinition{ position, identifier, value })
+            }
+        )? {
+            Some(variants) => variants,
+            None => return Err(ParseError::new_error(
+                self.source, union_pos,
+                "A union definition must be followed by its variants"
+            )),
+        };
+
+        Ok(h.alloc_union_definition(|this| UnionDefinition{
+            this,
+            position: union_pos,
+            identifier: union_ident,
             poly_vars,
             variants,
         }))

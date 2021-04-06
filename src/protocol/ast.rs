@@ -91,6 +91,7 @@ define_new_ast_id!(LocalId, VariableId, Local, Variable::Local, variables);
 define_aliased_ast_id!(DefinitionId, Id<Definition>, Definition, definitions);
 define_new_ast_id!(StructId, DefinitionId, StructDefinition, Definition::Struct, definitions);
 define_new_ast_id!(EnumId, DefinitionId, EnumDefinition, Definition::Enum, definitions);
+define_new_ast_id!(UnionId, DefinitionId, UnionDefinition, Definition::Union, definitions);
 define_new_ast_id!(ComponentId, DefinitionId, Component, Definition::Component, definitions);
 define_new_ast_id!(FunctionId, DefinitionId, Function, Definition::Function, definitions);
 
@@ -450,6 +451,11 @@ impl Heap {
     pub fn alloc_enum_definition(&mut self, f: impl FnOnce(EnumId) -> EnumDefinition) -> EnumId {
         EnumId(self.definitions.alloc_with_id(|id| {
             Definition::Enum(f(EnumId(id)))
+        }))
+    }
+    pub fn alloc_union_definition(&mut self, f: impl FnOnce(UnionId) -> UnionDefinition) -> UnionId {
+        UnionId(self.definitions.alloc_with_id(|id| {
+            Definition::Union(f(UnionId(id)))
         }))
     }
     pub fn alloc_component(&mut self, f: impl FnOnce(ComponentId) -> Component) -> ComponentId {
@@ -1060,90 +1066,6 @@ impl Display for Type {
     }
 }
 
-type LiteralCharacter = Vec<u8>;
-type LiteralInteger = i64; // TODO: @int_literal
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Literal {
-    Null, // message
-    True,
-    False,
-    Character(LiteralCharacter),
-    Integer(LiteralInteger),
-    Struct(LiteralStruct),
-    Enum(LiteralEnum),
-}
-
-impl Literal {
-    pub(crate) fn as_struct(&self) -> &LiteralStruct {
-        if let Literal::Struct(literal) = self{
-            literal
-        } else {
-            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
-        }
-    }
-
-    pub(crate) fn as_struct_mut(&mut self) -> &mut LiteralStruct {
-        if let Literal::Struct(literal) = self{
-            literal
-        } else {
-            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
-        }
-    }
-
-    pub(crate) fn as_enum(&self) -> &LiteralEnum {
-        if let Literal::Enum(literal) = self {
-            literal
-        } else {
-            unreachable!("Attempted to obtain {:?} as Literal::Enum", self)
-        }
-    }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LiteralStructField {
-    // Phase 1: parser
-    pub(crate) identifier: Identifier,
-    pub(crate) value: ExpressionId,
-    // Phase 2: linker
-    pub(crate) field_idx: usize, // in struct definition
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LiteralStruct {
-    // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
-    pub(crate) fields: Vec<LiteralStructField>,
-    // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
-    pub(crate) definition: Option<DefinitionId>
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LiteralEnum {
-    // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
-    // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
-    pub(crate) definition: Option<DefinitionId>,
-    pub(crate) variant_idx: usize, // as present in the type table
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Method {
-    Get,
-    Put,
-    Fires,
-    Create,
-    Symbolic(MethodSymbolic)
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MethodSymbolic {
-    pub(crate) identifier: NamespacedIdentifier,
-    pub(crate) definition: Option<DefinitionId>
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Field {
     Length,
@@ -1305,6 +1227,7 @@ impl SyntaxElement for Local {
 pub enum Definition {
     Struct(StructDefinition),
     Enum(EnumDefinition),
+    Union(UnionDefinition),
     Component(Component),
     Function(Function),
 }
@@ -1332,6 +1255,18 @@ impl Definition {
         match self {
             Definition::Enum(result) => result,
             _ => panic!("Unable to cast 'Definition' to 'EnumDefinition'"),
+        }
+    }
+    pub fn is_union(&self) -> bool {
+        match self {
+            Definition::Union(_) => true,
+            _ => false,
+        }
+    }
+    pub fn as_union(&self) -> &UnionDefinition {
+        match self {
+            Definition::Union(result) => result, 
+            _ => panic!("Unable to cast 'Definition' to 'UnionDefinition'"),
         }
     }
     pub fn is_component(&self) -> bool {
@@ -1362,8 +1297,9 @@ impl Definition {
         match self {
             Definition::Struct(def) => &def.identifier,
             Definition::Enum(def) => &def.identifier,
-            Definition::Component(com) => &com.identifier,
-            Definition::Function(fun) => &fun.identifier,
+            Definition::Union(def) => &def.identifier,
+            Definition::Component(def) => &def.identifier,
+            Definition::Function(def) => &def.identifier,
         }
     }
     pub fn parameters(&self) -> &Vec<ParameterId> {
@@ -1390,6 +1326,7 @@ impl SyntaxElement for Definition {
         match self {
             Definition::Struct(def) => def.position,
             Definition::Enum(def) => def.position,
+            Definition::Union(def) => def.position,
             Definition::Component(def) => def.position(),
             Definition::Function(def) => def.position(),
         }
@@ -1428,11 +1365,10 @@ pub struct StructDefinition {
     pub fields: Vec<StructFieldDefinition>
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum EnumVariantValue {
     None,
     Integer(i64),
-    Type(ParserTypeId),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1450,6 +1386,29 @@ pub struct EnumDefinition {
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
     pub variants: Vec<EnumVariantDefinition>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum UnionVariantValue {
+    None,
+    Embedded(Vec<ParserTypeId>),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UnionVariantDefinition {
+    pub position: InputPosition,
+    pub identifier: Identifier,
+    pub value: UnionVariantValue,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UnionDefinition {
+    pub this: UnionId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub identifier: Identifier,
+    pub poly_vars: Vec<Identifier>,
+    pub variants: Vec<UnionVariantDefinition>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -2533,6 +2492,10 @@ impl SyntaxElement for ArrayExpression {
     }
 }
 
+// TODO: @tokenizer Symbolic function calls are ambiguous with union literals
+//  that accept embedded values (although the polymorphic arguments are placed
+//  differently). To prevent double work we parse as CallExpression, and during
+//  validation we may transform the expression into a union literal.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CallExpression {
     pub this: CallExpressionId,
@@ -2540,7 +2503,7 @@ pub struct CallExpression {
     pub position: InputPosition,
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
-    pub poly_args: Vec<ParserTypeId>,
+    pub poly_args: Vec<ParserTypeId>, // if symbolic will be determined during validation phase
     // Phase 2: linker
     pub parent: ExpressionParent,
     // Phase 3: type checking
@@ -2551,6 +2514,21 @@ impl SyntaxElement for CallExpression {
     fn position(&self) -> InputPosition {
         self.position
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Method {
+    Get,
+    Put,
+    Fires,
+    Create,
+    Symbolic(MethodSymbolic)
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MethodSymbolic {
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) definition: Option<DefinitionId>
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -2569,6 +2547,99 @@ impl SyntaxElement for LiteralExpression {
     fn position(&self) -> InputPosition {
         self.position
     }
+}
+
+type LiteralCharacter = Vec<u8>;
+type LiteralInteger = i64; // TODO: @int_literal
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Literal {
+    Null, // message
+    True,
+    False,
+    Character(LiteralCharacter),
+    Integer(LiteralInteger),
+    Struct(LiteralStruct),
+    Enum(LiteralEnum),
+    Union(LiteralUnion),
+}
+
+impl Literal {
+    pub(crate) fn as_struct(&self) -> &LiteralStruct {
+        if let Literal::Struct(literal) = self{
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
+        }
+    }
+
+    pub(crate) fn as_struct_mut(&mut self) -> &mut LiteralStruct {
+        if let Literal::Struct(literal) = self{
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
+        }
+    }
+
+    pub(crate) fn as_enum(&self) -> &LiteralEnum {
+        if let Literal::Enum(literal) = self {
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Enum", self)
+        }
+    }
+
+    pub(crate) fn as_union(&self) -> &LiteralUnion {
+        if let Literal::Union(literal) = self {
+            literal
+        } else {
+            unreachable!("Attempted to obtain {:?} as Literal::Union", self)
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralStructField {
+    // Phase 1: parser
+    pub(crate) identifier: Identifier,
+    pub(crate) value: ExpressionId,
+    // Phase 2: linker
+    pub(crate) field_idx: usize, // in struct definition
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralStruct {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) fields: Vec<LiteralStructField>,
+    // Phase 2: linker
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
+    pub(crate) definition: Option<DefinitionId>
+}
+
+// TODO: @tokenizer Enum literals are ambiguous with union literals that do not
+//  accept embedded values. To prevent double work for now we parse as a 
+//  LiteralEnum, and during validation we may transform the expression into a 
+//  union literal.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralEnum {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    // Phase 2: linker
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
+    pub(crate) definition: Option<DefinitionId>,
+    pub(crate) variant_idx: usize, // as present in the type table
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiteralUnion {
+    // Phase 1: parser
+    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) values: Vec<ExpressionId>,
+    // Phase 2: linker
+    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
+    pub(crate) definition: Option<DefinitionId>,
+    pub(crate) variant_idx: usize, // as present in type table
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

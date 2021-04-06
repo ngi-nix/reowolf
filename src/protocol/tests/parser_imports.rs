@@ -243,8 +243,3 @@ fn test_illegal_import_use() {
             .assert_occurs_at(0, "mod2::Foo");
         });
 }
-
-// TODO: Test incorrect imports:
-//  1. importing a module
-//  2. import something a module imports
-//  3. import something that doesn't exist in a module

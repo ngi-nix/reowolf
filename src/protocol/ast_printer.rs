@@ -16,6 +16,7 @@ const PREFIX_LOCAL_ID: &'static str = "Loc ";
 const PREFIX_DEFINITION_ID: &'static str = "Def ";
 const PREFIX_STRUCT_ID: &'static str = "DefS";
 const PREFIX_ENUM_ID: &'static str = "DefE";
+const PREFIX_UNION_ID: &'static str = "DefU";
 const PREFIX_COMPONENT_ID: &'static str = "DefC";
 const PREFIX_FUNCTION_ID: &'static str = "DefF";
 const PREFIX_STMT_ID: &'static str = "Stmt";
@@ -311,11 +312,38 @@ impl ASTWriter {
                     match &variant.value {
                         EnumVariantValue::None => variant_value.with_s_val("None"),
                         EnumVariantValue::Integer(value) => variant_value.with_disp_val(value),
-                        EnumVariantValue::Type(parser_type_id) => variant_value
-                            .with_custom_val(|s| write_parser_type(s, heap, &heap[*parser_type_id])),
                     };
                 }
             },
+            Definition::Union(def) => {
+                self.kv(indent).with_id(PREFIX_UNION_ID, def.this.0.index)
+                    .with_s_key("DefinitionUnion");
+
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                for poly_var_id in &def.poly_vars {
+                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                }
+
+                self.kv(indent2).with_s_key("Variants");
+                for variant in &def.variants {
+                    self.kv(indent3).with_s_key("Variant");
+                    self.kv(indent4).with_s_key("Name")
+                        .with_ascii_val(&variant.identifier.value);
+                        
+                    match &variant.value {
+                        UnionVariantValue::None => {
+                            self.kv(indent4).with_s_key("Value").with_s_val("None");
+                        }
+                        UnionVariantValue::Embedded(embedded) => {
+                            self.kv(indent4).with_s_key("Values");
+                            for embedded in embedded {
+                                self.kv(indent4+1).with_s_key("Value")
+                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*embedded]));
+                            }
+                        }
+                    }
+                }
+            }
             Definition::Function(def) => {
                 self.kv(indent).with_id(PREFIX_FUNCTION_ID, def.this.0.index)
                     .with_s_key("DefinitionFunction");
@@ -366,6 +394,19 @@ impl ASTWriter {
             .with_s_key("Parameter");
         self.kv(indent2).with_s_key("Name").with_ascii_val(&param.identifier.value);
         self.kv(indent2).with_s_key("ParserType").with_custom_val(|w| write_parser_type(w, heap, &heap[param.parser_type]));
+    }
+
+    fn write_poly_args(&mut self, heap: &Heap, poly_args: &[ParserTypeId], indent: usize) {
+        if poly_args.is_empty() {
+            return
+        }
+
+        let indent2 = indent + 1;
+        self.kv(indent).with_s_key("PolymorphicArguments");
+        for poly_arg in poly_args {
+            self.kv(indent2).with_s_key("Argument")
+                .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
+        }
     }
 
     fn write_stmt(&mut self, heap: &Heap, stmt_id: StatementId, indent: usize) {
@@ -666,14 +707,10 @@ impl ASTWriter {
                         val.with_s_val("Struct");
                         let indent4 = indent3 + 1;
 
-                        // Polymorphic arguments
-                        if !data.poly_args2.is_empty() {
-                            self.kv(indent3).with_s_key("PolymorphicArguments");
-                            for poly_arg in &data.poly_args2 {
-                                self.kv(indent4).with_s_key("Argument")
-                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
-                            }
-                        }
+                        self.write_poly_args(heap, &data.poly_args2, indent3);
+                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
+                            write_option(s, data.definition.as_ref().map(|v| &v.index));
+                        });
 
                         for field in &data.fields {
                             self.kv(indent3).with_s_key("Field");
@@ -685,15 +722,25 @@ impl ASTWriter {
                     },
                     Literal::Enum(data) => {
                         val.with_s_val("Enum");
-                        let indent4 = indent3 + 1;
 
-                        // Polymorphic arguments
-                        if !data.poly_args2.is_empty() {
-                            self.kv(indent3).with_s_key("PolymorphicArguments");
-                            for poly_arg in &data.poly_args2 {
-                                self.kv(indent4).with_s_key("Argument")
-                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
-                            }
+                        self.write_poly_args(heap, &data.poly_args2, indent3);
+                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
+                            write_option(s, data.definition.as_ref().map(|v| &v.index))
+                        });
+                        self.kv(indent3).with_s_key("VariantIdx").with_disp_val(&data.variant_idx);
+                    },
+                    Literal::Union(data) => {
+                        val.with_s_val("Union");
+                        let indent4 = indent3 + 1;
+                        self.write_poly_args(heap, &data.poly_args2, indent3);
+                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
+                            write_option(s, data.definition.as_ref().map(|v| &v.index));
+                        });
+                        self.kv(indent3).with_s_key("VariantIdx").with_disp_val(&data.variant_idx);
+
+                        for value in &data.values {
+                            self.kv(indent3).with_s_key("Value");
+                            self.write_expr(heap, *value, indent4);
                         }
                     }
                 }
@@ -722,14 +769,7 @@ impl ASTWriter {
                     }
                 }
 
-                // Polymorphic arguments
-                if !expr.poly_args.is_empty() {
-                    self.kv(indent2).with_s_key("PolymorphicArguments");
-                    for poly_arg in &expr.poly_args {
-                        self.kv(indent3).with_s_key("Argument")
-                            .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
-                    }
-                }
+                self.write_poly_args(heap, &expr.poly_args, indent2);
 
                 // Arguments
                 self.kv(indent2).with_s_key("Arguments");
@@ -848,7 +888,7 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
                 // Marker points to polymorphic variable index
                 let definition = &heap[def_id];
                 let poly_var_ident = match definition {
-                    Definition::Struct(_) | Definition::Enum(_) => unreachable!(),
+                    Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => unreachable!(),
                     Definition::Function(definition) => &definition.poly_vars[*marker].value,
                     Definition::Component(definition) => &definition.poly_vars[*marker].value,
                 };

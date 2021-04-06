@@ -76,7 +76,7 @@ impl TypeClass {
     pub(crate) fn display_name(&self) -> &'static str {
         match self {
             TypeClass::Enum => "enum",
-            TypeClass::Union => "enum",
+            TypeClass::Union => "union",
             TypeClass::Struct => "struct",
             TypeClass::Function => "function",
             TypeClass::Component => "component",
@@ -175,6 +175,13 @@ impl DefinedTypeVariant {
             _ => unreachable!("Cannot convert {} to enum variant", self.type_class())
         }
     }
+
+    pub(crate) fn as_union(&self) -> &UnionType {
+        match self {
+            DefinedTypeVariant::Union(v) => v,
+            _ => unreachable!("Cannot convert {} to union variant", self.type_class())
+        }
+    }
 }
 
 /// `EnumType` is the classical C/C++ enum type. It has various variants with
@@ -197,14 +204,14 @@ pub struct EnumVariant {
 /// A value is an element of the union, identified by its tag, and may contain
 /// a single subtype.
 pub struct UnionType {
-    variants: Vec<UnionVariant>,
-    tag_representation: PrimitiveType
+    pub(crate) variants: Vec<UnionVariant>,
+    pub(crate) tag_representation: PrimitiveType
 }
 
 pub struct UnionVariant {
-    identifier: Identifier,
-    parser_type: Option<ParserTypeId>,
-    tag_value: i64,
+    pub(crate) identifier: Identifier,
+    pub(crate) embedded: Vec<ParserTypeId>, // zero-length does not have embedded values
+    pub(crate) tag_value: i64,
 }
 
 pub struct StructType {
@@ -401,6 +408,7 @@ impl TypeTable {
             let can_pop_breadcrumb = match definition {
                 // TODO: @cleanup Borrow rules hax
                 Definition::Enum(_) => self.resolve_base_enum_definition(ctx, root_id, definition_id),
+                Definition::Union(_) => self.resolve_base_union_definition(ctx, root_id, definition_id),
                 Definition::Struct(_) => self.resolve_base_struct_definition(ctx, root_id, definition_id),
                 Definition::Component(_) => self.resolve_base_component_definition(ctx, root_id, definition_id),
                 Definition::Function(_) => self.resolve_base_function_definition(ctx, root_id, definition_id),
@@ -428,156 +436,130 @@ impl TypeTable {
         
         let definition = ctx.heap[definition_id].as_enum();
 
-        // Check if the enum should be implemented as a classic enumeration or
-        // a tagged union. Keep track of variant index for error messages. Make
-        // sure all embedded types are resolved.
-        let mut first_tag_value = None;
-        let mut first_int_value = None;
+        let mut enum_value = -1;
+        let mut min_enum_value = 0;
+        let mut max_enum_value = 0;
+        let mut variants = Vec::with_capacity(definition.variants.len());
+        for variant in &definition.variants {
+            enum_value += 1;
+            match &variant.value {
+                EnumVariantValue::None => {
+                    variants.push(EnumVariant{
+                        identifier: variant.identifier.clone(),
+                        value: enum_value,
+                    });
+                },
+                EnumVariantValue::Integer(override_value) => {
+                    enum_value = *override_value;
+                    variants.push(EnumVariant{
+                        identifier: variant.identifier.clone(),
+                        value: enum_value,
+                    });
+                }
+            }
+            if enum_value < min_enum_value { min_enum_value = enum_value; }
+            else if enum_value > max_enum_value { max_enum_value = enum_value; }
+        }
+
+        // Ensure enum names and polymorphic args do not conflict
+        self.check_identifier_collision(
+            ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
+        )?;
+        self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
+
+        // Note: although we cannot have embedded type dependent on the
+        // polymorphic variables, they might still be present as tokens
+        let definition_id = definition.this.upcast();
+        self.lookup.insert(definition_id, DefinedType {
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Enum(EnumType{
+                variants,
+                representation: Self::enum_tag_type(min_enum_value, max_enum_value)
+            }),
+            poly_vars: self.create_initial_poly_vars(&definition.poly_vars),
+            is_polymorph: false,
+            is_pointerlike: false,
+            monomorphs: Vec::new()
+        });
+
+        Ok(true)
+    }
+
+    /// Resolves the basic union definiton to an entry in the type table. It
+    /// will not instantiate any monomorphized instances of polymorphic union
+    /// definitions. If a subtype has to be resolved first then this function
+    /// will return `false` after calling `ingest_resolve_result`.
+    fn resolve_base_union_definition(&mut self, ctx: &mut TypeCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
+        debug_assert!(ctx.heap[definition_id].is_union());
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base union already resolved");
+
+        let definition = ctx.heap[definition_id].as_union();
+
+        // Make sure all embedded types are resolved
         for variant in &definition.variants {
             match &variant.value {
-                EnumVariantValue::None => {},
-                EnumVariantValue::Integer(_) => if first_int_value.is_none() {
-                    first_int_value = Some(variant.position);
+                UnionVariantValue::None => {},
+                UnionVariantValue::Embedded(embedded) => {
+                    for embedded_id in embedded {
+                        let resolve_result = self.resolve_base_parser_type(ctx, &definition.poly_vars, root_id, *embedded_id)?;
+                        if !self.ingest_resolve_result(ctx, resolve_result)? {
+                            return Ok(false)
+                        }
+                    }
+                }
+            }
+        }
+
+        // If here then all embedded types are resolved
+
+        // Determine the union variants
+        let mut tag_value = -1;
+        let mut variants = Vec::with_capacity(definition.variants.len());
+        for variant in &definition.variants {
+            tag_value += 1;
+            let embedded = match &variant.value {
+                UnionVariantValue::None => { Vec::new() },
+                UnionVariantValue::Embedded(embedded) => {
+                    // Type should be resolvable, we checked this above
+                    embedded.clone()
                 },
-                EnumVariantValue::Type(variant_type_id) => {
-                    if first_tag_value.is_none() {
-                        first_tag_value = Some(variant.position);
-                    }
+            };
 
-                    // Check if the embedded type needs to be resolved
-                    let resolve_result = self.resolve_base_parser_type(ctx, &definition.poly_vars, root_id, *variant_type_id)?;
-                    if !self.ingest_resolve_result(ctx, resolve_result)? {
-                        return Ok(false)
-                    }
-                }
-            }
+            variants.push(UnionVariant{
+                identifier: variant.identifier.clone(),
+                embedded,
+                tag_value,
+            })
         }
 
-        if first_tag_value.is_some() && first_int_value.is_some() {
-            // Not illegal, but useless and probably a programmer mistake
-            let module_source = &ctx.modules[root_id.index as usize].source;
-            let tag_pos = first_tag_value.unwrap();
-            let int_pos = first_int_value.unwrap();
-            return Err(
-                ParseError::new_error(
-                    module_source, definition.position,
-                    "Illegal combination of enum integer variant(s) and enum union variant(s)"
-                )
-                    .with_postfixed_info(module_source, int_pos, "Assigning an integer value here")
-                    .with_postfixed_info(module_source, tag_pos, "Embedding a type in a union variant here")
-            );
+        // Ensure union names and polymorphic args do not conflict
+        self.check_identifier_collision(
+            ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
+        )?;
+        self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
+
+        let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
+        for variant in &variants {
+            for embedded_id in &variant.embedded {
+                self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, *embedded_id)?;
+            }
         }
+        let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
 
-        // Enumeration is legal
-        if first_tag_value.is_some() {
-            // Implement as a tagged union
-
-            // Determine the union variants
-            let mut tag_value = -1;
-            let mut variants = Vec::with_capacity(definition.variants.len());
-            for variant in &definition.variants {
-                tag_value += 1;
-                let parser_type = match &variant.value {
-                    EnumVariantValue::None => {
-                        None
-                    },
-                    EnumVariantValue::Type(parser_type_id) => {
-                        // Type should be resolvable, we checked this above
-                        Some(*parser_type_id)
-                    },
-                    EnumVariantValue::Integer(_) => {
-                        debug_assert!(false, "Encountered `Integer` variant after asserting enum is a discriminated union");
-                        unreachable!();
-                    }
-                };
-
-                variants.push(UnionVariant{
-                    identifier: variant.identifier.clone(),
-                    parser_type,
-                    tag_value,
-                })
-            }
-
-            // Ensure union names and polymorphic args do not conflict
-            self.check_identifier_collision(
-                ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
-            )?;
-            self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
-
-            let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
-            for variant in &variants {
-                if let Some(embedded) = variant.parser_type {
-                    self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, embedded)?;
-                }
-            }
-            let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
-
-            // Insert base definition in type table
-            self.lookup.insert(definition_id, DefinedType {
-                ast_root: root_id,
-                ast_definition: definition_id,
-                definition: DefinedTypeVariant::Union(UnionType{
-                    variants,
-                    tag_representation: Self::enum_tag_type(-1, tag_value),
-                }),
-                poly_vars: poly_args,
-                is_polymorph,
-                is_pointerlike: false, // TODO: @cyclic_types
-                monomorphs: Vec::new()
-            });
-        } else {
-            // Implement as a regular enum
-            let mut enum_value = -1;
-            let mut min_enum_value = 0;
-            let mut max_enum_value = 0;
-            let mut variants = Vec::with_capacity(definition.variants.len());
-            for variant in &definition.variants {
-                enum_value += 1;
-                match &variant.value {
-                    EnumVariantValue::None => {
-                        variants.push(EnumVariant{
-                            identifier: variant.identifier.clone(),
-                            value: enum_value,
-                        });
-                    },
-                    EnumVariantValue::Integer(override_value) => {
-                        enum_value = *override_value;
-                        variants.push(EnumVariant{
-                            identifier: variant.identifier.clone(),
-                            value: enum_value,
-                        });
-                    },
-                    EnumVariantValue::Type(_) => {
-                        debug_assert!(false, "Encountered `Type` variant after asserting enum is not a discriminated union");
-                        unreachable!();
-                    }
-                }
-                if enum_value < min_enum_value { min_enum_value = enum_value; }
-                else if enum_value > max_enum_value { max_enum_value = enum_value; }
-            }
-
-            // Ensure enum names and polymorphic args do not conflict
-            self.check_identifier_collision(
-                ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
-            )?;
-            self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
-
-            // Note: although we cannot have embedded type dependent on the
-            // polymorphic variables, they might still be present as tokens
-            let definition_id = definition.this.upcast();
-            self.lookup.insert(definition_id, DefinedType {
-                ast_root: root_id,
-                ast_definition: definition_id,
-                definition: DefinedTypeVariant::Enum(EnumType{
-                    variants,
-                    representation: Self::enum_tag_type(min_enum_value, max_enum_value)
-                }),
-                poly_vars: self.create_initial_poly_vars(&definition.poly_vars),
-                is_polymorph: false,
-                is_pointerlike: false,
-                monomorphs: Vec::new()
-            });
-        }
+        // Insert base definition in type table
+        self.lookup.insert(definition_id, DefinedType {
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Union(UnionType{
+                variants,
+                tag_representation: Self::enum_tag_type(-1, tag_value),
+            }),
+            poly_vars: poly_args,
+            is_polymorph,
+            is_pointerlike: false, // TODO: @cyclic_types
+            monomorphs: Vec::new()
+        });
 
         Ok(true)
     }

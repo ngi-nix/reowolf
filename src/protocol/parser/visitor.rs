@@ -54,6 +54,10 @@ pub(crate) trait Visitor2 {
                 let def = def.this;
                 self.visit_enum_definition(ctx, def)
             },
+            Definition::Union(def) => {
+                let def = def.this;
+                self.visit_union_definition(ctx, def)
+            }
             Definition::Struct(def) => {
                 let def = def.this;
                 self.visit_struct_definition(ctx, def)
@@ -71,6 +75,7 @@ pub(crate) trait Visitor2 {
 
     // --- enum variant handling
     fn visit_enum_definition(&mut self, _ctx: &mut Ctx, _id: EnumId) -> VisitorResult { Ok(()) }
+    fn visit_union_definition(&mut self, _ctx: &mut Ctx, _id: UnionId) -> VisitorResult{ Ok(()) }
     fn visit_struct_definition(&mut self, _ctx: &mut Ctx, _id: StructId) -> VisitorResult { Ok(()) }
     fn visit_component_definition(&mut self, _ctx: &mut Ctx, _id: ComponentId) -> VisitorResult { Ok(()) }
     fn visit_function_definition(&mut self, _ctx: &mut Ctx, _id: FunctionId) -> VisitorResult { Ok(()) }
