@@ -1187,7 +1187,8 @@ impl ValidityAndLinkerVisitor {
                         symbolic.poly_args2.push(self.parser_type_buffer.pop().unwrap());
                     }
                 } else if !symbolic.identifier.poly_args.is_empty() {
-                    symbolic.poly_args2.extend(&symbolic.identifier.poly_args)
+                    symbolic.poly_args2.extend(&symbolic.identifier.poly_args);
+                    self.parser_type_buffer.extend(&symbolic.poly_args2);
                 }
                 symbolic.variant = Some(symbolic_variant);
             } else {

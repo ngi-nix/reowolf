@@ -781,6 +781,7 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
         Definition::Function(definition) => &definition.poly_vars,
         Definition::Component(definition) => &definition.poly_vars,
         Definition::Struct(definition) => &definition.poly_vars,
+        Definition::Enum(definition) => &definition.poly_vars,
         _ => unreachable!("Error in testing utility: unexpected type for concrete type serialization"),
     };
 

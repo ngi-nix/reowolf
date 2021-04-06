@@ -275,7 +275,24 @@ impl ASTWriter {
         let indent4 = indent3 + 1;
 
         match &heap[def_id] {
-            Definition::Struct(_) => todo!("implement Definition::Struct"),
+            Definition::Struct(def) => {
+                self.kv(indent).with_id(PREFIX_STRUCT_ID, def.this.0.index)
+                    .with_s_key("DefinitionStruct");
+
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                for poly_var_id in &def.poly_vars {
+                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                }
+
+                self.kv(indent2).with_s_key("Fields");
+                for field in &def.fields {
+                    self.kv(indent3).with_s_key("Field");
+                    self.kv(indent4).with_s_key("Name")
+                        .with_ascii_val(&field.field.value);
+                    self.kv(indent4).with_s_key("Type")
+                        .with_custom_val(|s| write_parser_type(s, heap, &heap[field.parser_type]));
+                }
+            },
             Definition::Enum(def) => {
                 self.kv(indent).with_id(PREFIX_ENUM_ID, def.this.0.index)
                     .with_s_key("DefinitionEnum");
@@ -290,7 +307,13 @@ impl ASTWriter {
                     self.kv(indent3).with_s_key("Variant");
                     self.kv(indent4).with_s_key("Name")
                         .with_ascii_val(&variant.identifier.value);
-                    // TODO: Attached value
+                    let variant_value = self.kv(indent4).with_s_key("Value");
+                    match &variant.value {
+                        EnumVariantValue::None => variant_value.with_s_val("None"),
+                        EnumVariantValue::Integer(value) => variant_value.with_disp_val(value),
+                        EnumVariantValue::Type(parser_type_id) => variant_value
+                            .with_custom_val(|s| write_parser_type(s, heap, &heap[*parser_type_id])),
+                    };
                 }
             },
             Definition::Function(def) => {
