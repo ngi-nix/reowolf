@@ -22,7 +22,10 @@ macro_rules! define_aliased_ast_id {
         pub type $name = $parent;
     };
     // Variant where we define the type, and the Index and IndexMut traits
-    ($name:ident, $parent:ty, $indexed_type:ty, $indexed_arena:ident) => {
+    (
+        $name:ident, $parent:ty, 
+        index($indexed_type:ty, $indexed_arena:ident)
+    ) => {
         define_aliased_ast_id!($name, $parent);
         impl Index<$name> for Heap {
             type Output = $indexed_type;
@@ -36,7 +39,20 @@ macro_rules! define_aliased_ast_id {
                 &mut self.$indexed_arena[index]
             }
         }
-    }
+    };
+    // Variant where we define type, Index(Mut) traits and an allocation function
+    (
+        $name:ident, $parent:ty,
+        index($indexed_type:ty, $indexed_arena:ident),
+        alloc($fn_name:ident)
+    ) => {
+        define_aliased_ast_id!($name, $parent, index($indexed_type, $indexed_arena));
+        impl Heap {
+            pub fn $fn_name(&mut self, f: impl FnOnce($name) -> $indexed_type) -> $name {
+                self.$indexed_arena.alloc_with_id(|id| f(id))
+            }
+        }
+    };
 }
 
 /// Helper macro that defines a wrapper type for a particular variant of an AST
@@ -54,7 +70,10 @@ macro_rules! define_new_ast_id {
         }
     };
     // Variant where we define the type, and the Index and IndexMut traits
-    ($name:ident, $parent:ty, $indexed_type:ty, $wrapper_type:path, $indexed_arena:ident) => {
+    (
+        $name:ident, $parent:ty, 
+        index($indexed_type:ty, $wrapper_type:path, $indexed_arena:ident)
+    ) => {
         define_new_ast_id!($name, $parent);
         impl Index<$name> for Heap {
             type Output = $indexed_type;
@@ -76,58 +95,75 @@ macro_rules! define_new_ast_id {
                 }
             }
         }
+    };
+    // Variant where we define the type, the Index and IndexMut traits, and an allocation function
+    (
+        $name:ident, $parent:ty, 
+        index($indexed_type:ty, $wrapper_type:path, $indexed_arena:ident),
+        alloc($fn_name:ident)
+    ) => {
+        define_new_ast_id!($name, $parent, index($indexed_type, $wrapper_type, $indexed_arena));
+        impl Heap {
+            pub fn $fn_name(&mut self, f: impl FnOnce($name) -> $indexed_type) -> $name {
+                $name(
+                    self.$indexed_arena.alloc_with_id(|id| {
+                        $wrapper_type(f($name(id)))
+                    })
+                )
+            }
+        }
     }
 }
 
-define_aliased_ast_id!(RootId, Id<Root>, Root, protocol_descriptions);
-define_aliased_ast_id!(PragmaId, Id<Pragma>, Pragma, pragmas);
-define_aliased_ast_id!(ImportId, Id<Import>, Import, imports);
-define_aliased_ast_id!(ParserTypeId, Id<ParserType>, ParserType, parser_types);
+define_aliased_ast_id!(RootId, Id<Root>, index(Root, protocol_descriptions), alloc(alloc_protocol_description));
+define_aliased_ast_id!(PragmaId, Id<Pragma>, index(Pragma, pragmas), alloc(alloc_pragma));
+define_aliased_ast_id!(ImportId, Id<Import>, index(Import, imports), alloc(alloc_import));
+define_aliased_ast_id!(ParserTypeId, Id<ParserType>, index(ParserType, parser_types), alloc(alloc_parser_type));
 
-define_aliased_ast_id!(VariableId, Id<Variable>, Variable, variables);
-define_new_ast_id!(ParameterId, VariableId, Parameter, Variable::Parameter, variables);
-define_new_ast_id!(LocalId, VariableId, Local, Variable::Local, variables);
+define_aliased_ast_id!(VariableId, Id<Variable>, index(Variable, variables));
+define_new_ast_id!(ParameterId, VariableId, index(Parameter, Variable::Parameter, variables), alloc(alloc_parameter));
+define_new_ast_id!(LocalId, VariableId, index(Local, Variable::Local, variables), alloc(alloc_local));
 
-define_aliased_ast_id!(DefinitionId, Id<Definition>, Definition, definitions);
-define_new_ast_id!(StructId, DefinitionId, StructDefinition, Definition::Struct, definitions);
-define_new_ast_id!(EnumId, DefinitionId, EnumDefinition, Definition::Enum, definitions);
-define_new_ast_id!(UnionId, DefinitionId, UnionDefinition, Definition::Union, definitions);
-define_new_ast_id!(ComponentId, DefinitionId, Component, Definition::Component, definitions);
-define_new_ast_id!(FunctionId, DefinitionId, Function, Definition::Function, definitions);
+define_aliased_ast_id!(DefinitionId, Id<Definition>, index(Definition, definitions));
+define_new_ast_id!(StructId, DefinitionId, index(StructDefinition, Definition::Struct, definitions), alloc(alloc_struct_definition));
+define_new_ast_id!(EnumId, DefinitionId, index(EnumDefinition, Definition::Enum, definitions), alloc(alloc_enum_definition));
+define_new_ast_id!(UnionId, DefinitionId, index(UnionDefinition, Definition::Union, definitions), alloc(alloc_union_definition));
+define_new_ast_id!(ComponentId, DefinitionId, index(Component, Definition::Component, definitions), alloc(alloc_component));
+define_new_ast_id!(FunctionId, DefinitionId, index(Function, Definition::Function, definitions), alloc(alloc_function));
 
-define_aliased_ast_id!(StatementId, Id<Statement>, Statement, statements);
-define_new_ast_id!(BlockStatementId, StatementId, BlockStatement, Statement::Block, statements);
-define_new_ast_id!(LocalStatementId, StatementId, LocalStatement, Statement::Local, statements);
+define_aliased_ast_id!(StatementId, Id<Statement>, index(Statement, statements));
+define_new_ast_id!(BlockStatementId, StatementId, index(BlockStatement, Statement::Block, statements), alloc(alloc_block_statement));
+define_new_ast_id!(LocalStatementId, StatementId, index(LocalStatement, Statement::Local, statements), alloc(alloc_local_statement));
 define_new_ast_id!(MemoryStatementId, LocalStatementId);
 define_new_ast_id!(ChannelStatementId, LocalStatementId);
-define_new_ast_id!(SkipStatementId, StatementId, SkipStatement, Statement::Skip, statements);
-define_new_ast_id!(LabeledStatementId, StatementId, LabeledStatement, Statement::Labeled, statements);
-define_new_ast_id!(IfStatementId, StatementId, IfStatement, Statement::If, statements);
-define_new_ast_id!(EndIfStatementId, StatementId, EndIfStatement, Statement::EndIf, statements);
-define_new_ast_id!(WhileStatementId, StatementId, WhileStatement, Statement::While, statements);
-define_new_ast_id!(EndWhileStatementId, StatementId, EndWhileStatement, Statement::EndWhile, statements);
-define_new_ast_id!(BreakStatementId, StatementId, BreakStatement, Statement::Break, statements);
-define_new_ast_id!(ContinueStatementId, StatementId, ContinueStatement, Statement::Continue, statements);
-define_new_ast_id!(SynchronousStatementId, StatementId, SynchronousStatement, Statement::Synchronous, statements);
-define_new_ast_id!(EndSynchronousStatementId, StatementId, EndSynchronousStatement, Statement::EndSynchronous, statements);
-define_new_ast_id!(ReturnStatementId, StatementId, ReturnStatement, Statement::Return, statements);
-define_new_ast_id!(AssertStatementId, StatementId, AssertStatement, Statement::Assert, statements);
-define_new_ast_id!(GotoStatementId, StatementId, GotoStatement, Statement::Goto, statements);
-define_new_ast_id!(NewStatementId, StatementId, NewStatement, Statement::New, statements);
-define_new_ast_id!(ExpressionStatementId, StatementId, ExpressionStatement, Statement::Expression, statements);
+define_new_ast_id!(SkipStatementId, StatementId, index(SkipStatement, Statement::Skip, statements), alloc(alloc_skip_statement));
+define_new_ast_id!(LabeledStatementId, StatementId, index(LabeledStatement, Statement::Labeled, statements), alloc(alloc_labeled_statement));
+define_new_ast_id!(IfStatementId, StatementId, index(IfStatement, Statement::If, statements), alloc(alloc_if_statement));
+define_new_ast_id!(EndIfStatementId, StatementId, index(EndIfStatement, Statement::EndIf, statements), alloc(alloc_end_if_statement));
+define_new_ast_id!(WhileStatementId, StatementId, index(WhileStatement, Statement::While, statements), alloc(alloc_while_statement));
+define_new_ast_id!(EndWhileStatementId, StatementId, index(EndWhileStatement, Statement::EndWhile, statements), alloc(alloc_end_while_statement));
+define_new_ast_id!(BreakStatementId, StatementId, index(BreakStatement, Statement::Break, statements), alloc(alloc_break_statement));
+define_new_ast_id!(ContinueStatementId, StatementId, index(ContinueStatement, Statement::Continue, statements), alloc(alloc_continue_statement));
+define_new_ast_id!(SynchronousStatementId, StatementId, index(SynchronousStatement, Statement::Synchronous, statements), alloc(alloc_synchronous_statement));
+define_new_ast_id!(EndSynchronousStatementId, StatementId, index(EndSynchronousStatement, Statement::EndSynchronous, statements), alloc(alloc_end_synchronous_statement));
+define_new_ast_id!(ReturnStatementId, StatementId, index(ReturnStatement, Statement::Return, statements), alloc(alloc_return_statement));
+define_new_ast_id!(AssertStatementId, StatementId, index(AssertStatement, Statement::Assert, statements), alloc(alloc_assert_statement));
+define_new_ast_id!(GotoStatementId, StatementId, index(GotoStatement, Statement::Goto, statements), alloc(alloc_goto_statement));
+define_new_ast_id!(NewStatementId, StatementId, index(NewStatement, Statement::New, statements), alloc(alloc_new_statement));
+define_new_ast_id!(ExpressionStatementId, StatementId, index(ExpressionStatement, Statement::Expression, statements), alloc(alloc_expression_statement));
 
-define_aliased_ast_id!(ExpressionId, Id<Expression>, Expression, expressions);
-define_new_ast_id!(AssignmentExpressionId, ExpressionId, AssignmentExpression, Expression::Assignment, expressions);
-define_new_ast_id!(ConditionalExpressionId, ExpressionId, ConditionalExpression, Expression::Conditional, expressions);
-define_new_ast_id!(BinaryExpressionId, ExpressionId, BinaryExpression, Expression::Binary, expressions);
-define_new_ast_id!(UnaryExpressionId, ExpressionId, UnaryExpression, Expression::Unary, expressions);
-define_new_ast_id!(IndexingExpressionId, ExpressionId, IndexingExpression, Expression::Indexing, expressions);
-define_new_ast_id!(SlicingExpressionId, ExpressionId, SlicingExpression, Expression::Slicing, expressions);
-define_new_ast_id!(SelectExpressionId, ExpressionId, SelectExpression, Expression::Select, expressions);
-define_new_ast_id!(ArrayExpressionId, ExpressionId, ArrayExpression, Expression::Array, expressions);
-define_new_ast_id!(LiteralExpressionId, ExpressionId, LiteralExpression, Expression::Literal, expressions);
-define_new_ast_id!(CallExpressionId, ExpressionId, CallExpression, Expression::Call, expressions);
-define_new_ast_id!(VariableExpressionId, ExpressionId, VariableExpression, Expression::Variable, expressions);
+define_aliased_ast_id!(ExpressionId, Id<Expression>, index(Expression, expressions));
+define_new_ast_id!(AssignmentExpressionId, ExpressionId, index(AssignmentExpression, Expression::Assignment, expressions), alloc(alloc_assignment_expression));
+define_new_ast_id!(ConditionalExpressionId, ExpressionId, index(ConditionalExpression, Expression::Conditional, expressions), alloc(alloc_conditional_expression));
+define_new_ast_id!(BinaryExpressionId, ExpressionId, index(BinaryExpression, Expression::Binary, expressions), alloc(alloc_binary_expression));
+define_new_ast_id!(UnaryExpressionId, ExpressionId, index(UnaryExpression, Expression::Unary, expressions), alloc(alloc_unary_expression));
+define_new_ast_id!(IndexingExpressionId, ExpressionId, index(IndexingExpression, Expression::Indexing, expressions), alloc(alloc_indexing_expression));
+define_new_ast_id!(SlicingExpressionId, ExpressionId, index(SlicingExpression, Expression::Slicing, expressions), alloc(alloc_slicing_expression));
+define_new_ast_id!(SelectExpressionId, ExpressionId, index(SelectExpression, Expression::Select, expressions), alloc(alloc_select_expression));
+define_new_ast_id!(ArrayExpressionId, ExpressionId, index(ArrayExpression, Expression::Array, expressions), alloc(alloc_array_expression));
+define_new_ast_id!(LiteralExpressionId, ExpressionId, index(LiteralExpression, Expression::Literal, expressions), alloc(alloc_literal_expression));
+define_new_ast_id!(CallExpressionId, ExpressionId, index(CallExpression, Expression::Call, expressions), alloc(alloc_call_expression));
+define_new_ast_id!(VariableExpressionId, ExpressionId, index(VariableExpression, Expression::Variable, expressions), alloc(alloc_variable_expression));
 
 // TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -161,136 +197,6 @@ impl Heap {
             expressions: Arena::new(),
         }
     }
-    pub fn alloc_parser_type(
-        &mut self,
-        f: impl FnOnce(ParserTypeId) -> ParserType,
-    ) -> ParserTypeId {
-        self.parser_types.alloc_with_id(|id| f(id))
-    }
-
-    pub fn alloc_parameter(&mut self, f: impl FnOnce(ParameterId) -> Parameter) -> ParameterId {
-        ParameterId(
-            self.variables.alloc_with_id(|id| Variable::Parameter(f(ParameterId(id)))),
-        )
-    }
-    pub fn alloc_local(&mut self, f: impl FnOnce(LocalId) -> Local) -> LocalId {
-        LocalId(
-            self.variables.alloc_with_id(|id| Variable::Local(f(LocalId(id)))),
-        )
-    }
-    pub fn alloc_assignment_expression(
-        &mut self,
-        f: impl FnOnce(AssignmentExpressionId) -> AssignmentExpression,
-    ) -> AssignmentExpressionId {
-        AssignmentExpressionId(
-            self.expressions.alloc_with_id(|id| {
-                Expression::Assignment(f(AssignmentExpressionId(id)))
-            })
-        )
-    }
-    pub fn alloc_conditional_expression(
-        &mut self,
-        f: impl FnOnce(ConditionalExpressionId) -> ConditionalExpression,
-    ) -> ConditionalExpressionId {
-        ConditionalExpressionId(
-            self.expressions.alloc_with_id(|id| {
-                Expression::Conditional(f(ConditionalExpressionId(id)))
-            })
-        )
-    }
-    pub fn alloc_binary_expression(
-        &mut self,
-        f: impl FnOnce(BinaryExpressionId) -> BinaryExpression,
-    ) -> BinaryExpressionId {
-        BinaryExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Binary(f(BinaryExpressionId(id)))),
-        )
-    }
-    pub fn alloc_unary_expression(
-        &mut self,
-        f: impl FnOnce(UnaryExpressionId) -> UnaryExpression,
-    ) -> UnaryExpressionId {
-        UnaryExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Unary(f(UnaryExpressionId(id)))),
-        )
-    }
-    pub fn alloc_slicing_expression(
-        &mut self,
-        f: impl FnOnce(SlicingExpressionId) -> SlicingExpression,
-    ) -> SlicingExpressionId {
-        SlicingExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Slicing(f(SlicingExpressionId(id)))),
-        )
-    }
-    pub fn alloc_indexing_expression(
-        &mut self,
-        f: impl FnOnce(IndexingExpressionId) -> IndexingExpression,
-    ) -> IndexingExpressionId {
-        IndexingExpressionId(
-            self.expressions.alloc_with_id(|id| {
-                Expression::Indexing(f(IndexingExpressionId(id)))
-            }),
-        )
-    }
-    pub fn alloc_select_expression(
-        &mut self,
-        f: impl FnOnce(SelectExpressionId) -> SelectExpression,
-    ) -> SelectExpressionId {
-        SelectExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Select(f(SelectExpressionId(id)))),
-        )
-    }
-    pub fn alloc_array_expression(
-        &mut self,
-        f: impl FnOnce(ArrayExpressionId) -> ArrayExpression,
-    ) -> ArrayExpressionId {
-        ArrayExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Array(f(ArrayExpressionId(id)))),
-        )
-    }
-    pub fn alloc_literal_expression(
-        &mut self,
-        f: impl FnOnce(LiteralExpressionId) -> LiteralExpression,
-    ) -> LiteralExpressionId {
-        LiteralExpressionId(
-            self.expressions.alloc_with_id(|id| {
-                Expression::Literal(f(LiteralExpressionId(id)))
-            }),
-        )
-    }
-    pub fn alloc_call_expression(
-        &mut self,
-        f: impl FnOnce(CallExpressionId) -> CallExpression,
-    ) -> CallExpressionId {
-        CallExpressionId(
-            self.expressions
-                .alloc_with_id(|id| Expression::Call(f(CallExpressionId(id)))),
-        )
-    }
-    pub fn alloc_variable_expression(
-        &mut self,
-        f: impl FnOnce(VariableExpressionId) -> VariableExpression,
-    ) -> VariableExpressionId {
-        VariableExpressionId(
-            self.expressions.alloc_with_id(|id| {
-                Expression::Variable(f(VariableExpressionId(id)))
-            }),
-        )
-    }
-    pub fn alloc_block_statement(
-        &mut self,
-        f: impl FnOnce(BlockStatementId) -> BlockStatement,
-    ) -> BlockStatementId {
-        BlockStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Block(f(BlockStatementId(id)))),
-        )
-    }
     pub fn alloc_memory_statement(
         &mut self,
         f: impl FnOnce(MemoryStatementId) -> MemoryStatement,
@@ -310,173 +216,6 @@ impl Heap {
                 f(ChannelStatementId(LocalStatementId(id)))
             ))
         })))
-    }
-    pub fn alloc_skip_statement(
-        &mut self,
-        f: impl FnOnce(SkipStatementId) -> SkipStatement,
-    ) -> SkipStatementId {
-        SkipStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Skip(f(SkipStatementId(id)))),
-        )
-    }
-    pub fn alloc_if_statement(
-        &mut self,
-        f: impl FnOnce(IfStatementId) -> IfStatement,
-    ) -> IfStatementId {
-        IfStatementId(
-            self.statements.alloc_with_id(|id| Statement::If(f(IfStatementId(id)))),
-        )
-    }
-    pub fn alloc_end_if_statement(
-        &mut self,
-        f: impl FnOnce(EndIfStatementId) -> EndIfStatement,
-    ) -> EndIfStatementId {
-        EndIfStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::EndIf(f(EndIfStatementId(id)))),
-        )
-    }
-    pub fn alloc_while_statement(
-        &mut self,
-        f: impl FnOnce(WhileStatementId) -> WhileStatement,
-    ) -> WhileStatementId {
-        WhileStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::While(f(WhileStatementId(id)))),
-        )
-    }
-    pub fn alloc_end_while_statement(
-        &mut self,
-        f: impl FnOnce(EndWhileStatementId) -> EndWhileStatement,
-    ) -> EndWhileStatementId {
-        EndWhileStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::EndWhile(f(EndWhileStatementId(id)))),
-        )
-    }
-    pub fn alloc_break_statement(
-        &mut self,
-        f: impl FnOnce(BreakStatementId) -> BreakStatement,
-    ) -> BreakStatementId {
-        BreakStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Break(f(BreakStatementId(id)))),
-        )
-    }
-    pub fn alloc_continue_statement(
-        &mut self,
-        f: impl FnOnce(ContinueStatementId) -> ContinueStatement,
-    ) -> ContinueStatementId {
-        ContinueStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Continue(f(ContinueStatementId(id)))),
-        )
-    }
-    pub fn alloc_synchronous_statement(
-        &mut self,
-        f: impl FnOnce(SynchronousStatementId) -> SynchronousStatement,
-    ) -> SynchronousStatementId {
-        SynchronousStatementId(self.statements.alloc_with_id(|id| {
-            Statement::Synchronous(f(SynchronousStatementId(id)))
-        }))
-    }
-    pub fn alloc_end_synchronous_statement(
-        &mut self,
-        f: impl FnOnce(EndSynchronousStatementId) -> EndSynchronousStatement,
-    ) -> EndSynchronousStatementId {
-        EndSynchronousStatementId(self.statements.alloc_with_id(|id| {
-            Statement::EndSynchronous(f(EndSynchronousStatementId(id)))
-        }))
-    }
-    pub fn alloc_return_statement(
-        &mut self,
-        f: impl FnOnce(ReturnStatementId) -> ReturnStatement,
-    ) -> ReturnStatementId {
-        ReturnStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Return(f(ReturnStatementId(id)))),
-        )
-    }
-    pub fn alloc_assert_statement(
-        &mut self,
-        f: impl FnOnce(AssertStatementId) -> AssertStatement,
-    ) -> AssertStatementId {
-        AssertStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Assert(f(AssertStatementId(id)))),
-        )
-    }
-    pub fn alloc_goto_statement(
-        &mut self,
-        f: impl FnOnce(GotoStatementId) -> GotoStatement,
-    ) -> GotoStatementId {
-        GotoStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Goto(f(GotoStatementId(id)))),
-        )
-    }
-    pub fn alloc_new_statement(
-        &mut self,
-        f: impl FnOnce(NewStatementId) -> NewStatement,
-    ) -> NewStatementId {
-        NewStatementId(
-            self.statements.alloc_with_id(|id| Statement::New(f(NewStatementId(id)))),
-        )
-    }
-    pub fn alloc_labeled_statement(
-        &mut self,
-        f: impl FnOnce(LabeledStatementId) -> LabeledStatement,
-    ) -> LabeledStatementId {
-        LabeledStatementId(
-            self.statements
-                .alloc_with_id(|id| Statement::Labeled(f(LabeledStatementId(id)))),
-        )
-    }
-    pub fn alloc_expression_statement(
-        &mut self,
-        f: impl FnOnce(ExpressionStatementId) -> ExpressionStatement,
-    ) -> ExpressionStatementId {
-        ExpressionStatementId(
-            self.statements.alloc_with_id(|id| {
-                Statement::Expression(f(ExpressionStatementId(id)))
-            }),
-        )
-    }
-    pub fn alloc_struct_definition(&mut self, f: impl FnOnce(StructId) -> StructDefinition) -> StructId {
-        StructId(self.definitions.alloc_with_id(|id| {
-            Definition::Struct(f(StructId(id)))
-        }))
-    }
-    pub fn alloc_enum_definition(&mut self, f: impl FnOnce(EnumId) -> EnumDefinition) -> EnumId {
-        EnumId(self.definitions.alloc_with_id(|id| {
-            Definition::Enum(f(EnumId(id)))
-        }))
-    }
-    pub fn alloc_union_definition(&mut self, f: impl FnOnce(UnionId) -> UnionDefinition) -> UnionId {
-        UnionId(self.definitions.alloc_with_id(|id| {
-            Definition::Union(f(UnionId(id)))
-        }))
-    }
-    pub fn alloc_component(&mut self, f: impl FnOnce(ComponentId) -> Component) -> ComponentId {
-        ComponentId(self.definitions.alloc_with_id(|id| {
-            Definition::Component(f(ComponentId(id)))
-        }))
-    }
-    pub fn alloc_function(&mut self, f: impl FnOnce(FunctionId) -> Function) -> FunctionId {
-        FunctionId(
-            self.definitions
-                .alloc_with_id(|id| Definition::Function(f(FunctionId(id)))),
-        )
-    }
-    pub fn alloc_pragma(&mut self, f: impl FnOnce(PragmaId) -> Pragma) -> PragmaId {
-        self.pragmas.alloc_with_id(|id| f(id))
-    }
-    pub fn alloc_import(&mut self, f: impl FnOnce(ImportId) -> Import) -> ImportId {
-        self.imports.alloc_with_id(|id| f(id))
-    }
-    pub fn alloc_protocol_description(&mut self, f: impl FnOnce(RootId) -> Root) -> RootId {
-        self.protocol_descriptions.alloc_with_id(|id| f(id))
     }
 }
 
