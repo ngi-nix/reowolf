@@ -152,13 +152,11 @@ impl AstOkTester {
             }
         }
 
-        if found { return self }
-
         assert!(
-            false, "[{}] Failed to find definition for struct '{}'",
+            found, "[{}] Failed to find definition for struct '{}'",
             self.test_name, name
         );
-        unreachable!()
+        self
     }
 
     pub(crate) fn for_enum<F: Fn(EnumTester)>(self, name: &str, f: F) -> Self {
@@ -177,13 +175,34 @@ impl AstOkTester {
             }
         }
 
-        if found { return self }
-
         assert!(
-            false, "[{}] Failed to find definition for enum '{}'",
+            found, "[{}] Failed to find definition for enum '{}'",
             self.test_name, name
         );
-        unreachable!()
+        self
+    }
+
+    pub(crate) fn for_union<F: Fn(UnionTester)>(self, name: &str, f: F) -> Self {
+        let mut found = false;
+        for definition in self.heap.definitions.iter() {
+            if let Definition::Union(definition) = definition {
+                if String::from_utf8_lossy(&definition.identifier.value) != name {
+                    continue;
+                }
+
+                // Found union with the same name
+                let tester = UnionTester::new(self.ctx(), definition);
+                f(tester);
+                found = true;
+                break;
+            }
+        }
+
+        assert!(
+            found, "[{}] Failed to find definition for union '{}'",
+            self.test_name, name
+        );
+        self
     }
 
     pub(crate) fn for_function<F: Fn(FunctionTester)>(self, name: &str, f: F) -> Self {
@@ -367,6 +386,57 @@ impl<'a> EnumTester<'a> {
     pub(crate) fn assert_postfix(&self) -> String {
         let mut v = String::new();
         v.push_str("Enum{ name: ");
+        v.push_str(&String::from_utf8_lossy(&self.def.identifier.value));
+        v.push_str(", variants: [");
+        for (variant_idx, variant) in self.def.variants.iter().enumerate() {
+            if variant_idx != 0 { v.push_str(", "); }
+            v.push_str(&String::from_utf8_lossy(&variant.identifier.value));
+        }
+        v.push_str("] }");
+        v
+    }
+}
+
+pub(crate) struct UnionTester<'a> {
+    ctx: TestCtx<'a>,
+    def: &'a UnionDefinition,
+}
+
+impl<'a> UnionTester<'a> {
+    fn new(ctx: TestCtx<'a>, def: &'a UnionDefinition) -> Self {
+        Self{ ctx, def }
+    }
+
+    pub(crate) fn assert_num_variants(self, num: usize) -> Self {
+        assert_eq!(
+            num, self.def.variants.len(),
+            "[{}] Expected {} union variants, but found {} for {}",
+            self.ctx.test_name, num, self.def.variants.len(), self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_num_monomorphs(self, num: usize) -> Self {
+        let (is_equal, num_encountered) = has_equal_num_monomorphs(self.ctx, num, self.def.this.upcast());
+        assert!(
+            is_equal, "[{}] Expected {} monomorphs, but got {} for {}",
+            self.ctx.test_name, num, num_encountered, self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_has_monomorph(self, serialized_monomorph: &str) -> Self {
+        let (has_monomorph, serialized) = has_monomorph(self.ctx, self.def.this.upcast(), serialized_monomorph);
+        assert!(
+            has_monomorph, "[{}] Expected to find monomorph {}, but got {} for {}",
+            self.ctx.test_name, serialized_monomorph, serialized, self.assert_postfix()
+        );
+        self
+    }
+
+    fn assert_postfix(&self) -> String {
+        let mut v = String::new();
+        v.push_str("Union{ name: ");
         v.push_str(&String::from_utf8_lossy(&self.def.identifier.value));
         v.push_str(", variants: [");
         for (variant_idx, variant) in self.def.variants.iter().enumerate() {
@@ -802,6 +872,7 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
         Definition::Component(definition) => &definition.poly_vars,
         Definition::Struct(definition) => &definition.poly_vars,
         Definition::Enum(definition) => &definition.poly_vars,
+        Definition::Union(definition) => &definition.poly_vars,
         _ => unreachable!("Error in testing utility: unexpected type for concrete type serialization"),
     };
 

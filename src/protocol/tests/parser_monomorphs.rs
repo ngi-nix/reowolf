@@ -71,3 +71,37 @@ fn test_enum_monomorphs() {
         .assert_has_monomorph("Answer<Answer<long>>");
     });
 }
+
+#[test]
+fn test_union_monomorphs() {
+    Tester::new_single_source_expect_ok(
+        "no polymorph",
+        "
+        union Trinary { Undefined, Value(boolean) }
+        int do_it() { auto a = Trinary::Value(true); return 0; }
+        "
+    ).for_union("Trinary", |e| { e
+        .assert_num_monomorphs(0);
+    });
+
+    // TODO: Does this do what we want? Or do we expect the embedded monomorph
+    //  Result<byte,int> to be instantiated as well? I don't think so.
+    Tester::new_single_source_expect_ok(
+        "polymorphs",
+        "
+        union Result<T, E>{ Ok(T), Err(E) }
+        int instantiator() {
+            auto a = Result<byte, boolean>::Ok(0);
+            auto b = Result<boolean, byte>::Ok(true);
+            auto c = Result<Result<byte, int>, Result<short, long>>::Err(Result::Ok(5));
+            return 0;
+        }
+        "
+    ).for_union("Result", |e| { e
+        .assert_num_monomorphs(4)
+        .assert_has_monomorph("byte;bool")
+        .assert_has_monomorph("bool;byte")
+        .assert_has_monomorph("Result<byte,int>;Result<short,long>")
+        .assert_has_monomorph("short;long");
+    });
+}
