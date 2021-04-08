@@ -154,6 +154,7 @@ define_new_ast_id!(ExpressionStatementId, StatementId, index(ExpressionStatement
 
 define_aliased_ast_id!(ExpressionId, Id<Expression>, index(Expression, expressions));
 define_new_ast_id!(AssignmentExpressionId, ExpressionId, index(AssignmentExpression, Expression::Assignment, expressions), alloc(alloc_assignment_expression));
+define_new_ast_id!(BindingExpressionId, ExpressionId, index(BindingExpression, Expression::Binding, expressions), alloc(alloc_binding_expression));
 define_new_ast_id!(ConditionalExpressionId, ExpressionId, index(ConditionalExpression, Expression::Conditional, expressions), alloc(alloc_conditional_expression));
 define_new_ast_id!(BinaryExpressionId, ExpressionId, index(BinaryExpression, Expression::Binary, expressions), alloc(alloc_binary_expression));
 define_new_ast_id!(UnaryExpressionId, ExpressionId, index(UnaryExpression, Expression::Unary, expressions), alloc(alloc_unary_expression));
@@ -1843,6 +1844,7 @@ pub enum ExpressionParent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Expression {
     Assignment(AssignmentExpression),
+    Binding(BindingExpression),
     Conditional(ConditionalExpression),
     Binary(BinaryExpression),
     Unary(UnaryExpression),
@@ -1938,6 +1940,7 @@ impl Expression {
     pub fn parent(&self) -> &ExpressionParent {
         match self {
             Expression::Assignment(expr) => &expr.parent,
+            Expression::Binding(expr) => &expr.parent,
             Expression::Conditional(expr) => &expr.parent,
             Expression::Binary(expr) => &expr.parent,
             Expression::Unary(expr) => &expr.parent,
@@ -1962,6 +1965,7 @@ impl Expression {
     pub fn set_parent(&mut self, parent: ExpressionParent) {
         match self {
             Expression::Assignment(expr) => expr.parent = parent,
+            Expression::Binding(expr) => expr.parent = parent,
             Expression::Conditional(expr) => expr.parent = parent,
             Expression::Binary(expr) => expr.parent = parent,
             Expression::Unary(expr) => expr.parent = parent,
@@ -1977,6 +1981,7 @@ impl Expression {
     pub fn get_type(&self) -> &ConcreteType {
         match self {
             Expression::Assignment(expr) => &expr.concrete_type,
+            Expression::Binding(expr) => &expr.concrete_type,
             Expression::Conditional(expr) => &expr.concrete_type,
             Expression::Binary(expr) => &expr.concrete_type,
             Expression::Unary(expr) => &expr.concrete_type,
@@ -1994,6 +1999,7 @@ impl Expression {
     pub fn get_type_mut(&mut self) -> &mut ConcreteType {
         match self {
             Expression::Assignment(expr) => &mut expr.concrete_type,
+            Expression::Binding(expr) => &mut expr.concrete_type,
             Expression::Conditional(expr) => &mut expr.concrete_type,
             Expression::Binary(expr) => &mut expr.concrete_type,
             Expression::Unary(expr) => &mut expr.concrete_type,
@@ -2012,6 +2018,7 @@ impl SyntaxElement for Expression {
     fn position(&self) -> InputPosition {
         match self {
             Expression::Assignment(expr) => expr.position(),
+            Expression::Binding(expr) => expr.position,
             Expression::Conditional(expr) => expr.position(),
             Expression::Binary(expr) => expr.position(),
             Expression::Unary(expr) => expr.position(),
@@ -2059,6 +2066,19 @@ impl SyntaxElement for AssignmentExpression {
     fn position(&self) -> InputPosition {
         self.position
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BindingExpression {
+    pub this: BindingExpressionId,
+    // Phase 1: parser
+    pub position: InputPosition,
+    pub left: ExpressionId,
+    pub right: ExpressionId,
+    // Phase 2: linker
+    pub parent: ExpressionParent,
+    // Phase 3: type checking
+    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

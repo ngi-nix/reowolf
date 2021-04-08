@@ -337,4 +337,18 @@ fn test_incorrect_union_instance() {
     ).error(|e| { e 
         .assert_msg_has(0, "The variant 'A' of union 'Foo' expects 0");
     });
+
+    Tester::new_single_source_expect_err(
+        "wrong embedded value",
+        "
+        union Foo{ A(int) }
+        Foo bar() { return Foo::A(false); }
+        "
+    ).error(|e| { e
+        .assert_occurs_at(0, "Foo::A")
+        .assert_msg_has(0, "Failed to fully resolve")
+        .assert_occurs_at(1, "false")
+        .assert_msg_has(1, "has been resolved to 'int'")
+        .assert_msg_has(1, "has been resolved to 'bool'");
+    });
 }

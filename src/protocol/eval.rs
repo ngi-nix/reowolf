@@ -1446,6 +1446,9 @@ impl Store {
                 }
                 Ok(value)
             }
+            Expression::Binding(expr) => {
+                unimplemented!("eval binding expression");
+            }
             Expression::Conditional(expr) => {
                 let test = self.eval(h, ctx, expr.test)?;
                 if test.as_boolean().0 {

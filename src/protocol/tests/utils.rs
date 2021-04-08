@@ -622,6 +622,7 @@ impl<'a> VariableTester<'a> {
     }
 
     fn assert_postfix(&self) -> String {
+        println!("DEBUG: {:?}", self.assignment.concrete_type);
         format!(
             "Variable{{ name: {} }}",
             &String::from_utf8_lossy(&self.local.identifier.value)
@@ -865,15 +866,13 @@ fn serialize_parser_type(buffer: &mut String, heap: &Heap, id: ParserTypeId) {
 }
 
 fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, concrete: &ConcreteType) {
-    // Retrieve polymorphic variables, if present (since we're dealing with a 
-    // concrete type we only expect procedure types)
+    // Retrieve polymorphic variables
     let poly_vars = match &heap[def] {
         Definition::Function(definition) => &definition.poly_vars,
         Definition::Component(definition) => &definition.poly_vars,
         Definition::Struct(definition) => &definition.poly_vars,
         Definition::Enum(definition) => &definition.poly_vars,
         Definition::Union(definition) => &definition.poly_vars,
-        _ => unreachable!("Error in testing utility: unexpected type for concrete type serialization"),
     };
 
     fn serialize_recursive(
@@ -897,24 +896,20 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
             CTP::Array => {
                 idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
                 buffer.push_str("[]");
-                idx += 1;
             },
             CTP::Slice => {
                 idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
                 buffer.push_str("[..]");
-                idx += 1;
             },
             CTP::Input => {
                 buffer.push_str("in<");
                 idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
                 buffer.push('>');
-                idx += 1;
             },
             CTP::Output => {
                 buffer.push_str("out<");
                 idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
                 buffer.push('>');
-                idx += 1
             },
             CTP::Instance(definition_id, num_sub) => {
                 let definition_name = heap[*definition_id].identifier();
@@ -927,7 +922,6 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
                     }
                     buffer.push('>');
                 }
-                idx += 1;
             }
         }
 
@@ -992,6 +986,11 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
             .or_else(|| seek_expr_in_expr(heap, expr.left, f))
             .or_else(|| seek_expr_in_expr(heap, expr.right, f))
         },
+        Expression::Binding(expr) => {
+            None
+            .or_else(|| seek_expr_in_expr(heap, expr.left, f))
+            .or_else(|| seek_expr_in_expr(heap, expr.right, f))
+        }
         Expression::Conditional(expr) => {
             None
             .or_else(|| seek_expr_in_expr(heap, expr.test, f))

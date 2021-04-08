@@ -1261,6 +1261,19 @@ impl Lexer<'_> {
         }
         Ok(result)
     }
+    fn consume_binding_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
+        if self.has_string("let") {
+            let position = self.source.pos();
+            self.consume_whitespace(true)?;
+            let left_expr = self.consume_expression(h)?;
+            self.consume_whitespace(false)?;
+            self.consume_string(b"=")?;
+            self.consume_whitespace(false)?;
+            let right_expr = self.consume_expression(h)?;
+        } else {
+            self.consume_prefix_expression(h)
+        }
+    }
     fn consume_prefix_expression(&mut self, h: &mut Heap) -> Result<ExpressionId, ParseError> {
         if self.has_string(b"+")
             || self.has_string(b"-")

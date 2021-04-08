@@ -41,6 +41,7 @@ const PREFIX_NEW_STMT_ID: &'static str = "SNew";
 const PREFIX_PUT_STMT_ID: &'static str = "SPut";
 const PREFIX_EXPR_STMT_ID: &'static str = "SExp";
 const PREFIX_ASSIGNMENT_EXPR_ID: &'static str = "EAsi";
+const PREFIX_BINDING_EXPR_ID: &'static str = "EBnd";
 const PREFIX_CONDITIONAL_EXPR_ID: &'static str = "ECnd";
 const PREFIX_BINARY_EXPR_ID: &'static str = "EBin";
 const PREFIX_UNARY_EXPR_ID: &'static str = "EUna";
@@ -588,6 +589,18 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Left");
                 self.write_expr(heap, expr.left, indent3);
                 self.kv(indent2).with_s_key("Right");
+                self.write_expr(heap, expr.right, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
+                self.kv(indent2).with_s_key("ConcreteType")
+                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
+            },
+            Expression::Binding(expr) => {
+                self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
+                    .with_s_key("BindingExpr");
+                self.kv(indent2).with_s_key("LeftExpression");
+                self.write_expr(heap, expr.left, indent3);
+                self.kv(indent2).with_s_key("RightExpression");
                 self.write_expr(heap, expr.right, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));

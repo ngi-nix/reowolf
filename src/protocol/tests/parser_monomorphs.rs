@@ -91,9 +91,11 @@ fn test_union_monomorphs() {
         "
         union Result<T, E>{ Ok(T), Err(E) }
         int instantiator() {
+            short a_short = 5;
             auto a = Result<byte, boolean>::Ok(0);
             auto b = Result<boolean, byte>::Ok(true);
             auto c = Result<Result<byte, int>, Result<short, long>>::Err(Result::Ok(5));
+            auto d = Result<Result<byte, int>, auto>::Err(Result<auto, long>::Ok(a_short));
             return 0;
         }
         "
@@ -103,5 +105,10 @@ fn test_union_monomorphs() {
         .assert_has_monomorph("bool;byte")
         .assert_has_monomorph("Result<byte,int>;Result<short,long>")
         .assert_has_monomorph("short;long");
+    }).for_function("instantiator", |f| { f
+        .for_variable("d", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Result<Result<byte,int>,Result<short,long>>");
+        });
     });
 }
