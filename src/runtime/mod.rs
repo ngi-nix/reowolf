@@ -108,7 +108,7 @@ struct VecSet<T: std::cmp::Ord> {
 // owns their destination port. `LocalComponent` corresponds with messages for components
 // managed by the connector itself (hinting for it to look it up in a local structure),
 // whereas the other variants direct the connector to forward the messages over the network.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 enum Route {
     LocalComponent,
     NetEndpoint { index: usize },
@@ -137,24 +137,7 @@ enum SetupMsg {
     LeaderWave { wave_leader: ConnectorId },
     LeaderAnnounce { tree_leader: ConnectorId },
     YouAreMyParent,
-    SessionGather { unoptimized_map: HashMap<ConnectorId, SessionInfo> },
-    SessionScatter { optimized_map: HashMap<ConnectorId, SessionInfo> },
 }
-
-// A data structure encoding the state of a connector, passed around
-// during the session optimization procedure.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-struct SessionInfo {
-    serde_proto_description: SerdeProtocolDescription,
-    port_info: PortInfoMap,
-    endpoint_incoming_to_getter: Vec<PortId>,
-    proto_components: HashMap<ComponentId, ComponentState>,
-}
-
-// Newtype wrapper for an Arc<ProtocolDescription>,
-// such that it can be (de)serialized for transmission over the network.
-#[derive(Debug, Clone)]
-struct SerdeProtocolDescription(Arc<ProtocolDescription>);
 
 // Control message particular to the communication phase.
 // as such, it's annotated with a round_index
@@ -296,7 +279,7 @@ struct EndpointStore<T> {
 }
 
 // The information associated with a port identifier, designed for local storage.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 struct PortInfo {
     owner: ComponentId,
     peer: Option<PortId>,
@@ -314,7 +297,7 @@ struct MyPortInfo {
 
 // Newtype around port info map, allowing the implementation of some
 // useful methods
-#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, Clone)]
 struct PortInfoMap {
     // invariant: self.invariant_preserved()
     // `owned` is redundant information, allowing for fast lookup
@@ -378,7 +361,7 @@ struct Predicate {
 // from the solutions of its children. Those children are either locally-managed components,
 // (which are leaves in the solution tree), or other connectors reachable through the given
 // network endpoint (which are internal nodes in the solution tree).
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 enum SubtreeId {
     LocalComponent(ComponentId),
     NetEndpoint { index: usize },
@@ -866,24 +849,6 @@ impl Debug for Predicate {
             }
         }
         f.debug_set().entries(self.assigned.iter().map(Assignment)).finish()
-    }
-}
-impl serde::Serialize for SerdeProtocolDescription {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let inner: &ProtocolDescription = &self.0;
-        inner.serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for SerdeProtocolDescription {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let inner: ProtocolDescription = ProtocolDescription::deserialize(deserializer)?;
-        Ok(Self(Arc::new(inner)))
     }
 }
 impl IdParts for SpecVar {

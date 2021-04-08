@@ -2,7 +2,6 @@ use crate::common::*;
 use core::hash::Hash;
 use core::marker::PhantomData;
 
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Id<T> {
     pub(crate) index: u32,
     _phantom: PhantomData<T>,
@@ -14,7 +13,7 @@ impl<T> Id<T> {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
 pub(crate) struct Arena<T> {
     store: Vec<T>,
 }

@@ -28,15 +28,13 @@ use crate::protocol::inputsource::*;
 use crate::protocol::parser::*;
 
 /// Description of a protocol object, used to configure new connectors.
-/// (De)serializable.
-#[derive(serde::Serialize, serde::Deserialize)]
 #[repr(C)]
 pub struct ProtocolDescription {
     heap: Heap,
     source: InputSource,
     root: RootId,
 }
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct ComponentState {
     prompt: Prompt,
 }

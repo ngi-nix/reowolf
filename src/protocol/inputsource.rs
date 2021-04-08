@@ -5,7 +5,7 @@ use std::path::Path;
 
 use backtrace::Backtrace;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct InputSource {
     pub(crate) filename: String,
     pub(crate) input: Vec<u8>,
@@ -144,7 +144,7 @@ impl fmt::Display for InputSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub struct InputPosition {
     line: usize,
     column: usize,

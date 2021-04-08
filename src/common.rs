@@ -32,11 +32,10 @@ pub type ConnectorId = u32;
 
 /// Used in conjunction with the `ConnectorId` type to create identifiers for ports and components
 pub type U32Suffix = u32;
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd)]
 
 /// Generalization of a port/component identifier
+#[derive(serde::Serialize, serde::Deserialize)]
 #[repr(C)]
 pub struct Id {
     pub(crate) connector_id: ConnectorId,
@@ -48,34 +47,27 @@ pub struct U32Stream {
 }
 
 /// Identifier of a component in a session
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize)]
 pub struct ComponentId(Id); // PUB because it can be returned by errors
 
 /// Identifier of a port in a session
-#[derive(
-    Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, Hash, PartialOrd, serde::Serialize, serde::Deserialize)]
 #[repr(transparent)]
 pub struct PortId(Id);
 
 /// A safely aliasable heap-allocated payload of message bytes
 #[derive(Default, Eq, PartialEq, Clone, Ord, PartialOrd)]
 pub struct Payload(Arc<Vec<u8>>);
-#[derive(
-    Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd)]
 
 /// "Orientation" of a port, determining whether they can send or receive messages with `put` and `get` respectively.
 #[repr(C)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Polarity {
     Putter, // output port (from the perspective of the component)
     Getter, // input port (from the perspective of the component)
 }
-#[derive(
-    Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd)]
 
 /// "Orientation" of a transport-layer network endpoint, dictating how it's connection procedure should
 /// be conducted. Corresponds with connect() / accept() familiar to TCP socket programming.

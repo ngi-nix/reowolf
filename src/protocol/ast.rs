@@ -60,7 +60,7 @@ macro_rules! define_aliased_ast_id {
 macro_rules! define_new_ast_id {
     // Variant where we just defined the new type, without any indexing
     ($name:ident, $parent:ty) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name (pub(crate) $parent);
 
         impl $name {
@@ -167,7 +167,7 @@ define_new_ast_id!(CallExpressionId, ExpressionId, index(CallExpression, Express
 define_new_ast_id!(VariableExpressionId, ExpressionId, index(VariableExpression, Expression::Variable, expressions), alloc(alloc_variable_expression));
 
 // TODO: @cleanup - pub qualifiers can be removed once done
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
 pub struct Heap {
     // Root arena, contains the entry point for different modules. Each root
     // contains lists of IDs that correspond to the other arenas.
@@ -234,7 +234,7 @@ impl Index<ChannelStatementId> for Heap {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Root {
     pub this: RootId,
     // Phase 1: parser
@@ -261,13 +261,13 @@ impl SyntaxElement for Root {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Pragma {
     Version(PragmaVersion),
     Module(PragmaModule)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PragmaVersion {
     pub this: PragmaId,
     // Phase 1: parser
@@ -275,7 +275,7 @@ pub struct PragmaVersion {
     pub version: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PragmaModule {
     pub this: PragmaId,
     // Phase 1: parser
@@ -283,7 +283,7 @@ pub struct PragmaModule {
     pub value: Vec<u8>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PragmaOld {
     pub this: PragmaId,
     // Phase 1: parser
@@ -297,7 +297,7 @@ impl SyntaxElement for PragmaOld {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Import {
     Module(ImportModule),
     Symbols(ImportSymbols)
@@ -327,7 +327,7 @@ impl SyntaxElement for Import {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImportModule {
     pub this: ImportId,
     // Phase 1: parser
@@ -338,7 +338,7 @@ pub struct ImportModule {
     pub module_id: Option<RootId>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AliasedSymbol {
     // Phase 1: parser
     pub position: InputPosition,
@@ -348,7 +348,7 @@ pub struct AliasedSymbol {
     pub definition_id: Option<DefinitionId>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImportSymbols {
     pub this: ImportId,
     // Phase 1: parser
@@ -363,7 +363,7 @@ pub struct ImportSymbols {
     pub symbols: Vec<AliasedSymbol>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Identifier {
     pub position: InputPosition,
     pub value: Vec<u8>
@@ -382,7 +382,7 @@ impl Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum NamespacedIdentifierPart {
     // Regular identifier
     Identifier{start: u16, end: u16},
@@ -423,7 +423,7 @@ impl NamespacedIdentifierPart {
 /// implementation we can only have valid namespaced identifier that contain one
 /// set of polymorphic arguments at the appropriate position.
 /// TODO: @tokens Reimplement/rename once we have a tokenizer
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NamespacedIdentifier {
     pub position: InputPosition,
     pub value: Vec<u8>, // Full name as it resides in the input source
@@ -610,7 +610,7 @@ impl<'a> NamespacedIdentifierIter<'a> {
 }
 
 /// TODO: @types Remove the Message -> Byte hack at some point...
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ParserTypeVariant {
     // Basic builtin
     Message,
@@ -644,7 +644,7 @@ impl ParserTypeVariant {
 /// linker/validator phase of the compilation process. These types may be
 /// (partially) inferred or represent literals (e.g. a integer whose bytesize is
 /// not yet determined).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParserType {
     pub this: ParserTypeId,
     pub pos: InputPosition,
@@ -656,7 +656,7 @@ pub struct ParserType {
 /// validation phase we will determine whether it refers to a user-defined type,
 /// or a polymorphic argument. After the validation phase it may still be the
 /// case that the resulting `variant` will not pass the typechecker.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SymbolicParserType {
     // Phase 1: parser
     pub identifier: NamespacedIdentifier,
@@ -669,7 +669,7 @@ pub struct SymbolicParserType {
 /// Specifies whether the symbolic type points to an actual user-defined type,
 /// or whether it points to a polymorphic argument within the definition (e.g.
 /// a defined variable `T var` within a function `int func<T>()`
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SymbolicParserTypeVariant {
     Definition(DefinitionId),
     // TODO: figure out if I need the DefinitionId here
@@ -678,7 +678,7 @@ pub enum SymbolicParserTypeVariant {
 
 /// ConcreteType is the representation of a type after resolving symbolic types
 /// and performing type inference
-#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConcreteTypePart {
     // Markers for the use of polymorphic types within a procedure's body that
     // refer to polymorphic variables on the procedure's definition. Different
@@ -703,7 +703,7 @@ pub enum ConcreteTypePart {
     Instance(DefinitionId, usize),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ConcreteType {
     pub(crate) parts: Vec<ConcreteTypePart>
 }
@@ -725,7 +725,7 @@ impl ConcreteType {
 }
 
 // TODO: Remove at some point
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrimitiveType {
     Unassigned,
     Input,
@@ -738,7 +738,7 @@ pub enum PrimitiveType {
     Long,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Type {
     pub primitive: PrimitiveType,
     pub array: bool,
@@ -806,7 +806,7 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Field {
     Length,
     Symbolic(FieldSymbolic),
@@ -827,7 +827,7 @@ impl Field {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FieldSymbolic {
     // Phase 1: Parser
     pub(crate) identifier: Identifier,
@@ -836,7 +836,7 @@ pub struct FieldSymbolic {
     pub(crate) field_idx: usize,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum Scope {
     Definition(DefinitionId),
     Regular(BlockStatementId),
@@ -882,7 +882,7 @@ impl VariableScope for Scope {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Variable {
     Parameter(Parameter),
     Local(Local),
@@ -932,7 +932,7 @@ impl SyntaxElement for Variable {
 
 /// TODO: Remove distinction between parameter/local and add an enum to indicate
 ///     the distinction between the two
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Parameter {
     pub this: ParameterId,
     // Phase 1: parser
@@ -947,7 +947,7 @@ impl SyntaxElement for Parameter {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Local {
     pub this: LocalId,
     // Phase 1: parser
@@ -963,7 +963,7 @@ impl SyntaxElement for Local {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Definition {
     Struct(StructDefinition),
     Enum(EnumDefinition),
@@ -1088,14 +1088,14 @@ impl VariableScope for Definition {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StructFieldDefinition {
     pub position: InputPosition,
     pub field: Identifier,
     pub parser_type: ParserTypeId,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StructDefinition {
     pub this: StructId,
     // Phase 1: parser
@@ -1105,20 +1105,20 @@ pub struct StructDefinition {
     pub fields: Vec<StructFieldDefinition>
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EnumVariantValue {
     None,
     Integer(i64),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EnumVariantDefinition {
     pub position: InputPosition,
     pub identifier: Identifier,
     pub value: EnumVariantValue,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EnumDefinition {
     pub this: EnumId,
     // Phase 1: parser
@@ -1128,20 +1128,20 @@ pub struct EnumDefinition {
     pub variants: Vec<EnumVariantDefinition>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum UnionVariantValue {
     None,
     Embedded(Vec<ParserTypeId>),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnionVariantDefinition {
     pub position: InputPosition,
     pub identifier: Identifier,
     pub value: UnionVariantValue,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnionDefinition {
     pub this: UnionId,
     // Phase 1: parser
@@ -1151,13 +1151,13 @@ pub struct UnionDefinition {
     pub variants: Vec<UnionVariantDefinition>,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum ComponentVariant {
     Primitive,
     Composite,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Component {
     pub this: ComponentId,
     // Phase 1: parser
@@ -1175,7 +1175,7 @@ impl SyntaxElement for Component {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub this: FunctionId,
     // Phase 1: parser
@@ -1193,7 +1193,7 @@ impl SyntaxElement for Function {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Statement {
     Block(BlockStatement),
     Local(LocalStatement),
@@ -1427,7 +1427,7 @@ impl SyntaxElement for Statement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockStatement {
     pub this: BlockStatementId,
     // Phase 1: parser
@@ -1490,7 +1490,7 @@ impl VariableScope for BlockStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LocalStatement {
     Memory(MemoryStatement),
     Channel(ChannelStatement),
@@ -1532,7 +1532,7 @@ impl SyntaxElement for LocalStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryStatement {
     pub this: MemoryStatementId,
     // Phase 1: parser
@@ -1553,7 +1553,7 @@ impl SyntaxElement for MemoryStatement {
 /// point of view of the component. So an output port is something that a
 /// component uses to send data over (i.e. it is the "input end" of the
 /// channel), and vice versa.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ChannelStatement {
     pub this: ChannelStatementId,
     // Phase 1: parser
@@ -1571,7 +1571,7 @@ impl SyntaxElement for ChannelStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SkipStatement {
     pub this: SkipStatementId,
     // Phase 1: parser
@@ -1586,7 +1586,7 @@ impl SyntaxElement for SkipStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LabeledStatement {
     pub this: LabeledStatementId,
     // Phase 1: parser
@@ -1604,7 +1604,7 @@ impl SyntaxElement for LabeledStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IfStatement {
     pub this: IfStatementId,
     // Phase 1: parser
@@ -1622,7 +1622,7 @@ impl SyntaxElement for IfStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
     // Phase 2: linker
@@ -1637,7 +1637,7 @@ impl SyntaxElement for EndIfStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WhileStatement {
     pub this: WhileStatementId,
     // Phase 1: parser
@@ -1655,7 +1655,7 @@ impl SyntaxElement for WhileStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
     // Phase 2: linker
@@ -1670,7 +1670,7 @@ impl SyntaxElement for EndWhileStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BreakStatement {
     pub this: BreakStatementId,
     // Phase 1: parser
@@ -1686,7 +1686,7 @@ impl SyntaxElement for BreakStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ContinueStatement {
     pub this: ContinueStatementId,
     // Phase 1: parser
@@ -1702,7 +1702,7 @@ impl SyntaxElement for ContinueStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SynchronousStatement {
     pub this: SynchronousStatementId,
     // Phase 1: parser
@@ -1736,7 +1736,7 @@ impl VariableScope for SynchronousStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EndSynchronousStatement {
     pub this: EndSynchronousStatementId,
     // Phase 2: linker
@@ -1751,7 +1751,7 @@ impl SyntaxElement for EndSynchronousStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub this: ReturnStatementId,
     // Phase 1: parser
@@ -1765,7 +1765,7 @@ impl SyntaxElement for ReturnStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AssertStatement {
     pub this: AssertStatementId,
     // Phase 1: parser
@@ -1781,7 +1781,7 @@ impl SyntaxElement for AssertStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GotoStatement {
     pub this: GotoStatementId,
     // Phase 1: parser
@@ -1797,7 +1797,7 @@ impl SyntaxElement for GotoStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NewStatement {
     pub this: NewStatementId,
     // Phase 1: parser
@@ -1813,7 +1813,7 @@ impl SyntaxElement for NewStatement {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExpressionStatement {
     pub this: ExpressionStatementId,
     // Phase 1: parser
@@ -1829,7 +1829,7 @@ impl SyntaxElement for ExpressionStatement {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ExpressionParent {
     None, // only set during initial parsing
     If(IfStatementId),
@@ -1841,7 +1841,7 @@ pub enum ExpressionParent {
     Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     Assignment(AssignmentExpression),
     Binding(BindingExpression),
@@ -2033,7 +2033,7 @@ impl SyntaxElement for Expression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AssignmentOperator {
     Set,
     Multiplied,
@@ -2048,7 +2048,7 @@ pub enum AssignmentOperator {
     BitwiseOred,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AssignmentExpression {
     pub this: AssignmentExpressionId,
     // Phase 1: parser
@@ -2068,7 +2068,7 @@ impl SyntaxElement for AssignmentExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BindingExpression {
     pub this: BindingExpressionId,
     // Phase 1: parser
@@ -2081,7 +2081,7 @@ pub struct BindingExpression {
     pub concrete_type: ConcreteType,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ConditionalExpression {
     pub this: ConditionalExpressionId,
     // Phase 1: parser
@@ -2101,7 +2101,7 @@ impl SyntaxElement for ConditionalExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOperator {
     Concatenate,
     LogicalOr,
@@ -2124,7 +2124,7 @@ pub enum BinaryOperator {
     Remainder,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BinaryExpression {
     pub this: BinaryExpressionId,
     // Phase 1: parser
@@ -2144,7 +2144,7 @@ impl SyntaxElement for BinaryExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOperation {
     Positive,
     Negative,
@@ -2156,7 +2156,7 @@ pub enum UnaryOperation {
     PostDecrement,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnaryExpression {
     pub this: UnaryExpressionId,
     // Phase 1: parser
@@ -2175,7 +2175,7 @@ impl SyntaxElement for UnaryExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexingExpression {
     pub this: IndexingExpressionId,
     // Phase 1: parser
@@ -2194,7 +2194,7 @@ impl SyntaxElement for IndexingExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SlicingExpression {
     pub this: SlicingExpressionId,
     // Phase 1: parser
@@ -2214,7 +2214,7 @@ impl SyntaxElement for SlicingExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SelectExpression {
     pub this: SelectExpressionId,
     // Phase 1: parser
@@ -2233,7 +2233,7 @@ impl SyntaxElement for SelectExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ArrayExpression {
     pub this: ArrayExpressionId,
     // Phase 1: parser
@@ -2255,7 +2255,7 @@ impl SyntaxElement for ArrayExpression {
 //  that accept embedded values (although the polymorphic arguments are placed
 //  differently). To prevent double work we parse as CallExpression, and during
 //  validation we may transform the expression into a union literal.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CallExpression {
     pub this: CallExpressionId,
     // Phase 1: parser
@@ -2275,7 +2275,7 @@ impl SyntaxElement for CallExpression {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Method {
     Get,
     Put,
@@ -2284,13 +2284,13 @@ pub enum Method {
     Symbolic(MethodSymbolic)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MethodSymbolic {
     pub(crate) identifier: NamespacedIdentifier,
     pub(crate) definition: Option<DefinitionId>
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiteralExpression {
     pub this: LiteralExpressionId,
     // Phase 1: parser
@@ -2311,7 +2311,7 @@ impl SyntaxElement for LiteralExpression {
 type LiteralCharacter = Vec<u8>;
 type LiteralInteger = i64; // TODO: @int_literal
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Null, // message
     True,
@@ -2357,7 +2357,7 @@ impl Literal {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiteralStructField {
     // Phase 1: parser
     pub(crate) identifier: Identifier,
@@ -2366,7 +2366,7 @@ pub struct LiteralStructField {
     pub(crate) field_idx: usize, // in struct definition
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiteralStruct {
     // Phase 1: parser
     pub(crate) identifier: NamespacedIdentifier,
@@ -2380,7 +2380,7 @@ pub struct LiteralStruct {
 //  accept embedded values. To prevent double work for now we parse as a 
 //  LiteralEnum, and during validation we may transform the expression into a 
 //  union literal.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiteralEnum {
     // Phase 1: parser
     pub(crate) identifier: NamespacedIdentifier,
@@ -2390,7 +2390,7 @@ pub struct LiteralEnum {
     pub(crate) variant_idx: usize, // as present in the type table
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiteralUnion {
     // Phase 1: parser
     pub(crate) identifier: NamespacedIdentifier,
@@ -2401,7 +2401,7 @@ pub struct LiteralUnion {
     pub(crate) variant_idx: usize, // as present in type table
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
