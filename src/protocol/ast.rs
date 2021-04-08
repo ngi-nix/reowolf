@@ -2073,7 +2073,7 @@ pub struct BindingExpression {
     pub this: BindingExpressionId,
     // Phase 1: parser
     pub position: InputPosition,
-    pub left: ExpressionId,
+    pub left: LiteralExpressionId,
     pub right: ExpressionId,
     // Phase 2: linker
     pub parent: ExpressionParent,

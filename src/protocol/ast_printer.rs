@@ -599,7 +599,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
                     .with_s_key("BindingExpr");
                 self.kv(indent2).with_s_key("LeftExpression");
-                self.write_expr(heap, expr.left, indent3);
+                self.write_expr(heap, expr.left.upcast(), indent3);
                 self.kv(indent2).with_s_key("RightExpression");
                 self.write_expr(heap, expr.right, indent3);
                 self.kv(indent2).with_s_key("Parent")

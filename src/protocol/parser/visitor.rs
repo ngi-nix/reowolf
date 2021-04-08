@@ -184,6 +184,10 @@ pub(crate) trait Visitor2 {
                 let this = expr.this;
                 self.visit_assignment_expr(ctx, this)
             },
+            Expression::Binding(expr) => {
+                let this = expr.this;
+                self.visit_binding_expr(ctx, this)
+            }
             Expression::Conditional(expr) => {
                 let this = expr.this;
                 self.visit_conditional_expr(ctx, this)
@@ -228,6 +232,7 @@ pub(crate) trait Visitor2 {
     }
 
     fn visit_assignment_expr(&mut self, _ctx: &mut Ctx, _id: AssignmentExpressionId) -> VisitorResult { Ok(()) }
+    fn visit_binding_expr(&mut self, _ctx: &mut Ctx, _id: BindingExpressionId) -> VisitorResult { Ok(()) }
     fn visit_conditional_expr(&mut self, _ctx: &mut Ctx, _id: ConditionalExpressionId) -> VisitorResult { Ok(()) }
     fn visit_binary_expr(&mut self, _ctx: &mut Ctx, _id: BinaryExpressionId) -> VisitorResult { Ok(()) }
     fn visit_unary_expr(&mut self, _ctx: &mut Ctx, _id: UnaryExpressionId) -> VisitorResult { Ok(()) }

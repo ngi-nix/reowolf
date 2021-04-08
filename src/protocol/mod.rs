@@ -3,7 +3,9 @@ mod arena;
 mod eval;
 pub(crate) mod inputsource;
 // mod lexer;
+mod tokenizer;
 mod parser;
+mod pools;
 #[cfg(test)] mod tests;
 
 // TODO: Remove when not benchmarking

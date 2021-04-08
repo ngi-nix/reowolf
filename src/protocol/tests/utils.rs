@@ -988,7 +988,7 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
         },
         Expression::Binding(expr) => {
             None
-            .or_else(|| seek_expr_in_expr(heap, expr.left, f))
+            .or_else(|| seek_expr_in_expr(heap, expr.left.upcast(), f))
             .or_else(|| seek_expr_in_expr(heap, expr.right, f))
         }
         Expression::Conditional(expr) => {

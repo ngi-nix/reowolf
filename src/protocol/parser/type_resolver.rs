@@ -1447,6 +1447,9 @@ impl TypeResolvingVisitor {
                 let id = expr.this;
                 self.progress_assignment_expr(ctx, id)
             },
+            Expression::Binding(expr) => {
+                unimplemented!("progress binding expression");
+            },
             Expression::Conditional(expr) => {
                 let id = expr.this;
                 self.progress_conditional_expr(ctx, id)

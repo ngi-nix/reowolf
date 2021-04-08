@@ -139,6 +139,13 @@ pub(crate) trait Visitor: Sized {
     ) -> VisitorResult {
         recursive_assignment_expression(self, h, expr)
     }
+    fn visit_binding_expression(
+        &mut self,
+        h: &mut Heap,
+        expr: BindingExpressionId
+    ) -> VisitorResult {
+        recursive_binding_expression(self, h, expr)
+    }
     fn visit_conditional_expression(
         &mut self,
         h: &mut Heap,
@@ -431,6 +438,7 @@ fn recursive_expression<T: Visitor>(
 ) -> VisitorResult {
     match h[expr].clone() {
         Expression::Assignment(expr) => this.visit_assignment_expression(h, expr.this),
+        Expression::Binding(expr) => this.visit_binding_expression(h, expr.this),
         Expression::Conditional(expr) => this.visit_conditional_expression(h, expr.this),
         Expression::Binary(expr) => this.visit_binary_expression(h, expr.this),
         Expression::Unary(expr) => this.visit_unary_expression(h, expr.this),
@@ -450,6 +458,15 @@ fn recursive_assignment_expression<T: Visitor>(
     expr: AssignmentExpressionId,
 ) -> VisitorResult {
     this.visit_expression(h, h[expr].left)?;
+    this.visit_expression(h, h[expr].right)
+}
+
+fn recursive_binding_expression<T: Visitor>(
+    this: &mut T,
+    h: &mut Heap,
+    expr: BindingExpressionId,
+) -> VisitorResult {
+    this.visit_expression(h, h[expr].left.upcast())?;
     this.visit_expression(h, h[expr].right)
 }
 
