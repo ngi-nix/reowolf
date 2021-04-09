@@ -2,16 +2,17 @@ mod arena;
 // mod ast;
 mod eval;
 pub(crate) mod inputsource;
+pub(crate) mod input_source2;
 // mod lexer;
 mod tokenizer;
 mod parser;
-mod pools;
 #[cfg(test)] mod tests;
 
 // TODO: Remove when not benchmarking
 pub(crate) mod ast;
 pub(crate) mod ast_printer;
 pub(crate) mod lexer;
+pub(crate) mod lexer2;
 
 lazy_static::lazy_static! {
     /// Conveniently-provided protocol description initialized with a zero-length PDL string.

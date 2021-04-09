@@ -4,6 +4,7 @@ mod macros;
 mod common;
 mod protocol;
 mod runtime;
+mod collections;
 
 pub use common::{ConnectorId, EndpointPolarity, Payload, Polarity, PortId};
 pub use protocol::{ProtocolDescription, TRIVIAL_PD};
