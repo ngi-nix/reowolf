@@ -757,7 +757,7 @@ impl<'a> ErrorTester<'a> {
             self.test_name, pattern, self.assert_postfix()
         );
         let pos = pos.unwrap();
-        let col = self.error.statements[idx].position.col();
+        let col = self.error.statements[idx].position.column;
         assert_eq!(
             pos + 1, col,
             "[{}] Expected error to occur at column {}, but found it at {} for {}",

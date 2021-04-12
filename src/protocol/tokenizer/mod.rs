@@ -1,15 +1,16 @@
 
 use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError, InputPosition2 as InputPosition, InputSpan};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TokenKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TokenKind {
     // Variable-character tokens, followed by a SpanEnd token
-    Ident,
-    Integer,
-    String,
-    Character,
-    LineComment,
-    BlockComment,
+    Ident,          // regular identifier
+    Pragma,         // identifier with prefixed `#`, range includes `#`
+    Integer,        // integer literal
+    String,         // string literal, range includes `"`
+    Character,      // character literal, range includes `'`
+    LineComment,    // line comment, range includes leading `//`, but not newline
+    BlockComment,   // block comment, range includes leading `/*` and trailing `*/`
     // Punctuation
     Exclamation,    // !
     Question,       // ?
@@ -65,9 +66,9 @@ enum TokenKind {
     SpanEnd,
 }
 
-struct Token {
-    kind: TokenKind,
-    pos: InputPosition, // probably need something different
+pub(crate) struct Token {
+    pub kind: TokenKind,
+    pub pos: InputPosition,
 }
 
 impl Token {
@@ -77,7 +78,7 @@ impl Token {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum TokenRangeKind {
+pub(crate) enum TokenRangeKind {
     Module,
     Pragma,
     Import,
@@ -85,25 +86,27 @@ enum TokenRangeKind {
     Code,
 }
 
+#[derive(Debug)]
 struct TokenRange {
     // Index of parent in `TokenBuffer.ranges`, does not have a parent if the 
     // range kind is Module, in that case the parent index points to itself.
     parent_idx: usize,
     range_kind: TokenRangeKind,
-    curly_depth: u8,
+    curly_depth: i32,
     start: usize,
     end: usize,
     subranges: usize,
 }
 
-struct TokenBuffer {
-    tokens: Vec<Token>,
-    ranges: Vec<TokenRange>,
+pub(crate) struct TokenBuffer {
+    pub tokens: Vec<Token>,
+    pub ranges: Vec<TokenRange>,
 }
 
-struct ParseState {
-    kind: TokenRangeKind,
-    start: usize,
+impl TokenBuffer {
+    pub(crate) fn new() -> Self {
+        Self{ tokens: Vec::new(), ranges: Vec::new() }
+    }
 }
 
 // Tokenizer is a reusable parser to tokenize multiple source files using the
@@ -112,13 +115,19 @@ struct ParseState {
 // defintion or an import before producing the entire AST.
 //
 // If the program is not well-formed then the tree may be inconsistent, but we
-// will detect this once we transform the tokens into the AST.
+// will detect this once we transform the tokens into the AST. Maybe we want to
+// detect a mismatch in opening/closing curly braces in the future?
 pub(crate) struct Tokenizer {
-    curly_depth: u8,
+    // Signed because programmer might have placed too many closing curly braces
+    curly_depth: i32,
+    // Points to an element in the `TokenBuffer.ranges` variable.
     stack_idx: usize,
 }
 
 impl Tokenizer {
+    pub(crate) fn new() -> Self {
+        Self{ curly_depth: 0, stack_idx: 0 }
+    }
     pub(crate) fn tokenize(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         // Assert source and buffer are at start
         debug_assert_eq!(source.pos().offset, 0);
@@ -129,7 +138,7 @@ impl Tokenizer {
         // This range may get transformed into the appropriate range kind later,
         // see `push_range` and `pop_range`.
         self.curly_depth = 0;
-        self.stack_idx = 1;
+        self.stack_idx = 0;
         target.ranges.push(TokenRange{
             parent_idx: 0,
             range_kind: TokenRangeKind::Module,
@@ -139,7 +148,7 @@ impl Tokenizer {
             subranges: 0,
         });
 
-        // Main processing loop
+        // Main tokenization loop
         while let Some(c) = source.next() {
             let token_index = target.tokens.len();
 
@@ -157,15 +166,23 @@ impl Tokenizer {
                 }
             } else if is_integer_literal_start(c) {
                 self.consume_number(source, target)?;
-            } else if is_pragma_start(c) {
-                self.consume_pragma(c, source, target);
-                self.push_range(target, TokenRangeKind::Pragma, token_index);
+            } else if is_pragma_start_or_pound(c) {
+                let was_pragma = self.consume_pragma_or_pound(c, source, target)?;
+                if was_pragma {
+                    self.push_range(target, TokenRangeKind::Pragma, token_index);
+                }
             } else if self.is_line_comment_start(c, source) {
                 self.consume_line_comment(source, target)?;
             } else if self.is_block_comment_start(c, source) {
                 self.consume_block_comment(source, target)?;
             } else if is_whitespace(c) {
                 let contained_newline = self.consume_whitespace(source);
+                if contained_newline {
+                    let range = &target.ranges[self.stack_idx];
+                    if range.range_kind == TokenRangeKind::Pragma {
+                        self.pop_range(target, target.tokens.len());
+                    }
+                }
             } else {
                 let was_punctuation = self.maybe_parse_punctuation(c, source, target)?;
                 if let Some(token) = was_punctuation {
@@ -194,6 +211,10 @@ impl Tokenizer {
         }
 
         // End of file, check if our state is correct
+        if let Some(error) = source.had_error.take() {
+            return Err(error);
+        }
+
         Ok(())
     }
 
@@ -205,7 +226,7 @@ impl Tokenizer {
         return first_char == b'/' && Some(b'*') == source.lookahead(1);
     }
 
-    pub(crate) fn maybe_parse_punctuation(&mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer) -> Result<Option<TokenKind>, ParseError> {
+    fn maybe_parse_punctuation(&mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer) -> Result<Option<TokenKind>, ParseError> {
         debug_assert!(first_char != b'#', "'#' needs special handling");
         debug_assert!(first_char != b'\'', "'\'' needs special handling");
         debug_assert!(first_char != b'"', "'\"' needs special handling");
@@ -394,7 +415,7 @@ impl Tokenizer {
         Ok(Some(token_kind))
     }
 
-    pub(crate) fn consume_char_literal(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
+    fn consume_char_literal(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         let begin_pos = source.pos();
 
         // Consume the leading quote
@@ -403,7 +424,12 @@ impl Tokenizer {
 
         let mut prev_char = b'\'';
         while let Some(c) = source.next() {
+            if !c.is_ascii() {
+                return Err(ParseError::new_error(source, source.pos(), "non-ASCII character in char literal"));
+            }
             source.consume();
+            
+            // Make sure ending quote was not escaped
             if c == b'\'' && prev_char != b'\\' {
                 prev_char = c;
                 break;
@@ -413,7 +439,7 @@ impl Tokenizer {
         }
 
         if prev_char != b'\'' {
-            // Unterminated character literal
+            // Unterminated character literal, reached end of file.
             return Err(ParseError::new_error(source, begin_pos, "encountered unterminated character literal"));
         }
 
@@ -425,7 +451,7 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub(crate) fn consume_string_literal(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
+    fn consume_string_literal(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         let begin_pos = source.pos();
 
         // Consume the leading double quotes
@@ -434,6 +460,10 @@ impl Tokenizer {
 
         let mut prev_char = b'"';
         while let Some(c) = source.next() {
+            if !c.is_ascii() {
+                return Err(ParseError::new_error(source, source.pos(), "non-ASCII character in string literal"));
+            }
+
             source.consume();
             if c == b'"' && prev_char != b'\\' {
                 prev_char = c;
@@ -455,15 +485,36 @@ impl Tokenizer {
         Ok(())
     }
 
-    fn consume_pragma(&mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer) {
-        let pos = source.pos();
+    fn consume_pragma_or_pound(&mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer) -> Result<bool, ParseError> {
+        let start_pos = source.pos();
         debug_assert_eq!(first_char, b'#');
         source.consume();
 
-        target.tokens.push(Token::new(TokenKind::Pound, pos));
+        let next = source.next();
+        if next.is_none() || !is_identifier_start(next.unwrap()) {
+            // Just a pound sign
+            target.tokens.push(Token::new(TokenKind::Pound, start_pos));
+            Ok(false)
+        } else {
+            // Pound sign followed by identifier
+            source.consume();
+            while let Some(c) = source.next() {
+                if !is_identifier_remaining(c) {
+                    break;
+                }
+                source.consume();
+            }
+
+            self.check_ascii(source)?;
+
+            let end_pos = source.pos();
+            target.tokens.push(Token::new(TokenKind::Pragma, start_pos));
+            target.tokens.push(Token::new(TokenKind::SpanEnd, end_pos));
+            Ok(true)
+        }
     }
 
-    pub(crate) fn consume_line_comment(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
+    fn consume_line_comment(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         let begin_pos = source.pos();
 
         // Consume the leading "//"
@@ -474,13 +525,15 @@ impl Tokenizer {
         let mut prev_char = b'/';
         let mut cur_char = b'/';
         while let Some(c) = source.next() {
-            source.consume();
+            prev_char = cur_char;
             cur_char = c;
+
             if c == b'\n' {
-                // End of line
+                // End of line, note that the newline is not consumed
                 break;
             }
-            prev_char = c;
+
+            source.consume();
         }
 
         let mut end_pos = source.pos();
@@ -493,7 +546,10 @@ impl Tokenizer {
             } else {
                 end_pos.offset -= 1;
             }
+            // Consume final newline
+            source.consume();
         } else {
+            // End of comment was due to EOF
             debug_assert!(source.next().is_none())
         }
 
@@ -503,7 +559,7 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub(crate) fn consume_block_comment(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
+    fn consume_block_comment(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         let begin_pos = source.pos();
 
         // Consume the leading "/*"
@@ -536,7 +592,7 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub(crate) fn consume_identifier<'a>(&mut self, source: &'a mut InputSource, target: &mut TokenBuffer) -> Result<&'a [u8], ParseError> {
+    fn consume_identifier<'a>(&mut self, source: &'a mut InputSource, target: &mut TokenBuffer) -> Result<&'a [u8], ParseError> {
         let begin_pos = source.pos();
         debug_assert!(is_identifier_start(source.next().unwrap()));
         source.consume();
@@ -557,7 +613,7 @@ impl Tokenizer {
         Ok(source.section(begin_pos.offset, end_pos.offset))
     }
 
-    pub(crate) fn consume_number(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
+    fn consume_number(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         let begin_pos = source.pos();
         debug_assert!(is_integer_literal_start(source.next().unwrap()));
         source.consume();
@@ -593,29 +649,46 @@ impl Tokenizer {
             if c == b'\n' {
                 has_newline = true;
             }
+            source.consume();
         }
 
         has_newline
     }
 
     /// Pushes a new token range onto the stack in the buffers.
-    fn push_range(&self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: usize) {
-        let cur_range = &target.ranges[self.stack_idx];
-        let parent_idx = cur_range.parent_idx;
-        let parent_range = &target.ranges[parent_idx];
-        if parent_range.end != first_token {
-            // Insert intermediate range
+    fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: usize) {
+        let cur_range = &mut target.ranges[self.stack_idx];
+
+        println!(
+            "DEBUG: push_range [1] | stack_idx: {}, range_end: {}, first_token: {}", 
+            self.stack_idx, cur_range.end, first_token
+        );
+
+        // If we have just popped a range and then push a new range, then the
+        // first token is equal to the last token registered on the current 
+        // range. If not, then we had some intermediate tokens that did not 
+        // belong to a particular kind of token range: hence we insert an 
+        // intermediate "code" range.
+        if cur_range.end != first_token {
+            println!("DEBUG: push_range [2] | inserting code range");
+            let code_start = cur_range.end;
+            cur_range.end = first_token;
+            cur_range.subranges += 1;
             target.ranges.push(TokenRange{
-                parent_idx,
+                parent_idx: self.stack_idx,
                 range_kind: TokenRangeKind::Code,
-                curly_depth: cur_range.curly_depth,
-                start: parent_range.end,
+                curly_depth: self.curly_depth,
+                start: code_start,
                 end: first_token,
                 subranges: 0,
             });
         }
 
         // Insert a new range
+        println!(
+            "DEBUG: push_range [3] | kind: {:?}, parent_idx: {}, stack_idx: {}", 
+            range_kind, self.stack_idx, target.ranges.len()
+        );
         let parent_idx = self.stack_idx;
         self.stack_idx = target.ranges.len();
         target.ranges.push(TokenRange{
@@ -628,16 +701,26 @@ impl Tokenizer {
         });
     }
 
-    fn pop_range(&self, target: &mut TokenBuffer, end_index: usize) {
-        // Pop all the dummy ranges that are left on the range stack
+    fn pop_range(&mut self, target: &mut TokenBuffer, end_index: usize) {
         let last = &mut target.ranges[self.stack_idx];
         debug_assert!(self.stack_idx != last.parent_idx, "attempting to pop top-level range");
 
+        // Fix up the current range before going back to parent
+        println!(
+            "DEBUG: pop_range  [1] | stack_idx: {}, kind: {:?}, start: {}, old_end: {}, new_end: {}",
+            self.stack_idx, last.range_kind, last.start, last.end, end_index
+        );
         last.end = end_index;
-        self.stack_idx = last.parent_idx as usize;
+        
+        // Go back to parent
+        self.stack_idx = last.parent_idx;
         let parent = &mut target.ranges[self.stack_idx];
         parent.end = end_index;
         parent.subranges += 1;
+        println!(
+            "DEBUG: pop_range  [2] | returning to kind: {:?}, idx: {}, new_end: {}",
+            parent.range_kind, self.stack_idx, end_index
+        );
     }
 
 
@@ -680,7 +763,7 @@ fn is_string_literal_start(c: u8) -> bool {
     return c == b'"';
 }
 
-fn is_pragma_start(c: u8) -> bool {
+fn is_pragma_start_or_pound(c: u8) -> bool {
     return c == b'#';
 }
 
@@ -708,4 +791,78 @@ fn maybe_number_remaining(c: u8) -> bool {
         (c == b'b' || c == b'B' || c == b'o' || c == b'O' || c == b'x' || c == b'X') ||
         (c >= b'0' && c <= b'9') ||
         c == b'_';
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TODO: Remove at some point
+    #[test]
+    fn test_tokenizer() {
+        let mut source = InputSource::new_test("
+        
+        #version 500
+        # hello 2
+
+        import std.reo::*;
+
+        struct Thing {
+            int a: 5,
+        }
+        enum Hello {
+            A,
+            B
+        }
+
+        // Hello hello, is it me you are looking for?
+        // I can seee it in your eeeyes
+
+        func something(int a, int b, int c) -> byte {
+            int a = 5;
+            struct Inner {
+                int a
+            }
+            struct City {
+                int b
+            }
+            /* Waza
+            How are you doing
+            Things in here yo
+            /* */ */
+
+            a = a + 5 * 2;
+            struct Pressure {
+                int d
+            }
+        }
+        ");
+        let mut t = Tokenizer::new();
+        let mut buffer = TokenBuffer::new();
+        t.tokenize(&mut source, &mut buffer).expect("tokenize");
+
+        println!("Ranges:\n");
+        for (idx, range) in buffer.ranges.iter().enumerate() {
+            println!("[{}] {:?}", idx, range)
+        }
+
+        println!("Tokens:\n");
+        let mut iter = buffer.tokens.iter().enumerate();
+        while let Some((idx, token)) = iter.next() {
+            match token.kind {
+                TokenKind::Ident | TokenKind::Pragma | TokenKind::Integer |
+                TokenKind::String | TokenKind::Character | TokenKind::LineComment |
+                TokenKind::BlockComment => {
+                    let (_, end) = iter.next().unwrap();
+                    println!("[{}] {:?} ......", idx, token.kind);
+                    assert_eq!(end.kind, TokenKind::SpanEnd);
+                    let text = source.section(token.pos.offset, end.pos.offset);
+                    println!("{}", String::from_utf8_lossy(text));
+                },
+                _ => {
+                    println!("[{}] {:?}", idx, token.kind);
+                }
+            }
+        }
+    }
 }

@@ -28,7 +28,7 @@ pub struct InputSource2 {
     line: u32,
     offset: usize,
     // State tracking
-    had_error: Option<ParseError>,
+    pub(crate) had_error: Option<ParseError>,
     // The offset_lookup is built on-demand upon attempting to report an error.
     // As the compiler is currently not multithreaded, we simply put it in a 
     // RefCell to allow interior mutability.
@@ -45,6 +45,12 @@ impl InputSource2 {
             had_error: None,
             offset_lookup: RefCell::new(Vec::new()),
         }
+    }
+
+    #[cfg(test)]
+    pub fn new_test(input: &str) -> Self {
+        let bytes = Vec::from(input.as_bytes());
+        return Self::new(String::from("test"), bytes)
     }
 
     #[inline]
@@ -120,7 +126,7 @@ impl InputSource2 {
         // Build the line number (!) to offset lookup, so offset by 1. We 
         // assume the entire source file is scanned (most common case) for
         // preallocation.
-        let lookup = self.offset_lookup.borrow_mut();
+        let mut lookup = self.offset_lookup.borrow_mut();
         lookup.reserve(self.line as usize + 2);
         lookup.push(0); // line 0: never used
         lookup.push(0); // first line: first character

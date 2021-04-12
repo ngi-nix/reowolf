@@ -146,9 +146,9 @@ impl fmt::Display for InputSource {
 
 #[derive(Debug, Clone, Copy)]
 pub struct InputPosition {
-    line: usize,
-    column: usize,
-    pub(crate) offset: usize,
+    pub line: usize,
+    pub column: usize,
+    pub offset: usize,
 }
 
 impl InputPosition {
