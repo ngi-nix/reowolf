@@ -6,7 +6,9 @@ use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Index, IndexMut};
 
 use super::arena::{Arena, Id};
+use crate::collections::StringRef;
 use crate::protocol::inputsource::*;
+use crate::protocol::input_source2::{InputPosition2, InputSpan};
 
 /// Global limits to the AST, should be checked by lexer and parser. Some are
 /// arbitrary
@@ -238,7 +240,7 @@ impl Index<ChannelStatementId> for Heap {
 pub struct Root {
     pub this: RootId,
     // Phase 1: parser
-    pub position: InputPosition,
+    // pub position: InputPosition,
     pub pragmas: Vec<PragmaId>,
     pub imports: Vec<ImportId>,
     pub definitions: Vec<DefinitionId>,
@@ -264,14 +266,23 @@ impl SyntaxElement for Root {
 #[derive(Debug, Clone)]
 pub enum Pragma {
     Version(PragmaVersion),
-    Module(PragmaModule)
+    Module(PragmaModule),
+}
+
+impl Pragma {
+    pub(crate) fn as_module(&self) -> &PragmaModule {
+        match self {
+            Pragma::Module(pragma) => pragma,
+            _ => unreachable!("Tried to obtain {:?} as PragmaModule", self),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct PragmaVersion {
     pub this: PragmaId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of full pragma
     pub version: u64,
 }
 
@@ -279,22 +290,8 @@ pub struct PragmaVersion {
 pub struct PragmaModule {
     pub this: PragmaId,
     // Phase 1: parser
-    pub position: InputPosition,
-    pub value: Vec<u8>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PragmaOld {
-    pub this: PragmaId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub value: Vec<u8>,
-}
-
-impl SyntaxElement for PragmaOld {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
+    pub span: InputSpan, // of full pragma
+    pub value: Identifier,
 }
 
 #[derive(Debug, Clone)]
@@ -365,8 +362,8 @@ pub struct ImportSymbols {
 
 #[derive(Debug, Clone)]
 pub struct Identifier {
-    pub position: InputPosition,
-    pub value: Vec<u8>
+    pub span: InputSpan,
+    pub value: StringRef,
 }
 
 impl PartialEq for Identifier {

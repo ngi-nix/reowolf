@@ -1,7 +1,19 @@
+use crate::protocol::input_source2::{
+    InputSource2 as InputSource,
+    ParseError,
+    InputPosition2 as InputPosition,
+    InputSpan
+};
 
-use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError, InputPosition2 as InputPosition, InputSpan};
+pub(crate) const KW_STRUCT:    &'static [u8] = b"struct";
+pub(crate) const KW_ENUM:      &'static [u8] = b"enum";
+pub(crate) const KW_UNION:     &'static [u8] = b"union";
+pub(crate) const KW_FUNCTION:  &'static [u8] = b"func";
+pub(crate) const KW_PRIMITIVE: &'static [u8] = b"primitive";
+pub(crate) const KW_COMPOSITE: &'static [u8] = b"composite";
+pub(crate) const KW_IMPORT:    &'static [u8] = b"import";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum TokenKind {
     // Variable-character tokens, followed by a SpanEnd token
     Ident,          // regular identifier
@@ -11,7 +23,7 @@ pub(crate) enum TokenKind {
     Character,      // character literal, range includes `'`
     LineComment,    // line comment, range includes leading `//`, but not newline
     BlockComment,   // block comment, range includes leading `/*` and trailing `*/`
-    // Punctuation
+    // Punctuation (single character)
     Exclamation,    // !
     Question,       // ?
     Pound,          // #
@@ -24,46 +36,66 @@ pub(crate) enum TokenKind {
     CloseParen,     // )
     CloseSquare,    // ]
     Colon,          // :
-    ColonColon,     // ::
     Comma,          // ,
     Dot,            // .
-    DotDot,         // ..
     SemiColon,      // ;
     Quote,          // '
     DoubleQuote,    // "
-    // Operator-like
+    // Operator-like (single character)
     At,             // @
     Plus,           // +
-    PlusPlus,       // ++
-    PlusEquals,     // +=
     Minus,          // -
-    ArrowRight,     // ->
-    MinusMinus,     // --
-    MinusEquals,    // -=
     Star,           // *
-    StarEquals,     // *=
     Slash,          // /
-    SlashEquals,    // /=
     Percent,        // %
-    PercentEquals,  // %=
     Caret,          // ^
-    CaretEquals,    // ^=
     And,            // &
-    AndAnd,         // &&
-    AndEquals,      // &=
     Or,             // |
-    OrOr,           // ||
-    OrEquals,       // |=
     Tilde,          // ~
     Equal,          // =
+    // Punctuation (two characters)
+    ColonColon,     // ::
+    DotDot,         // ..
+    ArrowRight,     // ->
+    // Operator-like (two characters)
+    PlusPlus,       // ++
+    PlusEquals,     // +=
+    MinusMinus,     // --
+    MinusEquals,    // -=
+    StarEquals,     // *=
+    SlashEquals,    // /=
+    PercentEquals,  // %=
+    CaretEquals,    // ^=
+    AndAnd,         // &&
+    AndEquals,      // &=
+    OrOr,           // ||
+    OrEquals,       // |=
     EqualEqual,     // ==
     NotEqual,       // !=
     ShiftLeft,      // <<
-    ShiftLeftEquals,// <<=
     ShiftRight,     // >>
+    // Operator-like (three characters)
+    ShiftLeftEquals,// <<=
     ShiftRightEquals, // >>=
     // Special marker token to indicate end of variable-character tokens
     SpanEnd,
+}
+
+impl TokenKind {
+    fn has_span_end(&self) -> bool {
+        return *self <= TokenKind::BlockComment
+    }
+
+    fn num_characters(&self) -> u32 {
+        debug_assert!(!self.has_span_end() && *self != TokenKind::SpanEnd);
+        if *self <= TokenKind::Equal {
+            1
+        } else if *self <= TokenKind::ShiftRight {
+            2
+        } else {
+            3
+        }
+    }
 }
 
 pub(crate) struct Token {
@@ -86,16 +118,18 @@ pub(crate) enum TokenRangeKind {
     Code,
 }
 
+/// TODO: Add first_child and next_sibling indices for slightly faster traversal
 #[derive(Debug)]
-struct TokenRange {
+pub(crate) struct TokenRange {
     // Index of parent in `TokenBuffer.ranges`, does not have a parent if the 
     // range kind is Module, in that case the parent index points to itself.
-    parent_idx: usize,
-    range_kind: TokenRangeKind,
-    curly_depth: i32,
-    start: usize,
-    end: usize,
-    subranges: usize,
+    pub parent_idx: usize,
+    pub range_kind: TokenRangeKind,
+    pub curly_depth: u32,
+    // InputPosition offset is limited to u32, so token ranges can be as well.
+    pub start: u32,
+    pub end: u32,
+    pub subranges: u32,
 }
 
 pub(crate) struct TokenBuffer {
@@ -107,26 +141,126 @@ impl TokenBuffer {
     pub(crate) fn new() -> Self {
         Self{ tokens: Vec::new(), ranges: Vec::new() }
     }
+
+    pub(crate) fn iter_range<'a>(&'a self, range: &TokenRange) -> TokenIter<'a> {
+        TokenIter::new(self, range.start as usize, range.end as usize)
+    }
+
+    pub(crate) fn start_pos(&self, range: &TokenRange) -> InputPosition {
+        self.tokens[range.start].pos
+    }
+
+    pub(crate) fn end_pos(&self, range: &TokenRange) -> InputPosition {
+        let last_token = &self.tokens[range.end - 1];
+        if last_token.kind == TokenKind::SpanEnd {
+            return last_token.pos
+        } else {
+            debug_assert!(!last_token.kind.has_span_end());
+            return last_token.pos.with_offset(last_token.kind.num_characters());
+        }
+    }
 }
 
-// Tokenizer is a reusable parser to tokenize multiple source files using the
-// same allocated buffers. In a well-formed program, we produce a consistent
-// tree of token ranges such that we may identify tokens that represent a 
-// defintion or an import before producing the entire AST.
-//
-// If the program is not well-formed then the tree may be inconsistent, but we
-// will detect this once we transform the tokens into the AST. Maybe we want to
-// detect a mismatch in opening/closing curly braces in the future?
+pub(crate) struct TokenIter<'a> {
+    tokens: &'a Vec<Token>,
+    cur: usize,
+    end: usize,
+}
+
+impl<'a> TokenIter<'a> {
+    fn new(buffer: &'a TokenBuffer, start: usize, end: usize) -> Self {
+        Self{ tokens: &buffer.tokens, cur: start, end }
+    }
+
+    /// Returns the next token (may include comments), or `None` if at the end
+    /// of the range.
+    pub(crate) fn next_including_comments(&self) -> Option<TokenKind> {
+        if self.cur >= self.end {
+            return None;
+        }
+
+        let token = &self.tokens[self.cur];
+        Some(token.kind)
+    }
+
+    /// Returns the next token (but skips over comments), or `None` if at the
+    /// end of the range
+    pub(crate) fn next(&mut self) -> Option<TokenKind> {
+        while let Some(token_kind) = self.next() {
+            if token_kind != TokenKind::LineComment && token_kind != TokenKind::BlockComment {
+                return Some(token_kind);
+            }
+            self.consume();
+        }
+
+        return None
+    }
+
+    /// Returns the start position belonging to the token returned by `next`. If
+    /// there is not a next token, then we return the end position of the
+    /// previous token.
+    pub(crate) fn last_valid_pos(&self) -> InputPosition {
+        if self.cur < self.end {
+            // Return token position
+            return self.tokens[self.cur].pos
+        }
+
+        // Return previous token end
+        let token = &self.tokens[self.cur - 1];
+        return if token.kind == TokenKind::SpanEnd {
+            token.pos
+        } else {
+            token.pos.with_offset(token.kind.num_characters());
+        };
+    }
+
+    /// Returns the token range belonging to the token returned by `next`. This
+    /// assumes that we're not at the end of the range we're iterating over.
+    pub(crate) fn next_range(&self) -> (InputPosition, InputPosition) {
+        debug_assert!(self.cur < self.end);
+        let token = &self.tokens[self.cur];
+        if token.kind.has_span_end() {
+            let span_end = &self.tokens[self.cur + 1];
+            debug_assert_eq!(span_end.kind, TokenKind::SpanEnd);
+            (token.pos, span_end.pos)
+        } else {
+            let offset = token.kind.num_characters();
+            (token.pos, token.pos.with_offset(offset))
+        }
+    }
+
+    pub(crate) fn consume(&mut self) {
+        if let Some(kind) = self.next() {
+            if kind.has_span_end() {
+                self.cur += 2;
+            } else {
+                self.cur += 1;
+            }
+        }
+    }
+}
+
+/// Tokenizer is a reusable parser to tokenize multiple source files using the
+/// same allocated buffers. In a well-formed program, we produce a consistent
+/// tree of token ranges such that we may identify tokens that represent a
+/// defintion or an import before producing the entire AST.
+///
+/// If the program is not well-formed then the tree may be inconsistent, but we
+/// will detect this once we transform the tokens into the AST. To ensure a
+/// consistent AST-producing phase we will require the import to have balanced
+/// curly braces
 pub(crate) struct Tokenizer {
-    // Signed because programmer might have placed too many closing curly braces
-    curly_depth: i32,
+    // Stack of input positions of opening curly braces, used to detect
+    // unmatched opening braces, unmatched closing braces are detected
+    // immediately.
+    curly_stack: Vec<InputPosition>,
     // Points to an element in the `TokenBuffer.ranges` variable.
     stack_idx: usize,
 }
 
 impl Tokenizer {
     pub(crate) fn new() -> Self {
-        Self{ curly_depth: 0, stack_idx: 0 }
+        Self{ curly_stack: Vec::with_capacity(32), stack_idx: 0 }
     }
     pub(crate) fn tokenize(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         // Assert source and buffer are at start
@@ -150,7 +284,7 @@ impl Tokenizer {
 
         // Main tokenization loop
         while let Some(c) = source.next() {
-            let token_index = target.tokens.len();
+            let token_index = target.tokens.len() as u32;
 
             if is_char_literal_start(c) {
                 self.consume_char_literal(source, target)?;
@@ -180,28 +314,37 @@ impl Tokenizer {
                 if contained_newline {
                     let range = &target.ranges[self.stack_idx];
                     if range.range_kind == TokenRangeKind::Pragma {
-                        self.pop_range(target, target.tokens.len());
+                        self.pop_range(target, target.tokens.len() as u32);
                     }
                 }
             } else {
                 let was_punctuation = self.maybe_parse_punctuation(c, source, target)?;
-                if let Some(token) = was_punctuation {
+                if let Some((token, token_pos)) = was_punctuation {
                     if token == TokenKind::OpenCurly {
-                        self.curly_depth += 1;
+                        self.curly_stack.push(token_pos);
                     } else if token == TokenKind::CloseCurly {
                         // Check if this marks the end of a range we're 
                         // currently processing
-                        self.curly_depth -= 1;
+                        if self.curly_stack.is_empty() {
+                            return Err(ParseError::new_error(
+                                source, token_pos, "unmatched closing curly brace '}'"
+                            ));
+                        }
+
+                        self.curly_stack.pop();
 
                         let range = &target.ranges[self.stack_idx];
                         if range.range_kind == TokenRangeKind::Definition && range.curly_depth == self.curly_depth {
-                            self.pop_range(target, target.tokens.len());
+                            self.pop_range(target, target.tokens.len() as u32);
                         }
+
+                        // Exit early if we have more closing curly braces than
+                        // opening curly braces
                     } else if token == TokenKind::SemiColon {
                         // Check if this marks the end of an import
                         let range = &target.ranges[self.stack_idx];
                         if range.range_kind == TokenRangeKind::Import {
-                            self.pop_range(target, target.tokens.len());
+                            self.pop_range(target, target.tokens.len() as u32);
                         }
                     }
                 } else {
@@ -215,6 +358,15 @@ impl Tokenizer {
             return Err(error);
         }
 
+        if !self.curly_stack.is_empty() {
+            // Let's not add a lot of heuristics and just tell the programmer
+            // that something is wrong
+            let last_unmatched_open = self.curly_stack.pop().unwrap();
+            return Err(ParseError::new_error(
+                source, last_unmatched_open, "unmatched opening curly brace '{'"
+            ));
+        }
+
         Ok(())
     }
 
@@ -226,7 +378,9 @@ impl Tokenizer {
         return first_char == b'/' && Some(b'*') == source.lookahead(1);
     }
 
-    fn maybe_parse_punctuation(&mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer) -> Result<Option<TokenKind>, ParseError> {
+    fn maybe_parse_punctuation(
+        &mut self, first_char: u8, source: &mut InputSource, target: &mut TokenBuffer
+    ) -> Result<Option<(TokenKind, InputPosition)>, ParseError> {
         debug_assert!(first_char != b'#', "'#' needs special handling");
         debug_assert!(first_char != b'\'', "'\'' needs special handling");
         debug_assert!(first_char != b'"', "'\"' needs special handling");
@@ -412,7 +566,7 @@ impl Tokenizer {
         }
 
         target.tokens.push(Token::new(token_kind, pos));
-        Ok(Some(token_kind))
+        Ok(Some((token_kind, pos)))
     }
 
     fn consume_char_literal(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
@@ -610,7 +764,7 @@ impl Tokenizer {
         let end_pos = source.pos();
         target.tokens.push(Token::new(TokenKind::Ident, begin_pos));
         target.tokens.push(Token::new(TokenKind::SpanEnd, end_pos));
-        Ok(source.section(begin_pos.offset, end_pos.offset))
+        Ok(source.section(begin_pos, end_pos))
     }
 
     fn consume_number(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
@@ -656,13 +810,8 @@ impl Tokenizer {
     }
 
     /// Pushes a new token range onto the stack in the buffers.
-    fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: usize) {
+    fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: u32) {
         let cur_range = &mut target.ranges[self.stack_idx];
-
-        println!(
-            "DEBUG: push_range [1] | stack_idx: {}, range_end: {}, first_token: {}", 
-            self.stack_idx, cur_range.end, first_token
-        );
 
         // If we have just popped a range and then push a new range, then the
         // first token is equal to the last token registered on the current 
@@ -670,9 +819,9 @@ impl Tokenizer {
         // belong to a particular kind of token range: hence we insert an 
         // intermediate "code" range.
         if cur_range.end != first_token {
-            println!("DEBUG: push_range [2] | inserting code range");
             let code_start = cur_range.end;
             cur_range.end = first_token;
+            debug_assert_ne!(code_start, first_token);
             cur_range.subranges += 1;
             target.ranges.push(TokenRange{
                 parent_idx: self.stack_idx,
@@ -685,10 +834,6 @@ impl Tokenizer {
         }
 
         // Insert a new range
-        println!(
-            "DEBUG: push_range [3] | kind: {:?}, parent_idx: {}, stack_idx: {}", 
-            range_kind, self.stack_idx, target.ranges.len()
-        );
         let parent_idx = self.stack_idx;
         self.stack_idx = target.ranges.len();
         target.ranges.push(TokenRange{
@@ -701,26 +846,19 @@ impl Tokenizer {
         });
     }
 
-    fn pop_range(&mut self, target: &mut TokenBuffer, end_index: usize) {
+    fn pop_range(&mut self, target: &mut TokenBuffer, end_index: u32) {
         let last = &mut target.ranges[self.stack_idx];
         debug_assert!(self.stack_idx != last.parent_idx, "attempting to pop top-level range");
 
         // Fix up the current range before going back to parent
-        println!(
-            "DEBUG: pop_range  [1] | stack_idx: {}, kind: {:?}, start: {}, old_end: {}, new_end: {}",
-            self.stack_idx, last.range_kind, last.start, last.end, end_index
-        );
         last.end = end_index;
+        debug_assert_ne!(last.start, end_index);
         
         // Go back to parent
         self.stack_idx = last.parent_idx;
         let parent = &mut target.ranges[self.stack_idx];
         parent.end = end_index;
         parent.subranges += 1;
-        println!(
-            "DEBUG: pop_range  [2] | returning to kind: {:?}, idx: {}, new_end: {}",
-            parent.range_kind, self.stack_idx, end_index
-        );
     }
 
 
@@ -739,16 +877,16 @@ impl Tokenizer {
 // Helpers for characters
 fn demarks_definition(ident: &[u8]) -> bool {
     return
-        ident == b"struct" ||
-        ident == b"enum" ||
-        ident == b"union" ||
-        ident == b"func" ||
-        ident == b"primitive" ||
-        ident == b"composite"
+        ident == KW_STRUCT ||
+        ident == KW_ENUM ||
+        ident == KW_UNION ||
+        ident == KW_FUNCTION ||
+        ident == KW_PRIMITIVE ||
+        ident == KW_COMPOSITE
 }
 
 fn demarks_import(ident: &[u8]) -> bool {
-    return ident == b"import";
+    return ident == KW_IMPORT;
 }
 
 fn is_whitespace(c: u8) -> bool {
@@ -856,7 +994,7 @@ mod tests {
                     let (_, end) = iter.next().unwrap();
                     println!("[{}] {:?} ......", idx, token.kind);
                     assert_eq!(end.kind, TokenKind::SpanEnd);
-                    let text = source.section(token.pos.offset, end.pos.offset);
+                    let text = source.section(token.pos, end.pos);
                     println!("{}", String::from_utf8_lossy(text));
                 },
                 _ => {

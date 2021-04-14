@@ -1,5 +1,6 @@
 mod depth_visitor;
 pub(crate) mod symbol_table;
+pub(crate) mod symbol_table2;
 pub(crate) mod type_table;
 mod type_resolver;
 mod visitor;

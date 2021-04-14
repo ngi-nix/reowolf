@@ -1,7 +1,10 @@
 use std::ptr::null_mut;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 const SLAB_SIZE: usize = u16::max_value() as usize;
 
+#[derive(Clone)]
 pub struct StringRef {
     data: *const u8,
     length: usize,
@@ -12,6 +15,22 @@ impl StringRef {
         unsafe {
             let slice = std::slice::from_raw_parts::<'a, u8>(self.data, self.length);
             std::str::from_utf8_unchecked(slice)
+        }
+    }
+}
+
+impl PartialEq for StringRef {
+    fn eq(&self, other: &StringRef) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for StringRef {}
+
+impl Hash for StringRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe{
+            state.write(std::slice::from_raw_parts(self.data, self.length));
         }
     }
 }
@@ -60,7 +79,7 @@ impl StringPool {
             last = unsafe{&mut *self.last};
         }
 
-        // Must fit now
+        // Must fit now, compute hash and put in buffer
         debug_assert!(data_len <= last.remaining);
         let range_start = last.data.len();
         last.data.extend_from_slice(data);
