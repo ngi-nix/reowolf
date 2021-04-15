@@ -25,28 +25,13 @@ enum KeywordDefinition {
     Composite,
 }
 
-impl KeywordDefinition {
-    fn as_symbol_class(&self) -> SymbolClass {
-        use KeywordDefinition as KD;
-        use SymbolClass as SC;
-
-        match self {
-            KD::Struct => SC::Struct,
-            KD::Enum => SC::Enum,
-            KD::Union => SC::Union,
-            KD::Function => SC::Function,
-            KD::Primitive | KD::Composite => SC::Component,
-        }
-    }
-}
-
 struct Module {
     // Buffers
     source: InputSource,
     tokens: TokenBuffer,
     // Identifiers
     root_id: RootId,
-    name: Option<(PragmaId, StringRef)>,
+    name: Option<(PragmaId, StringRef<'static>)>,
     version: Option<(PragmaId, i64)>,
     phase: ModuleCompilationPhase,
 }
@@ -61,19 +46,23 @@ struct Ctx<'a> {
 /// added to the symbol table such that during AST-construction we know which
 /// identifiers point to types. Will also parse all pragmas to determine module
 /// names.
-pub(crate) struct ASTSymbolPrePass {
+pub(crate) struct PassPreSymbol {
     symbols: Vec<Symbol>,
     pragmas: Vec<PragmaId>,
+    imports: Vec<ImportId>,
+    definitions: Vec<DefinitionId>,
     buffer: String,
     has_pragma_version: bool,
     has_pragma_module: bool,
 }
 
-impl ASTSymbolPrePass {
+impl PassPreSymbol {
     pub(crate) fn new() -> Self {
         Self{
             symbols: Vec::with_capacity(128),
             pragmas: Vec::with_capacity(8),
+            imports: Vec::with_capacity(32),
+            definitions: Vec::with_capacity(128),
             buffer: String::with_capacity(128),
             has_pragma_version: false,
             has_pragma_module: false,
@@ -83,6 +72,8 @@ impl ASTSymbolPrePass {
     fn reset(&mut self) {
         self.symbols.clear();
         self.pragmas.clear();
+        self.imports.clear();
+        self.definitions.clear();
         self.has_pragma_version = false;
         self.has_pragma_module = false;
     }
@@ -92,11 +83,10 @@ impl ASTSymbolPrePass {
 
         let module = &mut modules[module_idx];
         let module_range = &module.tokens.ranges[0];
-        let expected_parent_idx = 0;
-        let expected_subranges = module_range.subranges;
+
         debug_assert_eq!(module.phase, ModuleCompilationPhase::Tokenized);
         debug_assert_eq!(module_range.range_kind, TokenRangeKind::Module);
-        debug_assert_eq!(module.root_id.index, 0);
+        debug_assert!(module.root_id.is_invalid()); // not set yet,
 
         // Preallocate root in the heap
         let root_id = ctx.heap.alloc_protocol_description(|this| {
@@ -109,44 +99,45 @@ impl ASTSymbolPrePass {
         });
         module.root_id = root_id;
 
-        // Visit token ranges to detect defintions
-        let mut visited_subranges = 0;
-        for range_idx in expected_parent_idx + 1..module.tokens.ranges.len() {
-            // Skip any ranges that do not belong to the module
-            let cur_range = &module.tokens.ranges[range_idx];
-            if cur_range.parent_idx != expected_parent_idx {
-                continue;
-            }
+        // Visit token ranges to detect definitions and pragmas
+        let mut range_idx = module_range.first_child_idx;
+        loop {
+            let range_idx_usize = range_idx as usize;
+            let cur_range = &module.tokens.ranges[range_idx_usize];
 
             // Parse if it is a definition or a pragma
             if cur_range.range_kind == TokenRangeKind::Definition {
-                self.visit_definition_range(modules, module_idx, ctx, range_idx)?;
+                self.visit_definition_range(modules, module_idx, ctx, range_idx_usize)?;
             } else if cur_range.range_kind == TokenRangeKind::Pragma {
-                self.visit_pragma_range(modules, module_idx, ctx, range_idx)?;
+                self.visit_pragma_range(modules, module_idx, ctx, range_idx_usize)?;
             }
 
-            visited_subranges += 1;
-            if visited_subranges == expected_subranges {
-                break;
+            match cur_range.next_sibling_idx {
+                Some(idx) => { range_idx = idx; },
+                None => { break; },
             }
         }
 
-        // By now all symbols should have been found: add to symbol table and
-        // add the parsed pragmas to the preallocated root in the heap.
-        debug_assert_eq!(visited_subranges, expected_subranges);
-        ctx.symbols.insert_scoped_symbols(None, SymbolScope::Module(module.root_id), &self.symbols);
+        // Add the module's symbol scope and the symbols we just parsed
+        let module_scope = SymbolScope::Module(root_id);
+        ctx.symbols.insert_scope(None, module_scope);
+        for symbol in self.symbols.drain(..) {
+            if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(module_scope, symbol) {
+                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, old_symbol))
+            }
+        }
 
+        // Modify the preallocated root
         let root = &mut ctx.heap[root_id];
-        debug_assert!(root.pragmas.is_empty());
-        root.pragmas.extend(&self.pragmas);
-
+        root.pragmas.extend(self.pragmas.drain(..));
+        root.definitions.extend(self.definitions.drain(..));
         module.phase = ModuleCompilationPhase::DefinitionsScanned;
 
         Ok(())
     }
 
-    fn visit_pragma_range(&mut self, modules: &mut [Module], module_idx: usize, ctx: &mut Ctx, range_idx: usize) -> Result<(), ParseError> {
-        let module = &mut modules[module_idx];
+    fn visit_pragma_range(&mut self, modules: &[Module], module_idx: usize, ctx: &mut Ctx, range_idx: usize) -> Result<(), ParseError> {
+        let module = &modules[module_idx];
         let range = &module.tokens.ranges[range_idx];
         let mut iter = module.tokens.iter_range(range);
 
@@ -213,7 +204,7 @@ impl ASTSymbolPrePass {
         Ok(())
     }
 
-    fn visit_definition_range(&mut self, modules: &mut [Module], module_idx: usize, ctx: &mut Ctx, range_idx: usize) -> Result<(), ParseError> {
+    fn visit_definition_range(&mut self, modules: &[Module], module_idx: usize, ctx: &mut Ctx, range_idx: usize) -> Result<(), ParseError> {
         let module = &modules[module_idx];
         let range = &module.tokens.ranges[range_idx];
         let definition_span = InputSpan::from_positions(
@@ -222,60 +213,107 @@ impl ASTSymbolPrePass {
         );
         let mut iter = module.tokens.iter_range(range);
 
-        // Because we're visiting a definition, we expect an ident that resolves
-        // to a keyword indicating a definition.
-        let kw_text = consume_ident_text(&module.source, &mut iter).unwrap();
+        // First ident must be type of symbol
+        let (kw_text, _) = consume_any_ident(&module.source, &mut iter).unwrap();
         let kw = parse_definition_keyword(kw_text).unwrap();
 
-        // Retrieve identifier and put in temp symbol table
-        let definition_ident = consume_ident_text(&module.source, &mut iter)?;
-        let definition_ident = ctx.pool.intern(definition_ident);
-        let symbol_class = kw.as_symbol_class();
+        // Retrieve identifier of definition
+        let (identifier_text, identifier_span) = consume_ident(&module.source, &mut iter)?;
+        let ident_text = ctx.pool.intern(identifier_text);
+        let identifier = Identifier{ span: identifier_span, value: ident_text };
 
-        // Get the token indicating the end of the definition to get the full
-        // span of the definition
-        let last_token = &module.tokens.tokens[range.end - 1];
-        debug_assert_eq!(last_token.kind, TokenKind::CloseCurly);
+        // Reserve space in AST for definition and add it to the symbol table
+        let symbol_definition;
+        let ast_definition_id;
+        match kw {
+            KeywordDefinition::Struct => {
+                let struct_def_id = ctx.heap.alloc_struct_definition(|this| {
+                    StructDefinition::new_empty(this, definition_span, identifier)
+                });
+                symbol_definition = SymbolDefinition::Struct(struct_def_id);
+                ast_definition_id = struct_def_id.upcast();
+            },
+            KeywordDefinition::Enum => {
+                let enum_def_id = ctx.heap.alloc_enum_definition(|this| {
+                    EnumDefinition::new_empty(this, definition_span, identifier)
+                });
+                symbol_definition = SymbolDefinition::Enum(enum_def_id);
+                ast_definition_id = enum_def_id.upcast();
+            },
+            KeywordDefinition::Union => {
+                let union_def_id = ctx.heap.alloc_union_definition(|this| {
+                    UnionDefinition::new_empty(this, definition_span, identifier)
+                });
+                symbol_definition = SymbolDefinition::Union(union_def_id);
+                ast_definition_id = union_def_id.upcast()
+            },
+            KeywordDefinition::Function => {
+                let func_def_id = ctx.heap.alloc_function_definition(|this| {
+                    FunctionDefinition::new_empty(this, definition_span, identifier)
+                });
+                symbol_definition = SymbolDefinition::Function(func_def_id);
+                ast_definition_id = func_def_id.upcast();
+            },
+            KeywordDefinition::Primitive | KeywordDefinition::Composite => {
+                let component_variant = if kw == KeywordDefinition::Primitive {
+                    ComponentVariant::Primitive
+                } else {
+                    ComponentVariant::Composite
+                };
+                let comp_def_id = ctx.heap.alloc_component_definition(|this| {
+                    ComponentDefinition::new_empty(this, definition_span, component_variant, identifier)
+                });
+                symbol_definition = SymbolDefinition::Component(comp_def_id);
+                ast_definition_id = comp_def_id.upcast();
+            }
+        }
 
-        self.symbols.push(Symbol::new(
-            module.root_id,
-            SymbolScope::Module(module.root_id),
+        let symbol = Symbol{
+            defined_in_module: module.root_id,
+            defined_in_scope: SymbolScope::Module(module.root_id),
             definition_span,
-            symbol_class,
-            definition_ident
-        ));
+            identifier_span,
+            introduced_at: None,
+            name: definition_ident,
+            definition: symbol_definition
+        };
+        self.symbols.push(symbol);
+        self.definitions.push(ast_definition_id);
 
         Ok(())
     }
 }
 
-pub(crate) struct ASTImportPrePass {
+/// Parses all the imports in the module tokens. Is applied after the
+/// definitions and name of modules are resolved. Hence we should be able to
+/// resolve all symbols to their appropriate module/definition.
+pub(crate) struct PassImport {
+    imports: Vec<ImportId>,
 }
 
-impl ASTImportPrePass {
+impl PassImport {
+    pub(crate) fn new() -> Self {
+        Self{ imports: Vec::with_capacity(32) }
+    }
     pub(crate) fn parse(&mut self, modules: &mut [Module], module_idx: usize, ctx: &mut Ctx) -> Result<(), ParseError> {
         let module = &modules[module_idx];
         let module_range = &module.tokens.ranges[0];
+        debug_assert!(modules.iter().all(|m| m.phase >= ModuleCompilationPhase::DefinitionsScanned));
         debug_assert_eq!(module.phase, ModuleCompilationPhase::DefinitionsScanned);
         debug_assert_eq!(module_range.range_kind, TokenRangeKind::Module);
 
-        let expected_parent_idx = 0;
-        let expected_subranges = module_range.subranges;
-        let mut visited_subranges = 0;
+        let mut range_idx = module_range.first_child_idx;
+        loop {
+            let range_idx_usize = range_idx as usize;
+            let cur_range = &module.tokens.ranges[range_idx_usize];
 
-        for range_idx in expected_parent_idx + 1..module.tokens.ranges.len() {
-            let cur_range = &module.tokens.ranges[range_idx];
-            if cur_range.parent_idx != expected_parent_idx {
-                continue;
-            }
-
-            visited_subranges += 1;
             if cur_range.range_kind == TokenRangeKind::Import {
-                self.visit_import_range(modules, module_idx, ctx, range_idx)?;
+                self.visit_import_range(modules, module_idx, ctx, range_idx_usize)?;
             }
 
-            if visited_subranges == expected_subranges {
-                break;
+            match cur_range.next_sibling_idx {
+                Some(idx) => { range_idx = idx; },
+                None => { break; }
             }
         }
 
@@ -292,26 +330,81 @@ impl ASTImportPrePass {
         let mut iter = module.tokens.iter_range(import_range);
 
         // Consume "import"
-        let _import_ident = consume_ident_text(&module.source, &mut iter)?;
+        let (_import_ident, import_span) =
+            consume_ident(&module.source, &mut iter)?;
         debug_assert_eq!(_import_ident, KW_IMPORT);
 
         // Consume module name
-        let (module_name, _) = consume_domain_ident(&module.source, &mut iter)?;
+        let (module_name, module_name_span) = consume_domain_ident(&module.source, &mut iter)?;
+        let target_root_id = ctx.symbols.get_module_by_name(module_name);
+        if target_root_id.is_none() {
+            return Err(ParseError::new_error_at_span(
+                &module.source, module_name_span,
+                format!("could not resolve module '{}'", String::from_utf8_lossy(module_name))
+            ));
+        }
+        let module_name = ctx.pool.intern(module_name);
+        let target_root_id = target_root_id.unwrap();
 
+        // Check for subsequent characters
+        let next = iter.next();
+        if has_ident(&module.source, &mut iter, b"as") {
+            iter.consume();
+            let (alias_text, alias_span) = consume_ident(source, &mut iter)?;
+            let alias = ctx.pool.intern(alias_text);
+
+            let import_id = ctx.heap.alloc_import(|this| Import::Module(ImportModule{
+                this,
+                span: import_span,
+                module_name: Identifier{ span: module_name_span, value: module_name },
+                alias: Identifier{ span: alias_span, value: alias },
+                module_id: target_root_id
+            }));
+            ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
+                defined_in_module: target_root_id,
+                defined_in_scope: SymbolScope::Module(target_root_id),
+                definition_span
+            })
+        } else if Some(TokenKind::ColonColon) == next {
+            iter.consume();
+        } else {
+            // Assume implicit alias, then check if we get the semicolon next
+            let module_name_str = module_name.as_str();
+            let last_ident_start = module_name_str.rfind('.').map_or(0, |v| v + 1);
+            let alias_text = &module_name_str.as_bytes()[last_ident_start..];
+            let alias = ctx.pool.intern(alias_text);
+            let alias_span = InputSpan::from_positions(
+                module_name_span.begin.with_offset(last_ident_start as u32),
+                module_name_span.end
+            );
+        }
 
         Ok(())
     }
 }
 
 fn consume_domain_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputSpan), ParseError> {
-    let (_, name_start, mut name_end) = consume_ident(source, iter)?;
+    let (_, mut span) = consume_ident(source, iter)?;
     while let Some(TokenKind::Dot) = iter.next() {
         consume_dot(source, iter)?;
-        let (_, _, new_end) = consume_ident(source, iter)?;
-        name_end = new_end;
+        let (_, new_span) = consume_ident(source, iter)?;
+        span.end = new_span.end;
     }
 
-    Ok((source.section(name_start, name_end), InputSpan::from_positions(name_start, name_end)))
+    // Not strictly necessary, but probably a reasonable restriction: this
+    // simplifies parsing of module naming and imports.
+    if span.begin.line != span.end.line {
+        return Err(ParseError::new_error_str_at_span(source, span, "module names may not span multiple lines"));
+    }
+
+    // If module name consists of a single identifier, then it may not match any
+    // of the reserved keywords
+    let section = source.section(span.begin, span.end);
+    if is_reserved_keyword(section) {
+        return Err(ParseError::new_error_str_at_span(source, span, "encountered reserved keyword"));
+    }
+
+    Ok((source.section(span.begin, span.end), span))
 }
 
 fn consume_dot<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(), ParseError> {
@@ -387,22 +480,126 @@ fn consume_pragma<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(
     Ok((source.section(pragma_start, pragma_end), pragma_start, pragma_end))
 }
 
-fn consume_ident_text<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<&'a [u8], ParseError> {
-    if Some(TokenKind::Ident) != iter.next() {
-        return Err(ParseError::new_error(source, iter.last_valid_pos(), "expected an identifier"));
+fn has_ident(source: &InputSource, iter: &mut TokenIter, expected: &[u8]) -> bool {
+    if Some(TokenKind::Ident) == iter.next() {
+        let (start, end) = iter.next_range();
+        return source.section(start, end) == expected;
     }
-    let (ident_start, ident_end) = iter.next_range();
-    iter.consume();
-    Ok(source.section(ident_start, ident_end))
+
+    false
 }
 
-fn consume_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputPosition, InputPosition), ParseError> {
+fn peek_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Option<&'a [u8]> {
+    if Some(TokenKind::Ident) == iter.next() {
+        let (start, end) = iter.next_range();
+        return Some(source.section(start, end))
+    }
+
+    None
+}
+
+/// Consumes any identifier and returns it together with its span. Does not
+/// check if the identifier is a reserved keyword.
+fn consume_any_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputSpan), ParseError> {
     if Some(TokenKind::Ident) != iter.next() {
         return Err(ParseError::new_error(sourcee, iter.last_valid_pos(), "expected an identifier"));
     }
     let (ident_start, ident_end) = iter.next_range();
     iter.consume();
-    Ok((source.section(ident_start, ident_end), ident_start, ident_end))
+    Ok((source.section(ident_start, ident_end), InputSpan::from_positions(ident_start, ident_end)))
+}
+
+/// Consumes an identifier that is not a reserved keyword and returns it
+/// together with its span.
+fn consume_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputSpan), ParseError> {
+    let (ident, span) = consume_any_ident(source, iter)?;
+    if is_reserved_keyword(ident) {
+        return Err(ParseError::new_error_str_at_span(source, span, "encountered reserved keyword"));
+    }
+
+    Ok((ident, span))
+}
+
+fn is_reserved_definition_keyword(text: &[u8]) -> bool {
+    return ([
+        b"struct", b"enum", b"union", b"function", b"primitive"
+    ] as &[[u8]]).contains(text)
+}
+
+fn is_reserved_statement_keyword(text: &[u8]) -> bool {
+    return ([
+        b"channel", b"import", b"as",
+        b"if", b"while", b"break", b"continue", b"goto", b"return",
+        b"synchronous", b"assert", b"new",
+    ] as &[[u8]]).contains(text)
+}
+
+fn is_reserved_expression_keyword(text: &[u8]) -> bool {
+    return ([
+        b"let", b"true", b"false", b"null", // literals
+        b"get", b"put", b"fires", b"create", b"length", // functions
+    ] as &[[u8]]).contains(text)
+}
+
+fn is_reserved_type_keyword(text: &[u8]) -> bool {
+    return ([
+        b"in", b"out", b"msg",
+        b"bool",
+        b"u8", b"u16", b"u32", b"u64",
+        b"s8", b"s16", b"s32", b"s64",
+        b"auto"
+    ] as &[[u8]]).contains(text)
+}
+
+fn is_reserved_keyword(text: &[u8]) -> bool {
+    return
+        is_reserved_definition_keyword(text) ||
+        is_reserved_statement_keyword(text) ||
+        is_reserved_type_keyword(text);
+}
+
+/// Constructs a human-readable message indicating why there is a conflict of
+/// symbols.
+// Note: passing the `module_idx` is not strictly necessary, but will prevent
+// programmer mistakes during development: we get a conflict because we're
+// currently parsing a particular module.
+fn construct_symbol_conflict_error(modules: &[Module], module_idx: usize, ctx: &Ctx, new_symbol: &Symbol, old_symbol: &Symbol) -> ParseError {
+    let module = &modules[module_idx];
+    let get_symbol_span_and_msg = |symbol: &Symbol| -> (String, InputSpan) {
+        match symbol.introduced_at {
+            Some(import_id) => {
+                // Symbol is being imported
+                let import = &ctx.heap[import_id];
+                match import {
+                    Import::Module(import) => (
+                        format!("the module aliased as '{}' imported here", symbol.name.as_str()),
+                        import.span
+                    ),
+                    Import::Symbols(symbols) => (
+                        format!("the type '{}' imported here", symbol.name.as_str()),
+                        symbols.span
+                    ),
+                }
+            },
+            None => {
+                // Symbol is being defined
+                debug_assert_eq!(symbol.defined_in_module, module.root_id);
+                debug_assert_ne!(symbol.definition.symbol_class(), SymbolClass::Module);
+                (
+                    format!("the type '{}' defined here", symbol.name.as_str()),
+                    symbol.identifier_span
+                )
+            }
+        }
+    };
+
+    let (new_symbol_msg, new_symbol_span) = get_symbol_span_and_msg(new_symbol);
+    let (old_symbol_msg, old_symbol_span) = get_symbol_span_and_msg(old_symbol);
+    return ParseError::new_error_at_span(
+        &module.source, new_symbol_span, format!("symbol is defined twice: {}", new_symbol_msg)
+    ).with_info_at_span(
+        &module.source, old_symbol_span, format!("it conflicts with {}", old_symbol_msg)
+    )
 }
 
 fn parse_definition_keyword(keyword: &[u8]) -> Option<KeywordDefinition> {

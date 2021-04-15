@@ -1,17 +1,31 @@
 use std::ptr::null_mut;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 const SLAB_SIZE: usize = u16::max_value() as usize;
 
 #[derive(Clone)]
-pub struct StringRef {
+pub struct StringRef<'a> {
     data: *const u8,
     length: usize,
+    _phantom: PhantomData<&'a [u8]>,
 }
 
-impl StringRef {
-    pub fn as_str<'a>(&'a self) -> &'a str {
+impl<'a> StringRef<'a> {
+    /// `new` constructs a new StringRef whose data is not owned by the
+    /// `StringPool`, hence cannot have a `'static` lifetime.
+    pub(crate) fn new(data: &'a [u8]) -> StringRef<'a> {
+        // This is an internal (compiler) function: so debug_assert that the
+        // string is valid UTF8. Most commonly the input will come from the
+        // code's source file, which is checked for ASCII-ness anyway.
+        debug_assert!(data.is_ascii());
+        let length = data.len();
+        let data = data.as_ptr();
+        StringRef{ data, length, _phantom: PhantomData }
+    }
+
+    pub fn as_str(&self) -> &'a str {
         unsafe {
             let slice = std::slice::from_raw_parts::<'a, u8>(self.data, self.length);
             std::str::from_utf8_unchecked(slice)
@@ -66,7 +80,7 @@ impl StringPool {
     }
 
     // Interns a string to the StringPool, returning a reference to it
-    pub(crate) fn intern(&mut self, data: &[u8]) -> StringRef {
+    pub(crate) fn intern(&mut self, data: &[u8]) -> StringRef<'static> {
         // TODO: Large string allocations, if ever needed.
         let data_len = data.len();
         assert!(data_len <= SLAB_SIZE, "string is too large for slab");
@@ -88,7 +102,7 @@ impl StringPool {
 
         unsafe {
             let start = last.data.as_ptr().offset(range_start as isize);
-            StringRef{ data: start, length: data_len }
+            StringRef{ data: start, length: data_len, _phantom: PhantomData }
         }
     }
 

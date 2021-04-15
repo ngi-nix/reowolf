@@ -8,7 +8,7 @@ use crate::protocol::input_source2::{
 pub(crate) const KW_STRUCT:    &'static [u8] = b"struct";
 pub(crate) const KW_ENUM:      &'static [u8] = b"enum";
 pub(crate) const KW_UNION:     &'static [u8] = b"union";
-pub(crate) const KW_FUNCTION:  &'static [u8] = b"func";
+pub(crate) const KW_FUNCTION:  &'static [u8] = b"function";
 pub(crate) const KW_PRIMITIVE: &'static [u8] = b"primitive";
 pub(crate) const KW_COMPOSITE: &'static [u8] = b"composite";
 pub(crate) const KW_IMPORT:    &'static [u8] = b"import";
@@ -127,9 +127,13 @@ pub(crate) struct TokenRange {
     pub range_kind: TokenRangeKind,
     pub curly_depth: u32,
     // InputPosition offset is limited to u32, so token ranges can be as well.
-    pub start: u32,
-    pub end: u32,
-    pub subranges: u32,
+    pub start: u32,             // first token (inclusive index)
+    pub end: u32,               // last token (exclusive index)
+    // Subranges and where they can be found
+    pub subranges: u32,         // Number of subranges
+    pub first_child_idx: u32,   // First subrange (or points to self if no subranges)
+    pub last_child_idx: u32,    // Last subrange (or points to self if no subranges)
+    pub next_sibling_idx: Option<u32>,
 }
 
 pub(crate) struct TokenBuffer {
@@ -280,6 +284,9 @@ impl Tokenizer {
             start: 0,
             end: 0,
             subranges: 0,
+            first_child_idx: 0,
+            last_child_idx: 0,
+            next_sibling_idx: None,
         });
 
         // Main tokenization loop
@@ -365,6 +372,35 @@ impl Tokenizer {
             return Err(ParseError::new_error(
                 source, last_unmatched_open, "unmatched opening curly brace '{'"
             ));
+        }
+
+        // TODO: @remove once I'm sure the algorithm works. For now it is better
+        //  if the debugging is a little more expedient
+        if cfg!(debug_assertions) {
+            // For each range make sure its children make sense
+            for parent_idx in 0..target.ranges.len() {
+                let cur_range = &target.ranges[parent_idx];
+                if cur_range.subranges == 0 {
+                    assert_eq!(cur_range.first_child_idx, parent_idx as u32);
+                    assert_eq!(cur_range.last_child_idx, parent_idx as u32);
+                } else {
+                    assert_ne!(cur_range.first_child_idx, parent_idx as u32);
+                    assert_ne!(cur_range.last_child_idx, parent_idx as u32);
+
+                    let mut child_counter = 0u32;
+                    let mut last_child_idx = cur_range.first_child_idx;
+                    let mut child_idx = Some(cur_range.first_child_idx);
+                    while let Some(cur_child_idx) = child_idx {
+                        let child_range = &target.ranges[cur_child_idx as usize];
+                        assert_eq!(child_range.parent_idx, parent_idx);
+                        child_idx = child_range.next_sibling_idx;
+                        child_counter += 1;
+                    }
+
+                    assert_eq!(cur_range.last_child_idx, last_child_idx);
+                    assert_eq!(cur_range.subranges, child_counter);
+                }
+            }
         }
 
         Ok(())
@@ -820,8 +856,16 @@ impl Tokenizer {
         // intermediate "code" range.
         if cur_range.end != first_token {
             let code_start = cur_range.end;
+            let code_range_idx = target.ranges.len() as u32;
+
+            if cur_range.first_child_idx == self.stack_idx as u32 {
+                // The parent of the new "code" range we're going to push does
+                // not have any registered children yet.
+                cur_range.first_child_idx = code_range_idx;
+            }
+            cur_range.last_child_idx = code_range_idx + 1;
+
             cur_range.end = first_token;
-            debug_assert_ne!(code_start, first_token);
             cur_range.subranges += 1;
             target.ranges.push(TokenRange{
                 parent_idx: self.stack_idx,
@@ -830,12 +874,25 @@ impl Tokenizer {
                 start: code_start,
                 end: first_token,
                 subranges: 0,
+                first_child_idx: code_range_idx,
+                last_child_idx: code_range_idx,
+                next_sibling_idx: Some(code_range_idx + 1), // we're going to push this thing next
             });
+        } else {
+            // We're going to push the range in the code below, but while we
+            // have the `cur_range` borrowed mutably, we fix up its children
+            // indices.
+            let new_range_idx = target.ranges.len() as u32;
+            if cur_range.first_child_idx == self.stack_idx as u32 {
+                cur_range.first_child_idx = new_range_idx;
+            }
+            cur_range.last_child_idx = new_range_idx;
         }
 
         // Insert a new range
         let parent_idx = self.stack_idx;
         self.stack_idx = target.ranges.len();
+        let new_range_idx = self.stack_idx as u32;
         target.ranges.push(TokenRange{
             parent_idx,
             range_kind,
@@ -843,6 +900,9 @@ impl Tokenizer {
             start: first_token,
             end: first_token,
             subranges: 0,
+            first_child_idx: new_range_idx,
+            last_child_idx: new_range_idx,
+            next_sibling_idx: None,
         });
     }
 

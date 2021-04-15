@@ -15,7 +15,6 @@ use crate::protocol::input_source2::{InputPosition2, InputSpan};
 const MAX_LEVEL: usize = 128;
 const MAX_NAMESPACES: usize = 64;
 
-
 /// Helper macro that defines a type alias for a AST element ID. In this case 
 /// only used to alias the `Id<T>` types.
 macro_rules! define_aliased_ast_id {
@@ -66,9 +65,9 @@ macro_rules! define_new_ast_id {
         pub struct $name (pub(crate) $parent);
 
         impl $name {
-            pub fn upcast(self) -> $parent {
-                self.0
-            }
+            pub(crate) fn new_invalid() -> Self     { Self($parent::new_invalid()) }
+            pub(crate) fn is_invalid(&self) -> bool { self.0.is_invalid() }
+            pub fn upcast(self) -> $parent          { self.0 }
         }
     };
     // Variant where we define the type, and the Index and IndexMut traits
@@ -127,11 +126,11 @@ define_new_ast_id!(ParameterId, VariableId, index(Parameter, Variable::Parameter
 define_new_ast_id!(LocalId, VariableId, index(Local, Variable::Local, variables), alloc(alloc_local));
 
 define_aliased_ast_id!(DefinitionId, Id<Definition>, index(Definition, definitions));
-define_new_ast_id!(StructId, DefinitionId, index(StructDefinition, Definition::Struct, definitions), alloc(alloc_struct_definition));
-define_new_ast_id!(EnumId, DefinitionId, index(EnumDefinition, Definition::Enum, definitions), alloc(alloc_enum_definition));
-define_new_ast_id!(UnionId, DefinitionId, index(UnionDefinition, Definition::Union, definitions), alloc(alloc_union_definition));
-define_new_ast_id!(ComponentId, DefinitionId, index(Component, Definition::Component, definitions), alloc(alloc_component));
-define_new_ast_id!(FunctionId, DefinitionId, index(Function, Definition::Function, definitions), alloc(alloc_function));
+define_new_ast_id!(StructDefinitionId, DefinitionId, index(StructDefinition, Definition::Struct, definitions), alloc(alloc_struct_definition));
+define_new_ast_id!(EnumDefinitionId, DefinitionId, index(EnumDefinition, Definition::Enum, definitions), alloc(alloc_enum_definition));
+define_new_ast_id!(UnionDefinitionId, DefinitionId, index(UnionDefinition, Definition::Union, definitions), alloc(alloc_union_definition));
+define_new_ast_id!(ComponentDefinitionId, DefinitionId, index(ComponentDefinition, Definition::Component, definitions), alloc(alloc_component_definition));
+define_new_ast_id!(FunctionDefinitionId, DefinitionId, index(FunctionDefinition, Definition::Function, definitions), alloc(alloc_function_definition));
 
 define_aliased_ast_id!(StatementId, Id<Statement>, index(Statement, statements));
 define_new_ast_id!(BlockStatementId, StatementId, index(BlockStatement, Statement::Block, statements), alloc(alloc_block_statement));
@@ -328,11 +327,10 @@ impl SyntaxElement for Import {
 pub struct ImportModule {
     pub this: ImportId,
     // Phase 1: parser
-    pub position: InputPosition,
-    pub module_name: Vec<u8>,
+    pub span: InputSpan,
+    pub module_name: Identifier,
     pub alias: Identifier,
-    // Phase 2: module resolving
-    pub module_id: Option<RootId>,
+    pub module_id: RootId,
 }
 
 #[derive(Debug, Clone)]
@@ -349,7 +347,7 @@ pub struct AliasedSymbol {
 pub struct ImportSymbols {
     pub this: ImportId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub module_name: Vec<u8>,
     // Phase 2: module resolving
     pub module_id: Option<RootId>,
@@ -363,7 +361,7 @@ pub struct ImportSymbols {
 #[derive(Debug, Clone)]
 pub struct Identifier {
     pub span: InputSpan,
-    pub value: StringRef,
+    pub value: StringRef<'static>,
 }
 
 impl PartialEq for Identifier {
@@ -965,8 +963,8 @@ pub enum Definition {
     Struct(StructDefinition),
     Enum(EnumDefinition),
     Union(UnionDefinition),
-    Component(Component),
-    Function(Function),
+    Component(ComponentDefinition),
+    Function(FunctionDefinition),
 }
 
 impl Definition {
@@ -1012,7 +1010,7 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_component(&self) -> &Component {
+    pub fn as_component(&self) -> &ComponentDefinition {
         match self {
             Definition::Component(result) => result,
             _ => panic!("Unable to cast `Definition` to `Component`"),
@@ -1024,7 +1022,7 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_function(&self) -> &Function {
+    pub fn as_function(&self) -> &FunctionDefinition {
         match self {
             Definition::Function(result) => result,
             _ => panic!("Unable to cast `Definition` to `Function`"),
@@ -1094,12 +1092,18 @@ pub struct StructFieldDefinition {
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
-    pub this: StructId,
+    pub this: StructDefinitionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
     pub fields: Vec<StructFieldDefinition>
+}
+
+impl StructDefinition {
+    pub(crate) fn new_empty(this: StructDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
+        Self{ this, span, identifier, poly_vars: Vec::new(), fields: Vec::new() }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1117,12 +1121,18 @@ pub struct EnumVariantDefinition {
 
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
-    pub this: EnumId,
+    pub this: EnumDefinitionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
     pub variants: Vec<EnumVariantDefinition>,
+}
+
+impl EnumDefinition {
+    pub(crate) fn new_empty(this: EnumDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
+        Self{ this, span, identifier, poly_vars: Vec::new(), variants: Vec::new() }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1140,12 +1150,18 @@ pub struct UnionVariantDefinition {
 
 #[derive(Debug, Clone)]
 pub struct UnionDefinition {
-    pub this: UnionId,
+    pub this: UnionDefinitionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
     pub variants: Vec<UnionVariantDefinition>,
+}
+
+impl UnionDefinition {
+    pub(crate) fn new_empty(this: UnionDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
+        Self{ this, span, identifier, poly_vars: Vec::new(), variants: Vec::new() }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1155,10 +1171,10 @@ pub enum ComponentVariant {
 }
 
 #[derive(Debug, Clone)]
-pub struct Component {
-    pub this: ComponentId,
+pub struct ComponentDefinition {
+    pub this: ComponentDefinitionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub variant: ComponentVariant,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
@@ -1166,17 +1182,28 @@ pub struct Component {
     pub body: StatementId,
 }
 
-impl SyntaxElement for Component {
+impl ComponentDefinition {
+    pub(crate) fn new_empty(this: ComponentDefinitionId, span: InputSpan, variant: ComponentVariant, identifier: Identifier) -> Self {
+        Self{ 
+            this, span, variant, identifier, 
+            poly_vars: Vec::new(), 
+            parameters: Vec::new(), 
+            body: StatementId::new_invalid()
+        }
+    }
+}
+
+impl SyntaxElement for ComponentDefinition {
     fn position(&self) -> InputPosition {
         self.position
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Function {
-    pub this: FunctionId,
+pub struct FunctionDefinition {
+    pub this: FunctionDefinitionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub return_type: ParserTypeId,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
@@ -1184,7 +1211,19 @@ pub struct Function {
     pub body: StatementId,
 }
 
-impl SyntaxElement for Function {
+impl FunctionDefinition {
+    pub(crate) fn new_empty(this: FunctionDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
+        Self {
+            this, span, identifier,
+            return_type: ParserTypeId::new_invalid(),
+            poly_vars: Vec::new(),
+            parameters: Vec::new(),
+            body: StatementId::new_invalid(),
+        }
+    }
+}
+
+impl SyntaxElement for FunctionDefinition {
     fn position(&self) -> InputPosition {
         self.position
     }

@@ -2378,7 +2378,7 @@ impl Lexer<'_> {
 
         // Parse body
         let body = self.consume_block_statement(h)?;
-        Ok(h.alloc_component(|this| Component { 
+        Ok(h.alloc_component(|this| ComponentDefinition {
             this,
             variant: ComponentVariant::Composite,
             position,
@@ -2404,7 +2404,7 @@ impl Lexer<'_> {
 
         // Consume body
         let body = self.consume_block_statement(h)?;
-        Ok(h.alloc_component(|this| Component { 
+        Ok(h.alloc_component(|this| ComponentDefinition {
             this,
             variant: ComponentVariant::Primitive,
             position,
@@ -2430,7 +2430,7 @@ impl Lexer<'_> {
 
         // Consume body
         let body = self.consume_block_statement(h)?;
-        Ok(h.alloc_function(|this| Function {
+        Ok(h.alloc_function(|this| FunctionDefinition {
             this,
             position,
             return_type,

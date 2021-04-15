@@ -450,11 +450,11 @@ impl<'a> UnionTester<'a> {
 
 pub(crate) struct FunctionTester<'a> {
     ctx: TestCtx<'a>,
-    def: &'a Function,
+    def: &'a FunctionDefinition,
 }
 
 impl<'a> FunctionTester<'a> {
-    fn new(ctx: TestCtx<'a>, def: &'a Function) -> Self {
+    fn new(ctx: TestCtx<'a>, def: &'a FunctionDefinition) -> Self {
         Self{ ctx, def }
     }
 
