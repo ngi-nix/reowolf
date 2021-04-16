@@ -32,6 +32,27 @@ pub enum SymbolClass {
     Component
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DefinitionClass {
+    Struct,
+    Enum,
+    Union,
+    Function,
+    Component,
+}
+
+impl DefinitionClass {
+    fn as_symbol_class(&self) -> SymbolClass {
+        match self {
+            DefinitionClass::Struct => SymbolClass::Struct,
+            DefinitionClass::Enum => SymbolClass::Enum,
+            DefinitionClass::Union => SymbolClass::Union,
+            DefinitionClass::Function => SymbolClass::Function,
+            DefinitionClass::Component => SymbolClass::Component,
+        }
+    }
+}
+
 struct ScopedSymbols {
     scope: SymbolScope,
     parent_scope: Option<SymbolScope>,
@@ -39,13 +60,16 @@ struct ScopedSymbols {
     symbols: Vec<Symbol>,
 }
 
-pub enum SymbolDefinition {
-    Module(RootId),
-    Struct(StructDefinitionId),
-    Enum(EnumDefinitionId),
-    Union(UnionDefinitionId),
-    Function(FunctionDefinitionId),
-    Component(ComponentDefinitionId),
+impl ScopedSymbols {
+    fn get_symbol<'a>(&'a self, name: &StringRef) -> Option<&'a Symbol> {
+        for symbol in self.symbols.iter() {
+            if symbol.name == *name {
+                return Some(symbol);
+            }
+        }
+
+        None
+    }
 }
 
 impl SymbolDefinition {
@@ -64,22 +88,43 @@ impl SymbolDefinition {
     }
 }
 
-pub enum SymbolData {
-    
+pub struct SymbolModule {
+    pub root_id: RootId,
+    pub introduced_at: ImportId,
+}
+
+pub struct SymbolDefinition {
+    // Definition location (not necessarily the place where the symbol
+    // is introduced, as it may be imported)
+    pub defined_in_module: RootId,
+    pub defined_in_scope: SymbolScope,
+    pub definition_span: InputSpan, // full span of definition
+    pub identifier_span: InputSpan, // span of just the identifier
+    // Location where the symbol is introduced in its scope
+    pub imported_at: Option<ImportId>,
+    // Definition in the heap, with a utility enum to determine its
+    // class if the ID is not needed.
+    pub class: DefinitionClass,
+    pub definition_id: DefinitionId,
+}
+
+pub enum SymbolVariant {
+    Module(SymbolModule),
+    Definition(SymbolDefinition),
 }
 
 pub struct Symbol {
-    // Definition location (may be different from the scope/module in which it
-    // is used if the symbol is imported)
-    pub defined_in_module: RootId,
-    pub defined_in_scope: SymbolScope,
-    pub definition_span: InputSpan, // full span of definition, not just the name
-    pub identifier_span: InputSpan, // span of just the identifier
-    // Introduction location (if imported instead of defined)
-    pub introduced_at: Option<ImportId>,
-    // Symbol properties
     pub name: StringRef<'static>,
-    pub definition: SymbolDefinition,
+    pub data: SymbolVariant,
+}
+
+impl Symbol {
+    fn class(&self) -> SymbolClass {
+        match &self.data {
+            SymbolVariant::Module(_) => SymbolClass::Module,
+            SymbolVariant::Definition(data) => data.class.as_symbol_class(),
+        }
+    }
 }
 
 pub struct SymbolTable {
@@ -158,11 +203,53 @@ impl SymbolTable {
         Ok(())
     }
 
-    /// Retrieves a particular scope. As this will be called by the compiler to
-    /// retrieve scopes that MUST exist, this function will panic if the
-    /// indicated scope does not exist.
-    pub(crate) fn get_scope_by_id(&mut self, scope: &SymbolScope) -> &mut ScopedSymbols {
-        debug_assert!(self.scope_lookup.contains_key(scope), "retrieving scope {:?}, but it doesn't exist", scope);
-        self.scope_lookup.get_mut(scope).unwrap()
+    /// Retrieves a symbol by name by searching in a particular scope and that scope's parents. The
+    /// returned symbol may both be imported as defined within any of the searched scopes.
+    pub(crate) fn get_symbol_by_name(
+        &self, mut in_scope: SymbolScope, name: &[u8]
+    ) -> Option<&Symbol> {
+        let string_ref = StringRef::new(name);
+        loop {
+            let scope = self.scope_lookup.get(&in_scope);
+            if scope.is_none() {
+                return None;
+            }
+            let scope = scope.unwrap();
+
+            if let Some(symbol) = scope.get_symbol(&string_ref) {
+                return Some(symbol);
+            } else {
+                // Could not find symbol in current scope, seek in the parent scope if it exists
+                match &scope.parent_scope {
+                    Some(parent_scope) => { in_scope = *parent_scope; },
+                    None => return None,
+                }
+            }
+        }
+    }
+
+    /// Retrieves a symbol by name by searching in a particular scope and that scope's parents. The
+    /// returned symbol must be defined within any of the searched scopes and may not be imported.
+    /// In case such an imported symbol exists then this function still returns `None`.
+    pub(crate) fn get_symbol_by_name_defined_in_scope(
+        &self, in_scope: SymbolScope, name: &[u8]
+    ) -> Option<&Symbol> {
+        match self.get_symbol_by_name(in_scope, name) {
+            Some(symbol) => {
+                match &symbol.data {
+                    SymbolVariant::Module(_) => {
+                        None // in-scope modules are always imported
+                    },
+                    SymbolVariant::Definition(variant) => {
+                        if variant.imported_at.is_some() {
+                            None
+                        } else {
+                            Some(symbol)
+                        }
+                    }
+                }
+            },
+            None => None,
+        }
     }
 }

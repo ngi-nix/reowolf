@@ -82,10 +82,14 @@ pub(crate) enum TokenKind {
 }
 
 impl TokenKind {
+    /// Returns true if the next expected token is the special `TokenKind::SpanEnd` token. This is
+    /// the case for tokens of variable length (e.g. an identifier).
     fn has_span_end(&self) -> bool {
         return *self <= TokenKind::BlockComment
     }
 
+    /// Returns the number of characters associated with the token. May only be called on tokens
+    /// that do not have a variable length.
     fn num_characters(&self) -> u32 {
         debug_assert!(!self.has_span_end() && *self != TokenKind::SpanEnd);
         if *self <= TokenKind::Equal {
@@ -94,6 +98,67 @@ impl TokenKind {
             2
         } else {
             3
+        }
+    }
+
+    /// Returns the characters that are represented by the token, may only be called on tokens that
+    /// do not have a variable length.
+    pub fn token_chars(&self) -> &'static str {
+        debug_assert!(!self.has_span_end() && *self != TokenKind::SpanEnd);
+        use TokenKind as TK;
+        match self {
+            TK::Exclamation => "!",
+            TK::Question => "?",
+            TK::Pound => "#",
+            TK::OpenAngle => "<",
+            TK::OpenCurly => "{",
+            TK::OpenParen => "(",
+            TK::OpenSquare => "[",
+            TK::CloseAngle => ">",
+            TK::CloseCurly => "}",
+            TK::CloseParen => ")",
+            TK::CloseSquare => "]",
+            TK::Colon => ":",
+            TK::Comma => ",",
+            TK::Dot => ".",
+            TK::SemiColon => ";",
+            TK::Quote => "'",
+            TK::DoubleQuote => "\"",
+            TK::At => "@",
+            TK::Plus => "+",
+            TK::Minus => "-",
+            TK::Star => "*",
+            TK::Slash => "/",
+            TK::Percent => "%",
+            TK::Caret => "^",
+            TK::And => "&",
+            TK::Or => "|",
+            TK::Tilde => "~",
+            TK::Equal => "=",
+            TK::ColonColon => "::",
+            TK::DotDot => "..",
+            TK::ArrowRight => "->",
+            TK::PlusPlus => "++",
+            TK::PlusEquals => "+=",
+            TK::MinusMinus => "--",
+            TK::MinusEquals => "-=",
+            TK::StarEquals => "*=",
+            TK::SlashEquals => "/=",
+            TK::PercentEquals => "%=",
+            TK::CaretEquals => "^=",
+            TK::AndAnd => "&&",
+            TK::AndEquals => "&=",
+            TK::OrOr => "||",
+            TK::OrEquals => "|=",
+            TK::EqualEqual => "==",
+            TK::NotEqual => "!=",
+            TK::ShiftLeft => "<<",
+            TK::ShiftRight => ">>",
+            TK::ShiftLeftEquals => "<<=",
+            TK::ShiftRightEquals => ">>=",
+            // Lets keep these in explicitly for now, in case we want to add more symbols
+            TK::Ident | TK::Pragma | TK::Integer | TK::String | TK::Character |
+            TK::LineComment | TK::BlockComment | TK::SpanEnd => unreachable!(),
         }
     }
 }

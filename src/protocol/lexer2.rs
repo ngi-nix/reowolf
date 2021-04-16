@@ -220,38 +220,38 @@ impl PassPreSymbol {
         // Retrieve identifier of definition
         let (identifier_text, identifier_span) = consume_ident(&module.source, &mut iter)?;
         let ident_text = ctx.pool.intern(identifier_text);
-        let identifier = Identifier{ span: identifier_span, value: ident_text };
+        let identifier = Identifier{ span: identifier_span, value: ident_text.clone() };
 
         // Reserve space in AST for definition and add it to the symbol table
-        let symbol_definition;
+        let definition_class;
         let ast_definition_id;
         match kw {
             KeywordDefinition::Struct => {
                 let struct_def_id = ctx.heap.alloc_struct_definition(|this| {
                     StructDefinition::new_empty(this, definition_span, identifier)
                 });
-                symbol_definition = SymbolDefinition::Struct(struct_def_id);
+                definition_class = DefinitionClass::Struct;
                 ast_definition_id = struct_def_id.upcast();
             },
             KeywordDefinition::Enum => {
                 let enum_def_id = ctx.heap.alloc_enum_definition(|this| {
                     EnumDefinition::new_empty(this, definition_span, identifier)
                 });
-                symbol_definition = SymbolDefinition::Enum(enum_def_id);
+                definition_class = DefinitionClass::Enum;
                 ast_definition_id = enum_def_id.upcast();
             },
             KeywordDefinition::Union => {
                 let union_def_id = ctx.heap.alloc_union_definition(|this| {
                     UnionDefinition::new_empty(this, definition_span, identifier)
                 });
-                symbol_definition = SymbolDefinition::Union(union_def_id);
+                definition_class = DefinitionClass::Union;
                 ast_definition_id = union_def_id.upcast()
             },
             KeywordDefinition::Function => {
                 let func_def_id = ctx.heap.alloc_function_definition(|this| {
                     FunctionDefinition::new_empty(this, definition_span, identifier)
                 });
-                symbol_definition = SymbolDefinition::Function(func_def_id);
+                definition_class = DefinitionClass::Function;
                 ast_definition_id = func_def_id.upcast();
             },
             KeywordDefinition::Primitive | KeywordDefinition::Composite => {
@@ -263,19 +263,22 @@ impl PassPreSymbol {
                 let comp_def_id = ctx.heap.alloc_component_definition(|this| {
                     ComponentDefinition::new_empty(this, definition_span, component_variant, identifier)
                 });
-                symbol_definition = SymbolDefinition::Component(comp_def_id);
+                definition_class = DefinitionClass::Component;
                 ast_definition_id = comp_def_id.upcast();
             }
         }
 
         let symbol = Symbol{
-            defined_in_module: module.root_id,
-            defined_in_scope: SymbolScope::Module(module.root_id),
-            definition_span,
-            identifier_span,
-            introduced_at: None,
-            name: definition_ident,
-            definition: symbol_definition
+            name: ident_text,
+            data: SymbolVariant::Definition(SymbolDefinition{
+                defined_in_module: module.root_id,
+                defined_in_scope: SymbolScope::Module(module.root_id),
+                definition_span,
+                identifier_span,
+                introduced_at: None,
+                class: definition_class,
+                definition_id: ast_definition_id,
+            }),
         };
         self.symbols.push(symbol);
         self.definitions.push(ast_definition_id);
@@ -357,16 +360,57 @@ impl PassImport {
                 this,
                 span: import_span,
                 module_name: Identifier{ span: module_name_span, value: module_name },
-                alias: Identifier{ span: alias_span, value: alias },
+                alias: Identifier{ span: alias_span, value: alias.clone() },
                 module_id: target_root_id
             }));
             ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
-                defined_in_module: target_root_id,
-                defined_in_scope: SymbolScope::Module(target_root_id),
-                definition_span
-            })
+                name: alias,
+                data: SymbolVariant::Module(SymbolModule{
+                    root_id: target_root_id,
+                    introduced_at: import_id,
+                }),
+            });
         } else if Some(TokenKind::ColonColon) == next {
+            fn consume_symbol_and_maybe_alias<'a>(
+                source: &'a InputSource, iter: &mut TokenIter, in_scope: SymbolScope, ctx: &Ctx
+            ) -> Result<(&'a [u8], InputSpan, Option<(&'a [u8], InputSpan)>), ParseError> {
+                // Consume symbol and make sure it points to something valid
+                let (symbol, symbol_span) = consume_ident(source, iter)?;
+                let target = ctx.symbols.get_symbol_by_name_defined_in_scope(in_scope, symbol);
+                if target.is_none() {
+
+                }
+
+                if peek_ident(source, iter) == b"as" {
+                    // Consume alias
+                    iter.consume();
+                    let (alias, alias_span) = consume_ident(source, iter)?;
+                    Ok((symbol, symbol_span, Some((alias, alias_span))))
+                } else {
+                    Ok((symbol, symbol_span, None))
+                }
+            }
+
             iter.consume();
+
+            let next = iter.next();
+            if Some(TokenKind::Ident) = next {
+                // Importing a single symbol
+                iter.consume();
+                let (symbol_text, symbol_span, maybe_alias) = consume_symbol_and_maybe_alias(&module.source, &mut iter)?;
+                let target_symbol = ctx.symbols.get_symbol_by_name_defined_in_scope(
+                    SymbolScope::Module(target_root_id))
+            } else if Some(TokenKind::OpenCurly) = next {
+                // Importing multiple symbols
+                iter.consume();
+            } else if Some(TokenKind::Star) = next {
+                // Import all symbols from the module
+                iter.consume();
+            } else {
+                return Err(ParseError::new_error_str_at_pos(
+                    &module.source, iter.last_valid_pos(), "expected symbol name, '{' or '*'"
+                ));
+            }
         } else {
             // Assume implicit alias, then check if we get the semicolon next
             let module_name_str = module_name.as_str();
@@ -386,7 +430,7 @@ impl PassImport {
 fn consume_domain_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputSpan), ParseError> {
     let (_, mut span) = consume_ident(source, iter)?;
     while let Some(TokenKind::Dot) = iter.next() {
-        consume_dot(source, iter)?;
+        iter.consume();
         let (_, new_span) = consume_ident(source, iter)?;
         span.end = new_span.end;
     }
@@ -407,9 +451,14 @@ fn consume_domain_ident<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Re
     Ok((source.section(span.begin, span.end), span))
 }
 
-fn consume_dot<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(), ParseError> {
-    if Some(TokenKind::Dot) != iter.next() {
-        return Err(ParseError::new_error_str_at_pos(source, iter.last_valid_pos(), "expected a dot"));
+/// Consumes a specific expected token. Be careful to only call this with tokens that do not have a
+/// variable length.
+fn consume_token(source: &InputSource, iter: &mut TokenIter, expected: TokenKind) -> Result<(), ParseError> {
+    if Some(expected) != iter.next() {
+        return Err(ParseError::new_error_at_pos(
+            source, iter.last_valid_pos(),
+            format!("expected '{}'", expected.token_chars())
+        ));
     }
     iter.consume();
     Ok(())

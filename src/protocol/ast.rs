@@ -339,8 +339,7 @@ pub struct AliasedSymbol {
     pub position: InputPosition,
     pub name: Identifier,
     pub alias: Identifier,
-    // Phase 2: symbol resolving
-    pub definition_id: Option<DefinitionId>,
+    pub definition_id: DefinitionId,
 }
 
 #[derive(Debug, Clone)]
@@ -349,12 +348,7 @@ pub struct ImportSymbols {
     // Phase 1: parser
     pub span: InputSpan,
     pub module_name: Vec<u8>,
-    // Phase 2: module resolving
     pub module_id: Option<RootId>,
-    // Phase 1&2
-    // if symbols is empty, then we implicitly import all symbols without any
-    // aliases for them. If it is not empty, then symbols are explicitly
-    // specified, and optionally given an alias.
     pub symbols: Vec<AliasedSymbol>,
 }
 
