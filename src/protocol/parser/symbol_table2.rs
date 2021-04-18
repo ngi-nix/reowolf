@@ -88,11 +88,13 @@ impl SymbolDefinition {
     }
 }
 
+#[derive(Debug)]
 pub struct SymbolModule {
     pub root_id: RootId,
     pub introduced_at: ImportId,
 }
 
+#[derive(Debug, Clone)]
 pub struct SymbolDefinition {
     // Definition location (not necessarily the place where the symbol
     // is introduced, as it may be imported)
@@ -108,19 +110,53 @@ pub struct SymbolDefinition {
     pub definition_id: DefinitionId,
 }
 
+impl SymbolDefinition {
+    /// Clones the entire data structure, but replaces the `imported_at` field
+    /// with the supplied `ImportId`.
+    pub(crate) fn into_imported(mut self, imported_at: ImportId) -> Self {
+        self.imported_at = Some(imported_at);
+        self
+    }
+}
+
+#[derive(Debug)]
 pub enum SymbolVariant {
     Module(SymbolModule),
     Definition(SymbolDefinition),
 }
 
+impl SymbolVariant {
+    pub(crate) fn as_module(&self) -> &SymbolModule {
+        match self {
+            SymbolVariant::Module(v) => v,
+            SymbolVariant::Definition(_) => unreachable!("called 'as_module' on {:?}", self),
+        }
+    }
+
+    pub(crate) fn as_definition(&self) -> &SymbolDefinition {
+        match self {
+            SymbolVariant::Module(v) => unreachable!("called 'as_definition' on {:?}", self),
+            SymbolVariant::Definition(v) => v,
+        }
+    }
+
+    pub(crate) fn as_definition_mut(&mut self) -> &mut SymbolDefinition {
+        match self {
+            SymbolVariant::Module(v) => unreachable!("called 'as_definition_mut' on {:?}", self),
+            SymbolVariant::Definition(v) => v,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Symbol {
     pub name: StringRef<'static>,
-    pub data: SymbolVariant,
+    pub variant: SymbolVariant,
 }
 
 impl Symbol {
-    fn class(&self) -> SymbolClass {
-        match &self.data {
+    pub(crate) fn class(&self) -> SymbolClass {
+        match &self.variant {
             SymbolVariant::Module(_) => SymbolClass::Module,
             SymbolVariant::Definition(data) => data.class.as_symbol_class(),
         }
@@ -236,7 +272,7 @@ impl SymbolTable {
     ) -> Option<&Symbol> {
         match self.get_symbol_by_name(in_scope, name) {
             Some(symbol) => {
-                match &symbol.data {
+                match &symbol.variant {
                     SymbolVariant::Module(_) => {
                         None // in-scope modules are always imported
                     },
@@ -250,6 +286,29 @@ impl SymbolTable {
                 }
             },
             None => None,
+        }
+    }
+
+    /// Retrieves all symbols that are defined within a particular scope. Imported symbols are
+    /// ignored. Returns `true` if the scope was found (which may contain 0 defined symbols) and
+    /// `false` if the scope was not found.
+    pub(crate) fn get_all_symbols_defined_in_scope(&self, in_scope: SymbolScope, target: &mut Vec<Symbol>) -> bool {
+        match self.scope_lookup.get(&in_scope) {
+            Some(scope) => {
+                for symbol in &scope.symbols {
+                    if let SymbolVariant::Definition(definition) = &symbol.variant {
+                        if definition.imported_at.is_some() {
+                            continue;
+                        }
+
+                        // Defined in scope, so push onto target
+                        target.push(symbol.clone());
+                    }
+                }
+
+                true
+            },
+            None => false,
         }
     }
 }

@@ -83,8 +83,14 @@ impl InputSource2 {
         }
     }
 
-    pub fn section(&self, start: InputPosition2, end: InputPosition2) -> &[u8] {
+    #[inline]
+    pub fn section_at_pos(&self, start: InputPosition2, end: InputPosition2) -> &[u8] {
         &self.input[start.offset as usize..end.offset as usize]
+    }
+
+    #[inline]
+    pub fn section_at_span(&self, span: InputSpan) -> &[u8] {
+        &self.input[span.begin.offset as usize..span.end.offset as usize]
     }
 
     // Consumes the next character. Will check well-formedness of newlines: \r

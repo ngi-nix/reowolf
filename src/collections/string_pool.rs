@@ -17,7 +17,7 @@ impl<'a> StringRef<'a> {
     /// `StringPool`, hence cannot have a `'static` lifetime.
     pub(crate) fn new(data: &'a [u8]) -> StringRef<'a> {
         // This is an internal (compiler) function: so debug_assert that the
-        // string is valid UTF8. Most commonly the input will come from the
+        // string is valid ascii. Most commonly the input will come from the
         // code's source file, which is checked for ASCII-ness anyway.
         debug_assert!(data.is_ascii());
         let length = data.len();
@@ -29,6 +29,12 @@ impl<'a> StringRef<'a> {
         unsafe {
             let slice = std::slice::from_raw_parts::<'a, u8>(self.data, self.length);
             std::str::from_utf8_unchecked(slice)
+        }
+    }
+
+    pub fn as_bytes(&self) -> &'a [u8] {
+        unsafe {
+            std::slice::from_raw_parts::<'a, u8>(self.data, self.length)
         }
     }
 }
@@ -79,7 +85,10 @@ impl StringPool {
         }
     }
 
-    // Interns a string to the StringPool, returning a reference to it
+    /// Interns a string to the `StringPool`, returning a reference to it. The
+    /// pointer owned by `StringRef` is `'static` as the `StringPool` doesn't
+    /// reallocate/deallocate until dropped (which only happens at the end of
+    /// the program.)
     pub(crate) fn intern(&mut self, data: &[u8]) -> StringRef<'static> {
         // TODO: Large string allocations, if ever needed.
         let data_len = data.len();

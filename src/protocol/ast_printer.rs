@@ -238,7 +238,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportModule");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module_name);
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module);
                 self.kv(indent2).with_s_key("Alias").with_ascii_val(&import.alias.value);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
@@ -247,7 +247,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportSymbol");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module_name);
+                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
 

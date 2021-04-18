@@ -2526,7 +2526,7 @@ impl Lexer<'_> {
             h.alloc_import(|this| Import::Module(ImportModule{
                 this,
                 position,
-                module_name: value,
+                module: value,
                 alias,
                 module_id: None,
             }))
@@ -2575,7 +2575,7 @@ impl Lexer<'_> {
                 h.alloc_import(|this| Import::Symbols(ImportSymbols{
                     this,
                     position,
-                    module_name: value,
+                    module: value,
                     module_id: None,
                     symbols,
                 }))
@@ -2584,7 +2584,7 @@ impl Lexer<'_> {
                 h.alloc_import(|this| Import::Symbols(ImportSymbols{
                     this,
                     position,
-                    module_name: value,
+                    module: value,
                     module_id: None,
                     symbols: Vec::new()
                 }))
@@ -2603,7 +2603,7 @@ impl Lexer<'_> {
                 h.alloc_import(|this| Import::Symbols(ImportSymbols{
                     this,
                     position,
-                    module_name: value,
+                    module: value,
                     module_id: None,
                     symbols: vec![AliasedSymbol{
                         position,
@@ -2621,7 +2621,7 @@ impl Lexer<'_> {
             h.alloc_import(|this| Import::Module(ImportModule{
                 this,
                 position,
-                module_name: value,
+                module: value,
                 alias: Identifier{
                     position: last_ident_pos,
                     value: Vec::from(alias_value),

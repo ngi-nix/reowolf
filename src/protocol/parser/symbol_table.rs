@@ -123,7 +123,7 @@ impl SymbolTable {
                     Import::Symbols(import) => {
                         if import.symbols.is_empty() {
                             // Add all symbols from the other module
-                            match self.module_lookup.get(&import.module_name) {
+                            match self.module_lookup.get(&import.module) {
                                 Some(target_module_id) => {
                                     lookup_reserve_size += heap[*target_module_id].definitions.len()
                                 },
@@ -174,7 +174,7 @@ impl SymbolTable {
                 match import {
                     Import::Module(import) => {
                         // Find the module using its name
-                        let target_root_id = self.resolve_module(&import.module_name);
+                        let target_root_id = self.resolve_module(&import.module);
                         if target_root_id.is_none() {
                             return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module"));
                         }
@@ -196,7 +196,7 @@ impl SymbolTable {
                     },
                     Import::Symbols(import) => {
                         // Find the target module using its name
-                        let target_root_id = self.resolve_module(&import.module_name);
+                        let target_root_id = self.resolve_module(&import.module);
                         if target_root_id.is_none() {
                             return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module of symbol imports"));
                         }

@@ -176,7 +176,6 @@ pub struct Heap {
     // Contents of a file, these are the elements the `Root` elements refer to
     pragmas: Arena<Pragma>,
     pub(crate) imports: Arena<Import>,
-    identifiers: Arena<Identifier>,
     pub(crate) parser_types: Arena<ParserType>,
     pub(crate) variables: Arena<Variable>,
     pub(crate) definitions: Arena<Definition>,
@@ -191,7 +190,6 @@ impl Heap {
             protocol_descriptions: Arena::new(),
             pragmas: Arena::new(),
             imports: Arena::new(),
-            identifiers: Arena::new(),
             parser_types: Arena::new(),
             variables: Arena::new(),
             definitions: Arena::new(),
@@ -303,13 +301,19 @@ impl Import {
     pub(crate) fn as_module(&self) -> &ImportModule {
         match self {
             Import::Module(m) => m,
-            _ => panic!("Unable to cast 'Import' to 'ImportModule'")
+            _ => unreachable!("Unable to cast 'Import' to 'ImportModule'")
         }
     }
     pub(crate) fn as_symbols(&self) -> &ImportSymbols {
         match self {
             Import::Symbols(m) => m,
-            _ => panic!("Unable to cast 'Import' to 'ImportSymbols'")
+            _ => unreachable!("Unable to cast 'Import' to 'ImportSymbols'")
+        }
+    }
+    pub(crate) fn as_symbols_mut(&mut self) -> &mut ImportSymbols {
+        match self {
+            Import::Symbols(m) => m,
+            _ => unreachable!("Unable to cast 'Import' to 'ImportSymbols'")
         }
     }
 }
@@ -328,17 +332,15 @@ pub struct ImportModule {
     pub this: ImportId,
     // Phase 1: parser
     pub span: InputSpan,
-    pub module_name: Identifier,
+    pub module: Identifier,
     pub alias: Identifier,
     pub module_id: RootId,
 }
 
 #[derive(Debug, Clone)]
 pub struct AliasedSymbol {
-    // Phase 1: parser
-    pub position: InputPosition,
     pub name: Identifier,
-    pub alias: Identifier,
+    pub alias: Option<Identifier>,
     pub definition_id: DefinitionId,
 }
 
@@ -347,8 +349,8 @@ pub struct ImportSymbols {
     pub this: ImportId,
     // Phase 1: parser
     pub span: InputSpan,
-    pub module_name: Vec<u8>,
-    pub module_id: Option<RootId>,
+    pub module: Identifier,
+    pub module_id: RootId,
     pub symbols: Vec<AliasedSymbol>,
 }
 
@@ -604,11 +606,9 @@ pub enum ParserTypeVariant {
     // Basic builtin
     Message,
     Bool,
-    Byte,
-    Short,
-    Int,
-    Long,
-    String,
+    UInt8, Uint16, UInt32, UInt64,
+    SInt8, SInt16, SInt32, SInt64,
+    Character, String,
     // Literals (need to get concrete builtin type during typechecking)
     IntegerLiteral,
     Inferred,
@@ -1079,7 +1079,6 @@ impl VariableScope for Definition {
 
 #[derive(Debug, Clone)]
 pub struct StructFieldDefinition {
-    pub position: InputPosition,
     pub field: Identifier,
     pub parser_type: ParserTypeId,
 }

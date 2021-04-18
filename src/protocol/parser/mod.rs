@@ -2,24 +2,60 @@ mod depth_visitor;
 pub(crate) mod symbol_table;
 pub(crate) mod symbol_table2;
 pub(crate) mod type_table;
+pub(crate) mod tokens;
+pub(crate) mod token_parsing;
+pub(crate) mod pass_tokenizer;
+pub(crate) mod pass_symbols;
+pub(crate) mod pass_imports;
+pub(crate) mod pass_definitions;
 mod type_resolver;
 mod visitor;
 mod visitor_linker;
 mod utils;
 
 use depth_visitor::*;
-use symbol_table::SymbolTable;
+use tokens::*;
+use crate::collections::*;
+use symbol_table2::SymbolTable;
 use visitor::Visitor2;
 use visitor_linker::ValidityAndLinkerVisitor;
 use type_resolver::{TypeResolvingVisitor, ResolveQueue};
 use type_table::{TypeTable, TypeCtx};
 
 use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
+use crate::protocol::input_source2::{InputSource2 as InputSource};
 use crate::protocol::lexer::*;
 
 use std::collections::HashMap;
 use crate::protocol::ast_printer::ASTWriter;
+
+#[derive(PartialEq, Eq)]
+pub enum ModuleCompilationPhase {
+    Source,                 // only source is set
+    Tokenized,              // source is tokenized
+    SymbolsScanned,         // all definitions are linked to their type class
+    ImportsResolved,        // all imports are added to the symbol table
+    DefinitionsParsed,      // produced the AST for the entire module
+    ValidatedAndLinked,     // AST is traversed and has linked the required AST nodes
+    Typed,                  // Type inference and checking has been performed
+}
+
+pub struct Module {
+    // Buffers
+    source: InputSource,
+    tokens: TokenBuffer,
+    // Identifiers
+    root_id: RootId,
+    name: Option<(PragmaId, StringRef<'static>)>,
+    version: Option<(PragmaId, i64)>,
+    phase: ModuleCompilationPhase,
+}
+
+pub struct PassCtx<'a> {
+    heap: &'a mut Heap,
+    symbols: &'a mut SymbolTable,
+    pool: &'a mut StringPool,
+}
 
 // TODO: @fixme, pub qualifier
 pub(crate) struct LexedModule {
@@ -156,13 +192,13 @@ impl Parser {
             match import {
                 Import::Module(import) => {
                     debug_assert!(import.module_id.is_none(), "module import already resolved");
-                    let target_module_id = self.symbol_table.resolve_module(&import.module_name)
+                    let target_module_id = self.symbol_table.resolve_module(&import.module)
                         .expect("module import is resolved by symbol table");
                     import.module_id = Some(target_module_id)
                 },
                 Import::Symbols(import) => {
                     debug_assert!(import.module_id.is_none(), "module of symbol import already resolved");
-                    let target_module_id = self.symbol_table.resolve_module(&import.module_name)
+                    let target_module_id = self.symbol_table.resolve_module(&import.module)
                         .expect("symbol import's module is resolved by symbol table");
                     import.module_id = Some(target_module_id);
 
