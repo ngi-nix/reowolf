@@ -178,10 +178,6 @@ impl fmt::Display for InputPosition {
     }
 }
 
-pub trait SyntaxElement {
-    fn position(&self) -> InputPosition;
-}
-
 #[derive(Debug)]
 pub enum ParseErrorType {
     Info,

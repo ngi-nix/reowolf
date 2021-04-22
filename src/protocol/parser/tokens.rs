@@ -66,7 +66,9 @@ pub(crate) enum TokenKind {
     EqualEqual,     // ==
     NotEqual,       // !=
     ShiftLeft,      // <<
+    LessEquals,     // <=
     ShiftRight,     // >>
+    GreaterEquals,  // >=
     // Operator-like (three characters)
     ShiftLeftEquals,// <<=
     ShiftRightEquals, // >>=
@@ -146,7 +148,9 @@ impl TokenKind {
             TK::EqualEqual => "==",
             TK::NotEqual => "!=",
             TK::ShiftLeft => "<<",
+            TK::LessEquals => "<=",
             TK::ShiftRight => ">>",
+            TK::GreaterEquals => ">=",
             TK::ShiftLeftEquals => "<<=",
             TK::ShiftRightEquals => ">>=",
             // Lets keep these in explicitly for now, in case we want to add more symbols
@@ -252,7 +256,7 @@ impl<'a> TokenIter<'a> {
     /// Returns the next token (but skips over comments), or `None` if at the
     /// end of the range
     pub(crate) fn next(&mut self) -> Option<TokenKind> {
-        while let Some(token_kind) = self.next() {
+        while let Some(token_kind) = self.next_including_comments() {
             if token_kind != TokenKind::LineComment && token_kind != TokenKind::BlockComment {
                 return Some(token_kind);
             }
@@ -260,6 +264,19 @@ impl<'a> TokenIter<'a> {
         }
 
         return None
+    }
+
+    /// Peeks ahead by one token (i.e. the one that comes after `next()`), and
+    /// skips over comments
+    pub(crate) fn peek(&self) -> Option<TokenKind> {
+        for next_idx in self.cur + 1..self.end {
+            let next_kind = self.tokens[next_idx].kind;
+            if next_kind != TokenKind::LineComment && next_kind != TokenKind::BlockComment && next_kind != TokenKind::SpanEnd {
+                return Some(next_kind);
+            }
+        }
+
+        return None;
     }
 
     /// Returns the start position belonging to the token returned by `next`. If

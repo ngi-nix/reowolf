@@ -29,6 +29,10 @@ use crate::protocol::lexer::*;
 use std::collections::HashMap;
 use crate::protocol::ast_printer::ASTWriter;
 
+pub(crate) const LIMIT_NUM_TYPE_NODES: usize = 64;
+pub(crate) const LIMIT_NUM_POLY_VARS: usize = 64;
+pub(crate) const LIMIT_NUM_PROC_ARGS: usize = 64;
+
 #[derive(PartialEq, Eq)]
 pub enum ModuleCompilationPhase {
     Source,                 // only source is set

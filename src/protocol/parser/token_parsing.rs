@@ -54,10 +54,10 @@ pub(crate) const KW_TYPE_UINT8:    &'static [u8] = b"u8";
 pub(crate) const KW_TYPE_UINT16:   &'static [u8] = b"u16";
 pub(crate) const KW_TYPE_UINT32:   &'static [u8] = b"u32";
 pub(crate) const KW_TYPE_UINT64:   &'static [u8] = b"u64";
-pub(crate) const KW_TYPE_SINT8:     &'static [u8] = b"s8";
-pub(crate) const KW_TYPE_SINT16:    &'static [u8] = b"s16";
-pub(crate) const KW_TYPE_SINT32:    &'static [u8] = b"s32";
-pub(crate) const KW_TYPE_SINT64:    &'static [u8] = b"s64";
+pub(crate) const KW_TYPE_SINT8:    &'static [u8] = b"s8";
+pub(crate) const KW_TYPE_SINT16:   &'static [u8] = b"s16";
+pub(crate) const KW_TYPE_SINT32:   &'static [u8] = b"s32";
+pub(crate) const KW_TYPE_SINT64:   &'static [u8] = b"s64";
 pub(crate) const KW_TYPE_CHAR:     &'static [u8] = b"char";
 pub(crate) const KW_TYPE_STRING:   &'static [u8] = b"string";
 pub(crate) const KW_TYPE_INFERRED: &'static [u8] = b"auto";
@@ -93,15 +93,16 @@ pub(crate) fn consume_domain_ident<'a>(
 
 /// Consumes a specific expected token. Be careful to only call this with tokens
 /// that do not have a variable length.
-pub(crate) fn consume_token(source: &InputSource, iter: &mut TokenIter, expected: TokenKind) -> Result<(), ParseError> {
+pub(crate) fn consume_token(source: &InputSource, iter: &mut TokenIter, expected: TokenKind) -> Result<InputSpan, ParseError> {
     if Some(expected) != iter.next() {
         return Err(ParseError::new_error_at_pos(
             source, iter.last_valid_pos(),
             format!("expected '{}'", expected.token_chars())
         ));
     }
+    let span = iter.next_span();
     iter.consume();
-    Ok(())
+    Ok(span)
 }
 
 /// Consumes a comma-separated list of items if the opening delimiting token is
@@ -113,7 +114,8 @@ pub(crate) fn consume_token(source: &InputSource, iter: &mut TokenIter, expected
 /// - Found an opening delimiter, but processing an item failed.
 pub(crate) fn maybe_consume_comma_separated<T, F>(
     open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
-    consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str
+    consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str,
+    close_pos: Option<&mut InputPosition>
 ) -> Result<bool, ParseError>
     where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>
 {
@@ -129,9 +131,14 @@ pub(crate) fn maybe_consume_comma_separated<T, F>(
     loop {
         next = iter.next();
         if Some(close_delim) == next {
+            if let Some(close_pos) = close_pos {
+                // If requested return the position of the closing delimiter
+                let (_, new_close_pos) = iter.next_positions();
+                *close_pos = new_close_pos;
+            }
             iter.consume();
             break;
-        } else if !had_comma {
+        } else if !had_comma || next.is_none() {
             return Err(ParseError::new_error_at_pos(
                 source, iter.last_valid_pos(),
                 format!("expected a '{}', or {}", close_delim.token_chars(), item_name_and_article)
@@ -151,22 +158,59 @@ pub(crate) fn maybe_consume_comma_separated<T, F>(
     Ok(true)
 }
 
+pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut TokenIter) -> Result<(), ParseError>>(
+    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
+    consumer_fn: F, item_name_and_article: &'static str
+) -> Result<bool, ParseError> {
+    let mut next = iter.next();
+    if Some(open_delim) != next {
+        return Ok(false);
+    }
+
+    iter.consume();
+    let mut had_comma = true;
+    loop {
+        next = iter.next();
+        if Some(close_delim) == next {
+            iter.consume();
+            break;
+        } else if !had_comma {
+            return Err(ParseError::new_error_at_pos(
+                source, iter.last_valid_pos(),
+                format!("expected a '{}', or {}", close_delim.token_chars(), item_name_and_article)
+            ));
+        }
+
+        consumer_fn(source, iter)?;
+        next = iter.next();
+        had_comma = next == Some(TokenKind::Comma);
+        if had_comma {
+            iter.consume();
+        }
+    }
+
+    Ok(true)
+}
+
 /// Consumes a comma-separated list and expected the opening and closing
 /// characters to be present. The returned array may still be empty
 pub(crate) fn consume_comma_separated<T, F>(
     open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
     consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str,
-    list_name_and_article: &'static str
+    list_name_and_article: &'static str, close_pos: Option<&mut InputPosition>
 ) -> Result<(), ParseError>
     where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>
 {
     let first_pos = iter.last_valid_pos();
-    match maybe_consume_comma_separated(open_delim, close_delim, source, iter, consumer_fn, target, item_name_and_article) {
+    match maybe_consume_comma_separated(
+        open_delim, close_delim, source, iter, consumer_fn, target,
+        item_name_and_article, close_pos
+    ) {
         Ok(true) => Ok(()),
         Ok(false) => {
             return Err(ParseError::new_error_at_pos(
                 source, first_pos,
-                format!("expected a {}", list_name_and_article)
+                format!("expected {}", list_name_and_article)
             ));
         },
         Err(err) => Err(err)
@@ -224,6 +268,24 @@ pub(crate) fn consume_integer_literal(source: &InputSource, iter: &mut TokenIter
         )),
     }
 }
+
+/// Consumes a character literal. We currently support a limited number of
+/// backslash-escaped characters
+pub(crate) fn consume_character_literal(source: &InputSource, iter: &mut TokenIter, buffer: &mut String) -> Result<char, ParseError> {
+    if Some(TokenKind::Character) != iter.next() {
+        return Err(ParseError::new_error_str_at_pos(source, iter.last_valid_pos(), "expected a character literal"));
+    }
+    let char_span = iter.next_span();
+    iter.consume();
+
+    let char_text = source.section_at_span(char_span);
+
+    //
+}
+
+/// Consumes a string literal. We currently support a limited number of
+/// backslash-escaped characters.
+pub(crate) fn consume_string_literal(source: &InputSource, iter: &mut TokenIter, buffer: &mut String) -> Result<(>
 
 pub(crate) fn consume_pragma<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputPosition, InputPosition), ParseError> {
     if Some(TokenKind::Pragma) != iter.next() {

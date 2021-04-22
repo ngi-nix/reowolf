@@ -254,12 +254,6 @@ impl Root {
     }
 }
 
-impl SyntaxElement for Root {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Pragma {
     Version(PragmaVersion),
@@ -314,15 +308,6 @@ impl Import {
         match self {
             Import::Symbols(m) => m,
             _ => unreachable!("Unable to cast 'Import' to 'ImportSymbols'")
-        }
-    }
-}
-
-impl SyntaxElement for Import {
-    fn position(&self) -> InputPosition {
-        match self {
-            Import::Module(m) => m.position,
-            Import::Symbols(m) => m.position
         }
     }
 }
@@ -600,33 +585,43 @@ impl<'a> NamespacedIdentifierIter<'a> {
     }
 }
 
-/// TODO: @types Remove the Message -> Byte hack at some point...
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialOrd, Ord)]
 pub enum ParserTypeVariant {
     // Basic builtin
     Message,
     Bool,
-    UInt8, Uint16, UInt32, UInt64,
+    UInt8, UInt16, UInt32, UInt64,
     SInt8, SInt16, SInt32, SInt64,
     Character, String,
     // Literals (need to get concrete builtin type during typechecking)
     IntegerLiteral,
     Inferred,
-    // Complex builtins
-    Array(ParserTypeId), // array of a type
-    Input(ParserTypeId), // typed input endpoint of a channel
-    Output(ParserTypeId), // typed output endpoint of a channel
-    Symbolic(SymbolicParserType), // symbolic type (definition or polyarg)
+    // Builtins expecting one subsequent type
+    Array,
+    Input,
+    Output,
+    // User-defined types
+    PolymorphicArgument(DefinitionId, usize), // usize = index into polymorphic variables
+    Definition(DefinitionId, usize), // usize = number of following subtypes
 }
 
 impl ParserTypeVariant {
-    pub(crate) fn supports_polymorphic_args(&self) -> bool {
-        use ParserTypeVariant::*;
+    pub(crate) fn num_embedded(&self) -> usize {
         match self {
-            Message | Bool | Byte | Short | Int | Long | String | IntegerLiteral | Inferred => false,
-            _ => true
+            x if *x <= ParserTypeVariant::Inferred => 0,
+            x if *x <= ParserTypeVariant::Output => 1,
+            ParserTypeVariant::PolymorphicArgument(_, _) => 0,
+            ParserTypeVariant::Definition(_, num) => num,
+            _ => { debug_assert!(false); 0 },
         }
     }
+}
+
+pub struct ParserTypeElement {
+    // TODO: @cleanup, do we ever need the span of a user-defined type after
+    //  constructing it?
+    pub full_span: InputSpan, // full span of type, including any polymorphic arguments
+    pub variant: ParserTypeVariant,
 }
 
 /// ParserType is a specification of a type during the parsing phase and initial
@@ -635,9 +630,7 @@ impl ParserTypeVariant {
 /// not yet determined).
 #[derive(Debug, Clone)]
 pub struct ParserType {
-    pub this: ParserTypeId,
-    pub pos: InputPosition,
-    pub variant: ParserTypeVariant,
+    pub elements: Vec<ParserTypeElement>
 }
 
 /// SymbolicParserType is the specification of a symbolic type. During the
@@ -910,30 +903,15 @@ impl Variable {
     }
 }
 
-impl SyntaxElement for Variable {
-    fn position(&self) -> InputPosition {
-        match self {
-            Variable::Parameter(decl) => decl.position(),
-            Variable::Local(decl) => decl.position(),
-        }
-    }
-}
-
 /// TODO: Remove distinction between parameter/local and add an enum to indicate
 ///     the distinction between the two
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub this: ParameterId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub parser_type: ParserTypeId,
+    // Phase 2: parser
+    pub span: InputSpan,
+    pub parser_type: ParserType,
     pub identifier: Identifier,
-}
-
-impl SyntaxElement for Parameter {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -945,11 +923,6 @@ pub struct Local {
     pub identifier: Identifier,
     // Phase 2: linker
     pub relative_pos_in_block: u32,
-}
-impl SyntaxElement for Local {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -968,7 +941,13 @@ impl Definition {
             _ => false
         }
     }
-    pub fn as_struct(&self) -> &StructDefinition {
+    pub(crate) fn as_struct(&self) -> &StructDefinition {
+        match self {
+            Definition::Struct(result) => result,
+            _ => panic!("Unable to cast 'Definition' to 'StructDefinition'"),
+        }
+    }
+    pub(crate) fn as_struct_mut(&mut self) -> &mut StructDefinition {
         match self {
             Definition::Struct(result) => result,
             _ => panic!("Unable to cast 'Definition' to 'StructDefinition'"),
@@ -980,7 +959,13 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_enum(&self) -> &EnumDefinition {
+    pub(crate) fn as_enum(&self) -> &EnumDefinition {
+        match self {
+            Definition::Enum(result) => result,
+            _ => panic!("Unable to cast 'Definition' to 'EnumDefinition'"),
+        }
+    }
+    pub(crate) fn as_enum_mut(&mut self) -> &mut EnumDefinition {
         match self {
             Definition::Enum(result) => result,
             _ => panic!("Unable to cast 'Definition' to 'EnumDefinition'"),
@@ -992,9 +977,15 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_union(&self) -> &UnionDefinition {
+    pub(crate) fn as_union(&self) -> &UnionDefinition {
         match self {
             Definition::Union(result) => result, 
+            _ => panic!("Unable to cast 'Definition' to 'UnionDefinition'"),
+        }
+    }
+    pub(crate) fn as_union_mut(&mut self) -> &mut UnionDefinition {
+        match self {
+            Definition::Union(result) => result,
             _ => panic!("Unable to cast 'Definition' to 'UnionDefinition'"),
         }
     }
@@ -1004,7 +995,13 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_component(&self) -> &ComponentDefinition {
+    pub(crate) fn as_component(&self) -> &ComponentDefinition {
+        match self {
+            Definition::Component(result) => result,
+            _ => panic!("Unable to cast `Definition` to `Component`"),
+        }
+    }
+    pub(crate) fn as_component_mut(&mut self) -> &mut ComponentDefinition {
         match self {
             Definition::Component(result) => result,
             _ => panic!("Unable to cast `Definition` to `Component`"),
@@ -1016,7 +1013,13 @@ impl Definition {
             _ => false,
         }
     }
-    pub fn as_function(&self) -> &FunctionDefinition {
+    pub(crate) fn as_function(&self) -> &FunctionDefinition {
+        match self {
+            Definition::Function(result) => result,
+            _ => panic!("Unable to cast `Definition` to `Function`"),
+        }
+    }
+    pub(crate) fn as_function_mut(&mut self) -> &mut FunctionDefinition {
         match self {
             Definition::Function(result) => result,
             _ => panic!("Unable to cast `Definition` to `Function`"),
@@ -1048,16 +1051,13 @@ impl Definition {
             _ => panic!("cannot retrieve body (for EnumDefinition or StructDefinition)")
         }
     }
-}
-
-impl SyntaxElement for Definition {
-    fn position(&self) -> InputPosition {
+    pub fn poly_vars(&self) -> &Vec<Identifier> {
         match self {
-            Definition::Struct(def) => def.position,
-            Definition::Enum(def) => def.position,
-            Definition::Union(def) => def.position,
-            Definition::Component(def) => def.position(),
-            Definition::Function(def) => def.position(),
+            Definition::Struct(def) => &def.poly_vars,
+            Definition::Enum(def) => &def.poly_vars,
+            Definition::Union(def) => &def.poly_vars,
+            Definition::Component(def) => &def.poly_vars,
+            Definition::Function(def) => &def.poly_vars,
         }
     }
 }
@@ -1079,23 +1079,25 @@ impl VariableScope for Definition {
 
 #[derive(Debug, Clone)]
 pub struct StructFieldDefinition {
+    pub span: InputSpan,
     pub field: Identifier,
-    pub parser_type: ParserTypeId,
+    pub parser_type: ParserType,
 }
 
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
     pub this: StructDefinitionId,
-    // Phase 1: parser
+    // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
+    // Phase 2: parsing
     pub fields: Vec<StructFieldDefinition>
 }
 
 impl StructDefinition {
-    pub(crate) fn new_empty(this: StructDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
-        Self{ this, span, identifier, poly_vars: Vec::new(), fields: Vec::new() }
+    pub(crate) fn new_empty(this: StructDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
+        Self{ this, span, identifier, poly_vars, fields: Vec::new() }
     }
 }
 
@@ -1107,7 +1109,6 @@ pub enum EnumVariantValue {
 
 #[derive(Debug, Clone)]
 pub struct EnumVariantDefinition {
-    pub position: InputPosition,
     pub identifier: Identifier,
     pub value: EnumVariantValue,
 }
@@ -1115,28 +1116,29 @@ pub struct EnumVariantDefinition {
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
     pub this: EnumDefinitionId,
-    // Phase 1: parser
+    // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
+    // Phase 2: parsing
     pub variants: Vec<EnumVariantDefinition>,
 }
 
 impl EnumDefinition {
-    pub(crate) fn new_empty(this: EnumDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
-        Self{ this, span, identifier, poly_vars: Vec::new(), variants: Vec::new() }
+    pub(crate) fn new_empty(this: EnumDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
+        Self{ this, span, identifier, poly_vars, variants: Vec::new() }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum UnionVariantValue {
     None,
-    Embedded(Vec<ParserTypeId>),
+    Embedded(Vec<ParserType>),
 }
 
 #[derive(Debug, Clone)]
 pub struct UnionVariantDefinition {
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub identifier: Identifier,
     pub value: UnionVariantValue,
 }
@@ -1144,16 +1146,17 @@ pub struct UnionVariantDefinition {
 #[derive(Debug, Clone)]
 pub struct UnionDefinition {
     pub this: UnionDefinitionId,
-    // Phase 1: parser
+    // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
+    // Phase 2: parsing
     pub variants: Vec<UnionVariantDefinition>,
 }
 
 impl UnionDefinition {
-    pub(crate) fn new_empty(this: UnionDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
-        Self{ this, span, identifier, poly_vars: Vec::new(), variants: Vec::new() }
+    pub(crate) fn new_empty(this: UnionDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
+        Self{ this, span, identifier, poly_vars, variants: Vec::new() }
     }
 }
 
@@ -1166,59 +1169,47 @@ pub enum ComponentVariant {
 #[derive(Debug, Clone)]
 pub struct ComponentDefinition {
     pub this: ComponentDefinitionId,
-    // Phase 1: parser
+    // Phase 1: symbol scanning
     pub span: InputSpan,
     pub variant: ComponentVariant,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
+    // Phase 2: parsing
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
 
 impl ComponentDefinition {
-    pub(crate) fn new_empty(this: ComponentDefinitionId, span: InputSpan, variant: ComponentVariant, identifier: Identifier) -> Self {
+    pub(crate) fn new_empty(this: ComponentDefinitionId, span: InputSpan, variant: ComponentVariant, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
         Self{ 
-            this, span, variant, identifier, 
-            poly_vars: Vec::new(), 
+            this, span, variant, identifier, poly_vars,
             parameters: Vec::new(), 
             body: StatementId::new_invalid()
         }
     }
 }
 
-impl SyntaxElement for ComponentDefinition {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
     pub this: FunctionDefinitionId,
-    // Phase 1: parser
+    // Phase 1: symbol scanning
     pub span: InputSpan,
-    pub return_type: ParserTypeId,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
+    // Phase 2: parsing
+    pub return_types: Vec<ParserType>,
     pub parameters: Vec<ParameterId>,
     pub body: StatementId,
 }
 
 impl FunctionDefinition {
-    pub(crate) fn new_empty(this: FunctionDefinitionId, span: InputSpan, identifier: Identifier) -> Self {
+    pub(crate) fn new_empty(this: FunctionDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
         Self {
-            this, span, identifier,
+            this, span, identifier, poly_vars,
             return_type: ParserTypeId::new_invalid(),
-            poly_vars: Vec::new(),
             parameters: Vec::new(),
             body: StatementId::new_invalid(),
         }
-    }
-}
-
-impl SyntaxElement for FunctionDefinition {
-    fn position(&self) -> InputPosition {
-        self.position
     }
 }
 
@@ -1432,35 +1423,11 @@ impl Statement {
     }
 }
 
-impl SyntaxElement for Statement {
-    fn position(&self) -> InputPosition {
-        match self {
-            Statement::Block(stmt) => stmt.position(),
-            Statement::Local(stmt) => stmt.position(),
-            Statement::Skip(stmt) => stmt.position(),
-            Statement::Labeled(stmt) => stmt.position(),
-            Statement::If(stmt) => stmt.position(),
-            Statement::EndIf(stmt) => stmt.position(),
-            Statement::While(stmt) => stmt.position(),
-            Statement::EndWhile(stmt) => stmt.position(),
-            Statement::Break(stmt) => stmt.position(),
-            Statement::Continue(stmt) => stmt.position(),
-            Statement::Synchronous(stmt) => stmt.position(),
-            Statement::EndSynchronous(stmt) => stmt.position(),
-            Statement::Return(stmt) => stmt.position(),
-            Statement::Assert(stmt) => stmt.position(),
-            Statement::Goto(stmt) => stmt.position(),
-            Statement::New(stmt) => stmt.position(),
-            Statement::Expression(stmt) => stmt.position(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct BlockStatement {
     pub this: BlockStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub statements: Vec<StatementId>,
     // Phase 2: linker
     pub parent_scope: Option<Scope>,
@@ -1495,12 +1462,6 @@ impl BlockStatement {
     pub fn first(&self) -> StatementId {
         // It is an invariant (guaranteed by the lexer) that block statements have at least one stmt
         *self.statements.first().unwrap()
-    }
-}
-
-impl SyntaxElement for BlockStatement {
-    fn position(&self) -> InputPosition {
-        self.position
     }
 }
 
@@ -1552,15 +1513,6 @@ impl LocalStatement {
     }
 }
 
-impl SyntaxElement for LocalStatement {
-    fn position(&self) -> InputPosition {
-        match self {
-            LocalStatement::Memory(stmt) => stmt.position(),
-            LocalStatement::Channel(stmt) => stmt.position(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct MemoryStatement {
     pub this: MemoryStatementId,
@@ -1569,12 +1521,6 @@ pub struct MemoryStatement {
     pub variable: LocalId,
     // Phase 2: linker
     pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for MemoryStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 /// ChannelStatement is the declaration of an input and output port associated
@@ -1594,12 +1540,6 @@ pub struct ChannelStatement {
     pub next: Option<StatementId>,
 }
 
-impl SyntaxElement for ChannelStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SkipStatement {
     pub this: SkipStatementId,
@@ -1607,12 +1547,6 @@ pub struct SkipStatement {
     pub position: InputPosition,
     // Phase 2: linker
     pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for SkipStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1627,12 +1561,6 @@ pub struct LabeledStatement {
     pub in_sync: Option<SynchronousStatementId>,
 }
 
-impl SyntaxElement for LabeledStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct IfStatement {
     pub this: IfStatementId,
@@ -1645,12 +1573,6 @@ pub struct IfStatement {
     pub end_if: Option<EndIfStatementId>,
 }
 
-impl SyntaxElement for IfStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
@@ -1658,12 +1580,6 @@ pub struct EndIfStatement {
     pub start_if: IfStatementId,
     pub position: InputPosition, // of corresponding if statement
     pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for EndIfStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1678,12 +1594,6 @@ pub struct WhileStatement {
     pub in_sync: Option<SynchronousStatementId>,
 }
 
-impl SyntaxElement for WhileStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
@@ -1691,12 +1601,6 @@ pub struct EndWhileStatement {
     pub start_while: WhileStatementId,
     pub position: InputPosition, // of corresponding while
     pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for EndWhileStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1709,12 +1613,6 @@ pub struct BreakStatement {
     pub target: Option<EndWhileStatementId>,
 }
 
-impl SyntaxElement for BreakStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ContinueStatement {
     pub this: ContinueStatementId,
@@ -1723,12 +1621,6 @@ pub struct ContinueStatement {
     pub label: Option<Identifier>,
     // Phase 2: linker
     pub target: Option<WhileStatementId>,
-}
-
-impl SyntaxElement for ContinueStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1741,12 +1633,6 @@ pub struct SynchronousStatement {
     // Phase 2: linker
     pub end_sync: Option<EndSynchronousStatementId>,
     pub parent_scope: Option<Scope>,
-}
-
-impl SyntaxElement for SynchronousStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 impl VariableScope for SynchronousStatement {
@@ -1774,24 +1660,12 @@ pub struct EndSynchronousStatement {
     pub next: Option<StatementId>,
 }
 
-impl SyntaxElement for EndSynchronousStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub this: ReturnStatementId,
     // Phase 1: parser
     pub position: InputPosition,
     pub expression: ExpressionId,
-}
-
-impl SyntaxElement for ReturnStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1804,12 +1678,6 @@ pub struct AssertStatement {
     pub next: Option<StatementId>,
 }
 
-impl SyntaxElement for AssertStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct GotoStatement {
     pub this: GotoStatementId,
@@ -1818,12 +1686,6 @@ pub struct GotoStatement {
     pub label: Identifier,
     // Phase 2: linker
     pub target: Option<LabeledStatementId>,
-}
-
-impl SyntaxElement for GotoStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1836,12 +1698,6 @@ pub struct NewStatement {
     pub next: Option<StatementId>,
 }
 
-impl SyntaxElement for NewStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ExpressionStatement {
     pub this: ExpressionStatementId,
@@ -1850,12 +1706,6 @@ pub struct ExpressionStatement {
     pub expression: ExpressionId,
     // Phase 2: linker
     pub next: Option<StatementId>,
-}
-
-impl SyntaxElement for ExpressionStatement {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -2043,25 +1893,6 @@ impl Expression {
     }
 }
 
-impl SyntaxElement for Expression {
-    fn position(&self) -> InputPosition {
-        match self {
-            Expression::Assignment(expr) => expr.position(),
-            Expression::Binding(expr) => expr.position,
-            Expression::Conditional(expr) => expr.position(),
-            Expression::Binary(expr) => expr.position(),
-            Expression::Unary(expr) => expr.position(),
-            Expression::Indexing(expr) => expr.position(),
-            Expression::Slicing(expr) => expr.position(),
-            Expression::Select(expr) => expr.position(),
-            Expression::Array(expr) => expr.position(),
-            Expression::Literal(expr) => expr.position(),
-            Expression::Call(expr) => expr.position(),
-            Expression::Variable(expr) => expr.position(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum AssignmentOperator {
     Set,
@@ -2080,21 +1911,15 @@ pub enum AssignmentOperator {
 #[derive(Debug, Clone)]
 pub struct AssignmentExpression {
     pub this: AssignmentExpressionId,
-    // Phase 1: parser
-    pub position: InputPosition,
+    // Phase 2: parser
+    pub span: InputSpan, // of the operator
     pub left: ExpressionId,
     pub operation: AssignmentOperator,
     pub right: ExpressionId,
-    // Phase 2: linker
+    // Phase 3: linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Phase 4: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for AssignmentExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2114,7 +1939,7 @@ pub struct BindingExpression {
 pub struct ConditionalExpression {
     pub this: ConditionalExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of question mark operator
     pub test: ExpressionId,
     pub true_expression: ExpressionId,
     pub false_expression: ExpressionId,
@@ -2122,12 +1947,6 @@ pub struct ConditionalExpression {
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for ConditionalExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2157,7 +1976,7 @@ pub enum BinaryOperator {
 pub struct BinaryExpression {
     pub this: BinaryExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the operator
     pub left: ExpressionId,
     pub operation: BinaryOperator,
     pub right: ExpressionId,
@@ -2165,12 +1984,6 @@ pub struct BinaryExpression {
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for BinaryExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2189,7 +2002,7 @@ pub enum UnaryOperation {
 pub struct UnaryExpression {
     pub this: UnaryExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the operator
     pub operation: UnaryOperation,
     pub expression: ExpressionId,
     // Phase 2: linker
@@ -2198,17 +2011,11 @@ pub struct UnaryExpression {
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for UnaryExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct IndexingExpression {
     pub this: IndexingExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub subject: ExpressionId,
     pub index: ExpressionId,
     // Phase 2: linker
@@ -2217,17 +2024,11 @@ pub struct IndexingExpression {
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for IndexingExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SlicingExpression {
     pub this: SlicingExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // from '[' to ']';
     pub subject: ExpressionId,
     pub from_index: ExpressionId,
     pub to_index: ExpressionId,
@@ -2237,17 +2038,11 @@ pub struct SlicingExpression {
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for SlicingExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct SelectExpression {
     pub this: SelectExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the '.'
     pub subject: ExpressionId,
     pub field: Field,
     // Phase 2: linker
@@ -2256,28 +2051,16 @@ pub struct SelectExpression {
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for SelectExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ArrayExpression {
     pub this: ArrayExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // from the opening to closing delimiter
     pub elements: Vec<ExpressionId>,
     // Phase 2: linker
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for ArrayExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 // TODO: @tokenizer Symbolic function calls are ambiguous with union literals
@@ -2296,12 +2079,6 @@ pub struct CallExpression {
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for CallExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2323,7 +2100,7 @@ pub struct MethodSymbolic {
 pub struct LiteralExpression {
     pub this: LiteralExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub value: Literal,
     // Phase 2: linker
     pub parent: ExpressionParent,
@@ -2331,21 +2108,13 @@ pub struct LiteralExpression {
     pub concrete_type: ConcreteType,
 }
 
-impl SyntaxElement for LiteralExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
-}
-
-type LiteralCharacter = Vec<u8>;
-type LiteralInteger = i64; // TODO: @int_literal
-
 #[derive(Debug, Clone)]
 pub enum Literal {
     Null, // message
     True,
     False,
-    Character(LiteralCharacter),
+    Character(char),
+    String(StringRef<'static>),
     Integer(LiteralInteger),
     Struct(LiteralStruct),
     Enum(LiteralEnum),
@@ -2387,6 +2156,12 @@ impl Literal {
 }
 
 #[derive(Debug, Clone)]
+pub struct LiteralInteger {
+    pub(crate) unsigned_value: u64,
+    pub(crate) negated: bool, // for constant expression evaluation, TODO
+}
+
+#[derive(Debug, Clone)]
 pub struct LiteralStructField {
     // Phase 1: parser
     pub(crate) identifier: Identifier,
@@ -2405,10 +2180,6 @@ pub struct LiteralStruct {
     pub(crate) definition: Option<DefinitionId>
 }
 
-// TODO: @tokenizer Enum literals are ambiguous with union literals that do not
-//  accept embedded values. To prevent double work for now we parse as a 
-//  LiteralEnum, and during validation we may transform the expression into a 
-//  union literal.
 #[derive(Debug, Clone)]
 pub struct LiteralEnum {
     // Phase 1: parser
@@ -2441,10 +2212,4 @@ pub struct VariableExpression {
     pub parent: ExpressionParent,
     // Phase 3: type checking
     pub concrete_type: ConcreteType,
-}
-
-impl SyntaxElement for VariableExpression {
-    fn position(&self) -> InputPosition {
-        self.position
-    }
 }

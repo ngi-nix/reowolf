@@ -181,6 +181,12 @@ impl PassSymbols {
 
         // Retrieve identifier of definition
         let identifier = consume_ident_interned(&module.source, &mut iter, ctx)?;
+        let mut poly_vars = Vec::new();
+        maybe_consume_comma_separated(
+            TokenKind::OpenAngle, TokenKind::CloseAngle, &module.source, &mut iter,
+            |source, iter| consume_ident_interned(source, iter, ctx),
+            &mut poly_vars, "a polymorphic variable"
+        )?;
         let ident_text = identifier.value.clone(); // because we need it later
 
         // Reserve space in AST for definition and add it to the symbol table
@@ -189,28 +195,28 @@ impl PassSymbols {
         match kw_text {
             KW_STRUCT => {
                 let struct_def_id = ctx.heap.alloc_struct_definition(|this| {
-                    StructDefinition::new_empty(this, definition_span, identifier)
+                    StructDefinition::new_empty(this, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Struct;
                 ast_definition_id = struct_def_id.upcast();
             },
             KW_ENUM => {
                 let enum_def_id = ctx.heap.alloc_enum_definition(|this| {
-                    EnumDefinition::new_empty(this, definition_span, identifier)
+                    EnumDefinition::new_empty(this, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Enum;
                 ast_definition_id = enum_def_id.upcast();
             },
             KW_UNION => {
                 let union_def_id = ctx.heap.alloc_union_definition(|this| {
-                    UnionDefinition::new_empty(this, definition_span, identifier)
+                    UnionDefinition::new_empty(this, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Union;
                 ast_definition_id = union_def_id.upcast()
             },
             KW_FUNCTION => {
                 let func_def_id = ctx.heap.alloc_function_definition(|this| {
-                    FunctionDefinition::new_empty(this, definition_span, identifier)
+                    FunctionDefinition::new_empty(this, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Function;
                 ast_definition_id = func_def_id.upcast();
@@ -222,7 +228,7 @@ impl PassSymbols {
                     ComponentVariant::Composite
                 };
                 let comp_def_id = ctx.heap.alloc_component_definition(|this| {
-                    ComponentDefinition::new_empty(this, definition_span, component_variant, identifier)
+                    ComponentDefinition::new_empty(this, definition_span, component_variant, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Component;
                 ast_definition_id = comp_def_id.upcast();

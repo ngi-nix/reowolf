@@ -5,7 +5,8 @@ use crate::protocol::input_source2::{
     InputSpan
 };
 
-use crate::protocol::parser::tokens::*;
+use super::tokens::*;
+use super::token_parsing::*;
 
 /// Tokenizer is a reusable parser to tokenize multiple source files using the
 /// same allocated buffers. In a well-formed program, we produce a consistent
@@ -27,8 +28,12 @@ pub(crate) struct PassTokenizer {
 
 impl PassTokenizer {
     pub(crate) fn new() -> Self {
-        Self{ curly_stack: Vec::with_capacity(32), stack_idx: 0 }
+        Self{
+            curly_stack: Vec::with_capacity(32),
+            stack_idx: 0
+        }
     }
+
     pub(crate) fn tokenize(&mut self, source: &mut InputSource, target: &mut TokenBuffer) -> Result<(), ParseError> {
         // Assert source and buffer are at start
         debug_assert_eq!(source.pos().offset, 0);
@@ -289,7 +294,8 @@ impl PassTokenizer {
             token_kind = TokenKind::SemiColon;
         } else if first_char == b'<' {
             source.consume();
-            if let Some(b'<') = source.next() {
+            let next = source.next();
+            if let Some(b'<') = next {
                 source.consume();
                 if let Some(b'=') = source.next() {
                     source.consume();
@@ -297,6 +303,9 @@ impl PassTokenizer {
                 } else {
                     token_kind = TokenKind::ShiftLeft;
                 }
+            } else if let Some(b'=') = next {
+                source.consume();
+                token_kind = TokenKind::LessEquals;
             } else {
                 token_kind = TokenKind::OpenAngle;
             }
@@ -310,7 +319,8 @@ impl PassTokenizer {
             }
         } else if first_char == b'>' {
             source.consume();
-            if let Some(b'>') = source.next() {
+            let next = source.next();
+            if let Some(b'>') = next {
                 source.consume();
                 if let Some(b'=') = source.next() {
                     source.consume();
@@ -318,6 +328,9 @@ impl PassTokenizer {
                 } else {
                     token_kind = TokenKind::ShiftRight;
                 }
+            } else if Some(b'=') = next {
+                source.consume();
+                token_kind = TokenKind::GreaterEquals;
             } else {
                 token_kind = TokenKind::CloseAngle;
             }
