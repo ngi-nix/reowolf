@@ -713,9 +713,26 @@ impl PassDefinitions {
                 concrete_type: ConcreteType::default(),
             }).upcast();
         } else if next == Some(TokenKind::String) {
-            let (text, span) = consume_string_literal(&module.source, iter, &mut self.buffer)?;
+            let span = consume_string_literal(&module.source, iter, &mut self.buffer)?;
+            let interned = ctx.pool.intern(self.buffer.as_bytes());
+            result = ctx.heap.alloc_literal_expression(|this| LiteralExpression{
+                this, span,
+                value: Literal::String(interned),
+                parent: ExpressionParent::None,
+                concrete_type: ConcreteType::default(),
+            }).upcast();
         } else if next == Some(TokenKind::Character) {
-
+            let (character, span) = consume_character_literal(&module.source, iter)?;
+            result = ctx.heap.alloc_literal_expression(|this| LiteralExpression{
+                this, span,
+                value: Literal::Character(character),
+                parent: ExpressionParent::None,
+                concrete_type: ConcreteType::default(),
+            }).upcast();
+        } else if next == Some(TokenKind::Ident) {
+            // May be a variable, a type instantiation or a function call. If we
+            // have a single identifier that we cannot find in the type table
+            // then we're going to assume that we're dealign with a variable.
         }
 
         Ok(result)

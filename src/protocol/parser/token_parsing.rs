@@ -271,21 +271,98 @@ pub(crate) fn consume_integer_literal(source: &InputSource, iter: &mut TokenIter
 
 /// Consumes a character literal. We currently support a limited number of
 /// backslash-escaped characters
-pub(crate) fn consume_character_literal(source: &InputSource, iter: &mut TokenIter, buffer: &mut String) -> Result<char, ParseError> {
+pub(crate) fn consume_character_literal(
+    source: &InputSource, iter: &mut TokenIter
+) -> Result<(char, InputSpan), ParseError> {
     if Some(TokenKind::Character) != iter.next() {
         return Err(ParseError::new_error_str_at_pos(source, iter.last_valid_pos(), "expected a character literal"));
     }
-    let char_span = iter.next_span();
+    let span = iter.next_span();
     iter.consume();
 
-    let char_text = source.section_at_span(char_span);
+    let char_text = source.section_at_span(span);
+    if !char_text.is_ascii() {
+        return Err(ParseError::new_error_str_at_span(
+            source, span, "expected an ASCII character literal"
+        ));
+    }
 
-    //
+    match char_text.len() {
+        0 => return Err(ParseError::new_error_str_at_span(source, span, "too little characters in character literal")),
+        1 => {
+            // We already know the text is ascii, so just throw an error if we have the escape
+            // character.
+            if char_text[0] == b'\\' {
+                return Err(ParseError::new_error_str_at_span(source, span, "escape character without subsequent character"));
+            }
+            return Ok((char_text[0] as char, span));
+        },
+        2 => {
+            if char_text[0] == b'\\' {
+                let result = parse_escaped_character(char_text[1])?;
+                return Ok((result, span))
+            }
+        },
+        _ => {}
+    }
+
+    return Err(ParseError::new_error_str_at_span(source, span, "too many characters in character literal"))
 }
 
 /// Consumes a string literal. We currently support a limited number of
-/// backslash-escaped characters.
-pub(crate) fn consume_string_literal(source: &InputSource, iter: &mut TokenIter, buffer: &mut String) -> Result<(>
+/// backslash-escaped characters. Note that the result is stored in the
+/// buffer.
+pub(crate) fn consume_string_literal(
+    source: &InputSource, iter: &mut TokenIter, buffer: &mut String
+) -> Result<InputSpan, ParseError> {
+    if Some(TokenKind::String) != iter.next() {
+        return Err(ParseError::new_error_str_at_pos(source, iter.last_valid_pos(), "expected a string literal"));
+    }
+
+    buffer.clear();
+    let span = iter.next_span();
+    iter.consume();
+
+    let text = source.section_at_span(span);
+    if !text.is_ascii() {
+        return Err(ParseError::new_error_str_at_span(source, span, "expected an ASCII string literal"));
+    }
+    buffer.reserve(text.len());
+
+    let mut was_escape = false;
+    for idx in 0..text.len() {
+        let cur = text[idx];
+        if cur != b'\\' {
+            if was_escape {
+                let to_push = parse_escaped_character(cur)?;
+                buffer.push(to_push);
+            } else {
+                buffer.push(cur as char);
+            }
+            was_escape = false;
+        } else {
+            was_escape = true;
+        }
+    }
+
+    Ok(span)
+}
+
+fn parse_escaped_character(v: u8) -> Result<char, ParseError> {
+    let result = match v {
+        b'r' => '\r',
+        b'n' => '\n',
+        b't' => '\t',
+        b'0' => '\0',
+        b'\\' => '\\',
+        b'\'' => '\'',
+        b'"' => '"',
+        v => return Err(ParseError::new_error_at_span(
+            source, span, format!("unexpected escaped character '{}'", v)
+        )),
+    };
+    Ok(result)
+}
 
 pub(crate) fn consume_pragma<'a>(source: &'a InputSource, iter: &mut TokenIter) -> Result<(&'a [u8], InputPosition, InputPosition), ParseError> {
     if Some(TokenKind::Pragma) != iter.next() {
