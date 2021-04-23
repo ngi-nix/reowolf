@@ -137,7 +137,6 @@ define_new_ast_id!(BlockStatementId, StatementId, index(BlockStatement, Statemen
 define_new_ast_id!(LocalStatementId, StatementId, index(LocalStatement, Statement::Local, statements), alloc(alloc_local_statement));
 define_new_ast_id!(MemoryStatementId, LocalStatementId);
 define_new_ast_id!(ChannelStatementId, LocalStatementId);
-define_new_ast_id!(SkipStatementId, StatementId, index(SkipStatement, Statement::Skip, statements), alloc(alloc_skip_statement));
 define_new_ast_id!(LabeledStatementId, StatementId, index(LabeledStatement, Statement::Labeled, statements), alloc(alloc_labeled_statement));
 define_new_ast_id!(IfStatementId, StatementId, index(IfStatement, Statement::If, statements), alloc(alloc_if_statement));
 define_new_ast_id!(EndIfStatementId, StatementId, index(EndIfStatement, Statement::EndIf, statements), alloc(alloc_end_if_statement));
@@ -162,7 +161,6 @@ define_new_ast_id!(UnaryExpressionId, ExpressionId, index(UnaryExpression, Expre
 define_new_ast_id!(IndexingExpressionId, ExpressionId, index(IndexingExpression, Expression::Indexing, expressions), alloc(alloc_indexing_expression));
 define_new_ast_id!(SlicingExpressionId, ExpressionId, index(SlicingExpression, Expression::Slicing, expressions), alloc(alloc_slicing_expression));
 define_new_ast_id!(SelectExpressionId, ExpressionId, index(SelectExpression, Expression::Select, expressions), alloc(alloc_select_expression));
-define_new_ast_id!(ArrayExpressionId, ExpressionId, index(ArrayExpression, Expression::Array, expressions), alloc(alloc_array_expression));
 define_new_ast_id!(LiteralExpressionId, ExpressionId, index(LiteralExpression, Expression::Literal, expressions), alloc(alloc_literal_expression));
 define_new_ast_id!(CallExpressionId, ExpressionId, index(CallExpression, Expression::Call, expressions), alloc(alloc_call_expression));
 define_new_ast_id!(VariableExpressionId, ExpressionId, index(VariableExpression, Expression::Variable, expressions), alloc(alloc_variable_expression));
@@ -842,28 +840,6 @@ impl Scope {
     }
 }
 
-pub trait VariableScope {
-    fn parent_scope(&self, h: &Heap) -> Option<Scope>;
-    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId>;
-}
-
-impl VariableScope for Scope {
-    fn parent_scope(&self, h: &Heap) -> Option<Scope> {
-        match self {
-            Scope::Definition(def) => h[*def].parent_scope(h),
-            Scope::Regular(stmt) => h[*stmt].parent_scope(h),
-            Scope::Synchronous((stmt, _)) => h[*stmt].parent_scope(h),
-        }
-    }
-    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
-        match self {
-            Scope::Definition(def) => h[*def].get_variable(h, id),
-            Scope::Regular(stmt) => h[*stmt].get_variable(h, id),
-            Scope::Synchronous((stmt, _)) => h[*stmt].get_variable(h, id),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Variable {
     Parameter(Parameter),
@@ -918,9 +894,8 @@ pub struct Parameter {
 pub struct Local {
     pub this: LocalId,
     // Phase 1: parser
-    pub position: InputPosition,
-    pub parser_type: ParserTypeId,
     pub identifier: Identifier,
+    pub parser_type: ParserType,
     // Phase 2: linker
     pub relative_pos_in_block: u32,
 }
@@ -1062,21 +1037,6 @@ impl Definition {
     }
 }
 
-impl VariableScope for Definition {
-    fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
-        None
-    }
-    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
-        for &parameter_id in self.parameters().iter() {
-            let parameter = &h[parameter_id];
-            if parameter.identifier == *id {
-                return Some(parameter_id.0);
-            }
-        }
-        None
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct StructFieldDefinition {
     pub span: InputSpan,
@@ -1189,10 +1149,13 @@ impl ComponentDefinition {
     }
 }
 
+// Note that we will have function definitions for builtin functions as well. In
+// that case the span, the identifier span and the body are all invalid.
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
     pub this: FunctionDefinitionId,
     // Phase 1: symbol scanning
+    pub builtin: bool,
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
@@ -1205,8 +1168,10 @@ pub struct FunctionDefinition {
 impl FunctionDefinition {
     pub(crate) fn new_empty(this: FunctionDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
         Self {
-            this, span, identifier, poly_vars,
-            return_type: ParserTypeId::new_invalid(),
+            this,
+            builtin: false,
+            span, identifier, poly_vars,
+            return_types: Vec::new(),
             parameters: Vec::new(),
             body: StatementId::new_invalid(),
         }
@@ -1217,7 +1182,6 @@ impl FunctionDefinition {
 pub enum Statement {
     Block(BlockStatement),
     Local(LocalStatement),
-    Skip(SkipStatement),
     Labeled(LabeledStatement),
     If(IfStatement),
     EndIf(EndIfStatement),
@@ -1228,13 +1192,18 @@ pub enum Statement {
     Synchronous(SynchronousStatement),
     EndSynchronous(EndSynchronousStatement),
     Return(ReturnStatement),
-    Assert(AssertStatement),
     Goto(GotoStatement),
     New(NewStatement),
     Expression(ExpressionStatement),
 }
 
 impl Statement {
+    pub fn is_block(&self) -> bool {
+        match self {
+            Statement::Block(_) => true,
+            _ => false,
+        }
+    }
     pub fn as_block(&self) -> &BlockStatement {
         match self {
             Statement::Block(result) => result,
@@ -1367,12 +1336,6 @@ impl Statement {
             _ => panic!("Unable to cast `Statement` to `ReturnStatement`"),
         }
     }
-    pub fn as_assert(&self) -> &AssertStatement {
-        match self {
-            Statement::Assert(result) => result,
-            _ => panic!("Unable to cast `Statement` to `AssertStatement`"),
-        }
-    }
     pub fn as_goto(&self) -> &GotoStatement {
         match self {
             Statement::Goto(result) => result,
@@ -1397,6 +1360,23 @@ impl Statement {
             _ => panic!("Unable to cast `Statement` to `ExpressionStatement`"),
         }
     }
+    pub fn span(&self) -> InputSpan {
+        match self {
+            Statement::Block(v) => v.span,
+            Statement::Local(v) => v.span(),
+            Statement::Labeled(v) => v.label.span,
+            Statement::If(v) => v.span,
+            Statement::While(v) => v.span,
+            Statement::Break(v) => v.span,
+            Statement::Continue(v) => v.span,
+            Statement::Synchronous(v) => v.span,
+            Statement::Return(v) => v.span,
+            Statement::Goto(v) => v.span,
+            Statement::New(v) => v.span,
+            Statement::Expression(v) => v.span,
+            Statement::EndIf(_) | Statement::EndWhile(_) | Statement::EndSynchronous(_) => unreachable!(),
+        }
+    }
     pub fn link_next(&mut self, next: StatementId) {
         match self {
             Statement::Block(_) => todo!(),
@@ -1404,11 +1384,9 @@ impl Statement {
                 LocalStatement::Channel(stmt) => stmt.next = Some(next),
                 LocalStatement::Memory(stmt) => stmt.next = Some(next),
             },
-            Statement::Skip(stmt) => stmt.next = Some(next),
             Statement::EndIf(stmt) => stmt.next = Some(next),
             Statement::EndWhile(stmt) => stmt.next = Some(next),
             Statement::EndSynchronous(stmt) => stmt.next = Some(next),
-            Statement::Assert(stmt) => stmt.next = Some(next),
             Statement::New(stmt) => stmt.next = Some(next),
             Statement::Expression(stmt) => stmt.next = Some(next),
             Statement::Return(_)
@@ -1427,7 +1405,8 @@ impl Statement {
 pub struct BlockStatement {
     pub this: BlockStatementId,
     // Phase 1: parser
-    pub span: InputSpan,
+    pub is_implicit: bool,
+    pub span: InputSpan, // of the complete block
     pub statements: Vec<StatementId>,
     // Phase 2: linker
     pub parent_scope: Option<Scope>,
@@ -1465,21 +1444,6 @@ impl BlockStatement {
     }
 }
 
-impl VariableScope for BlockStatement {
-    fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
-        self.parent_scope.clone()
-    }
-    fn get_variable(&self, h: &Heap, id: &Identifier) -> Option<VariableId> {
-        for local_id in self.locals.iter() {
-            let local = &h[*local_id];
-            if local.identifier == *id {
-                return Some(local_id.0);
-            }
-        }
-        None
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum LocalStatement {
     Memory(MemoryStatement),
@@ -1505,6 +1469,12 @@ impl LocalStatement {
             _ => panic!("Unable to cast `LocalStatement` to `ChannelStatement`"),
         }
     }
+    pub fn span(&self) -> InputSpan {
+        match self {
+            LocalStatement::Channel(v) => v.span,
+            LocalStatement::Memory(v) => v.span,
+        }
+    }
     pub fn next(&self) -> Option<StatementId> {
         match self {
             LocalStatement::Memory(stmt) => stmt.next,
@@ -1517,7 +1487,7 @@ impl LocalStatement {
 pub struct MemoryStatement {
     pub this: MemoryStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub variable: LocalId,
     // Phase 2: linker
     pub next: Option<StatementId>,
@@ -1532,7 +1502,7 @@ pub struct MemoryStatement {
 pub struct ChannelStatement {
     pub this: ChannelStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "channel" keyword
     pub from: LocalId, // output
     pub to: LocalId,   // input
     // Phase 2: linker
@@ -1541,19 +1511,9 @@ pub struct ChannelStatement {
 }
 
 #[derive(Debug, Clone)]
-pub struct SkipStatement {
-    pub this: SkipStatementId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    // Phase 2: linker
-    pub next: Option<StatementId>,
-}
-
-#[derive(Debug, Clone)]
 pub struct LabeledStatement {
     pub this: LabeledStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
     pub label: Identifier,
     pub body: StatementId,
     // Phase 2: linker
@@ -1565,10 +1525,10 @@ pub struct LabeledStatement {
 pub struct IfStatement {
     pub this: IfStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "if" keyword
     pub test: ExpressionId,
-    pub true_body: StatementId,
-    pub false_body: StatementId,
+    pub true_body: BlockStatementId,
+    pub false_body: Option<BlockStatementId>,
     // Phase 2: linker
     pub end_if: Option<EndIfStatementId>,
 }
@@ -1586,9 +1546,9 @@ pub struct EndIfStatement {
 pub struct WhileStatement {
     pub this: WhileStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "while" keyword
     pub test: ExpressionId,
-    pub body: StatementId,
+    pub body: BlockStatementId,
     // Phase 2: linker
     pub end_while: Option<EndWhileStatementId>,
     pub in_sync: Option<SynchronousStatementId>,
@@ -1607,7 +1567,7 @@ pub struct EndWhileStatement {
 pub struct BreakStatement {
     pub this: BreakStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "break" keyword
     pub label: Option<Identifier>,
     // Phase 2: linker
     pub target: Option<EndWhileStatementId>,
@@ -1617,7 +1577,7 @@ pub struct BreakStatement {
 pub struct ContinueStatement {
     pub this: ContinueStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "continue" keyword
     pub label: Option<Identifier>,
     // Phase 2: linker
     pub target: Option<WhileStatementId>,
@@ -1627,28 +1587,11 @@ pub struct ContinueStatement {
 pub struct SynchronousStatement {
     pub this: SynchronousStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
-    // pub parameters: Vec<ParameterId>,
-    pub body: StatementId,
+    pub span: InputSpan, // of the "sync" keyword
+    pub body: BlockStatementId,
     // Phase 2: linker
     pub end_sync: Option<EndSynchronousStatementId>,
     pub parent_scope: Option<Scope>,
-}
-
-impl VariableScope for SynchronousStatement {
-    fn parent_scope(&self, _h: &Heap) -> Option<Scope> {
-        self.parent_scope.clone()
-    }
-    fn get_variable(&self, _h: &Heap, _id: &Identifier) -> Option<VariableId> {
-        // TODO: Another case of "where was this used for?"
-        // for parameter_id in self.parameters.iter() {
-        //     let parameter = &h[*parameter_id];
-        //     if parameter.identifier.value == id.value {
-        //         return Some(parameter_id.0);
-        //     }
-        // }
-        None
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1664,25 +1607,15 @@ pub struct EndSynchronousStatement {
 pub struct ReturnStatement {
     pub this: ReturnStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
-    pub expression: ExpressionId,
-}
-
-#[derive(Debug, Clone)]
-pub struct AssertStatement {
-    pub this: AssertStatementId,
-    // Phase 1: parser
-    pub position: InputPosition,
-    pub expression: ExpressionId,
-    // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub span: InputSpan, // of the "return" keyword
+    pub expressions: Vec<ExpressionId>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GotoStatement {
     pub this: GotoStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "goto" keyword
     pub label: Identifier,
     // Phase 2: linker
     pub target: Option<LabeledStatementId>,
@@ -1692,7 +1625,7 @@ pub struct GotoStatement {
 pub struct NewStatement {
     pub this: NewStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan, // of the "new" keyword
     pub expression: CallExpressionId,
     // Phase 2: linker
     pub next: Option<StatementId>,
@@ -1702,7 +1635,7 @@ pub struct NewStatement {
 pub struct ExpressionStatement {
     pub this: ExpressionStatementId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub expression: ExpressionId,
     // Phase 2: linker
     pub next: Option<StatementId>,
@@ -1926,7 +1859,7 @@ pub struct AssignmentExpression {
 pub struct BindingExpression {
     pub this: BindingExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
     pub left: LiteralExpressionId,
     pub right: ExpressionId,
     // Phase 2: linker
@@ -2052,29 +1985,14 @@ pub struct SelectExpression {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArrayExpression {
-    pub this: ArrayExpressionId,
-    // Phase 1: parser
-    pub span: InputSpan, // from the opening to closing delimiter
-    pub elements: Vec<ExpressionId>,
-    // Phase 2: linker
-    pub parent: ExpressionParent,
-    // Phase 3: type checking
-    pub concrete_type: ConcreteType,
-}
-
-// TODO: @tokenizer Symbolic function calls are ambiguous with union literals
-//  that accept embedded values (although the polymorphic arguments are placed
-//  differently). To prevent double work we parse as CallExpression, and during
-//  validation we may transform the expression into a union literal.
-#[derive(Debug, Clone)]
 pub struct CallExpression {
     pub this: CallExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
+    pub span: InputSpan,
+    pub parser_type: ParserType, // of the function call
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
-    pub poly_args: Vec<ParserTypeId>, // if symbolic will be determined during validation phase
+    pub definition: DefinitionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
     // Phase 3: type checking
@@ -2083,17 +2001,21 @@ pub struct CallExpression {
 
 #[derive(Debug, Clone)]
 pub enum Method {
+    // Builtin
     Get,
     Put,
     Fires,
     Create,
-    Symbolic(MethodSymbolic)
+    Length,
+    Assert,
+    UserFunction,
+    UserComponent,
 }
 
 #[derive(Debug, Clone)]
 pub struct MethodSymbolic {
-    pub(crate) identifier: NamespacedIdentifier,
-    pub(crate) definition: Option<DefinitionId>
+    pub(crate) parser_type: ParserType,
+    pub(crate) definition: DefinitionId
 }
 
 #[derive(Debug, Clone)]
@@ -2119,6 +2041,7 @@ pub enum Literal {
     Struct(LiteralStruct),
     Enum(LiteralEnum),
     Union(LiteralUnion),
+    Array(Vec<ExpressionId>),
 }
 
 impl Literal {
@@ -2173,31 +2096,29 @@ pub struct LiteralStructField {
 #[derive(Debug, Clone)]
 pub struct LiteralStruct {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) parser_type: ParserType,
     pub(crate) fields: Vec<LiteralStructField>,
-    // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
-    pub(crate) definition: Option<DefinitionId>
+    pub(crate) definition: DefinitionId,
 }
 
 #[derive(Debug, Clone)]
 pub struct LiteralEnum {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) parser_type: ParserType,
+    pub(crate) variant: Identifier,
+    pub(crate) definition: DefinitionId,
     // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
-    pub(crate) definition: Option<DefinitionId>,
     pub(crate) variant_idx: usize, // as present in the type table
 }
 
 #[derive(Debug, Clone)]
 pub struct LiteralUnion {
     // Phase 1: parser
-    pub(crate) identifier: NamespacedIdentifier,
+    pub(crate) parser_type: ParserType,
+    pub(crate) variant: Identifier,
     pub(crate) values: Vec<ExpressionId>,
+    pub(crate) definition: DefinitionId,
     // Phase 2: linker
-    pub(crate) poly_args2: Vec<ParserTypeId>, // taken from identifier once linked to a definition
-    pub(crate) definition: Option<DefinitionId>,
     pub(crate) variant_idx: usize, // as present in type table
 }
 
@@ -2205,8 +2126,7 @@ pub struct LiteralUnion {
 pub struct VariableExpression {
     pub this: VariableExpressionId,
     // Phase 1: parser
-    pub position: InputPosition,
-    pub identifier: NamespacedIdentifier,
+    pub identifier: Identifier,
     // Phase 2: linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,

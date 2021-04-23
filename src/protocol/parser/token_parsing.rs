@@ -1,4 +1,4 @@
-use crate::collections::StringRef;
+use crate::collections::{StringRef, ScopedSection};
 use crate::protocol::ast::*;
 use crate::protocol::input_source2::{
     InputSource2 as InputSource,
@@ -32,17 +32,18 @@ pub(crate) const KW_FUNC_PUT:    &'static [u8] = b"put";
 pub(crate) const KW_FUNC_FIRES:  &'static [u8] = b"fires";
 pub(crate) const KW_FUNC_CREATE: &'static [u8] = b"create";
 pub(crate) const KW_FUNC_LENGTH: &'static [u8] = b"length";
+pub(crate) const KW_FUNC_ASSERT: &'static [u8] = b"assert";
 
 // Keywords - statements
 pub(crate) const KW_STMT_CHANNEL:  &'static [u8] = b"channel";
 pub(crate) const KW_STMT_IF:       &'static [u8] = b"if";
+pub(crate) const KW_STMT_ELSE:     &'static [u8] = b"else";
 pub(crate) const KW_STMT_WHILE:    &'static [u8] = b"while";
 pub(crate) const KW_STMT_BREAK:    &'static [u8] = b"break";
 pub(crate) const KW_STMT_CONTINUE: &'static [u8] = b"continue";
 pub(crate) const KW_STMT_GOTO:     &'static [u8] = b"goto";
 pub(crate) const KW_STMT_RETURN:   &'static [u8] = b"return";
 pub(crate) const KW_STMT_SYNC:     &'static [u8] = b"synchronous";
-pub(crate) const KW_STMT_ASSERT:   &'static [u8] = b"assert";
 pub(crate) const KW_STMT_NEW:      &'static [u8] = b"new";
 
 // Keywords - types
@@ -61,6 +62,35 @@ pub(crate) const KW_TYPE_SINT64:   &'static [u8] = b"s64";
 pub(crate) const KW_TYPE_CHAR:     &'static [u8] = b"char";
 pub(crate) const KW_TYPE_STRING:   &'static [u8] = b"string";
 pub(crate) const KW_TYPE_INFERRED: &'static [u8] = b"auto";
+
+/// A special trait for when consuming comma-separated things such that we can
+/// push them onto a `Vec` and onto a `ScopedSection`. As we monomorph for
+/// very specific comma-separated cases I don't expect polymorph bloat.
+/// Also, I really don't like this solution.
+pub(crate) trait Extendable {
+    type Value;
+
+    #[inline]
+    fn push(&mut self, v: Self::Value);
+}
+
+impl<T> Extendable for Vec<T> {
+    type Value = T;
+
+    #[inline]
+    fn push(&mut self, v: Self::Value) {
+        (self as Vec<T>).push(v);
+    }
+}
+
+impl<T: Sized + Copy> Extendable for ScopedSection<T> {
+    type Value = T;
+
+    #[inline]
+    fn push(&mut self, v: Self::Value) {
+        (self as ScopedSection<T>).push(v);
+    }
+}
 
 /// Consumes a domain-name identifier: identifiers separated by a dot. For
 /// simplification of later parsing and span identification the domain-name may
@@ -105,28 +135,15 @@ pub(crate) fn consume_token(source: &InputSource, iter: &mut TokenIter, expected
     Ok(span)
 }
 
-/// Consumes a comma-separated list of items if the opening delimiting token is
-/// encountered. If not, then the iterator will remain at its current position.
-/// Note that the potential cases may be:
-/// - No opening delimiter encountered, then we return `false`.
-/// - Both opening and closing delimiter encountered, but no items.
-/// - Opening and closing delimiter encountered, and items were processed.
-/// - Found an opening delimiter, but processing an item failed.
-pub(crate) fn maybe_consume_comma_separated<T, F>(
-    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
-    consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str,
+/// Consumes a comma separated list until the closing delimiter is encountered
+pub(crate) fn consume_comma_separated_until<T, F, E>(
+    close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
+    consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
     close_pos: Option<&mut InputPosition>
-) -> Result<bool, ParseError>
-    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>
+) -> Result<(), ParseError>
+    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+          E: Extendable<Value=T>
 {
-    let mut next = iter.next();
-    if Some(open_delim) != next {
-        return Ok(false);
-    }
-
-    // Opening delimiter encountered, so must parse the comma-separated list.
-    iter.consume();
-    target.clear();
     let mut had_comma = true;
     loop {
         next = iter.next();
@@ -154,6 +171,33 @@ pub(crate) fn maybe_consume_comma_separated<T, F>(
             iter.consume();
         }
     }
+
+    Ok(())
+}
+
+/// Consumes a comma-separated list of items if the opening delimiting token is
+/// encountered. If not, then the iterator will remain at its current position.
+/// Note that the potential cases may be:
+/// - No opening delimiter encountered, then we return `false`.
+/// - Both opening and closing delimiter encountered, but no items.
+/// - Opening and closing delimiter encountered, and items were processed.
+/// - Found an opening delimiter, but processing an item failed.
+pub(crate) fn maybe_consume_comma_separated<T, F, E>(
+    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
+    consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
+    close_pos: Option<&mut InputPosition>
+) -> Result<bool, ParseError>
+    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+          E: Extendable<Value=T>
+{
+    let mut next = iter.next();
+    if Some(open_delim) != next {
+        return Ok(false);
+    }
+
+    // Opening delimiter encountered, so must parse the comma-separated list.
+    iter.consume();
+    consume_comma_separated_until(close_delim, source, iter, consumer_fn, target, item_name_and_article, close_pos)?;
 
     Ok(true)
 }
@@ -194,12 +238,13 @@ pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut Tok
 
 /// Consumes a comma-separated list and expected the opening and closing
 /// characters to be present. The returned array may still be empty
-pub(crate) fn consume_comma_separated<T, F>(
+pub(crate) fn consume_comma_separated<T, F, E>(
     open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
     consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str,
     list_name_and_article: &'static str, close_pos: Option<&mut InputPosition>
 ) -> Result<(), ParseError>
-    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>
+    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+          E: Extendable<Value=T>
 {
     let first_pos = iter.last_valid_pos();
     match maybe_consume_comma_separated(
@@ -345,6 +390,8 @@ pub(crate) fn consume_string_literal(
         }
     }
 
+    debug_assert!(!was_escape); // because otherwise we couldn't have ended the string literal
+
     Ok(span)
 }
 
@@ -446,7 +493,7 @@ fn is_reserved_statement_keyword(text: &[u8]) -> bool {
         KW_IMPORT | KW_AS |
         KW_STMT_CHANNEL | KW_STMT_IF | KW_STMT_WHILE |
         KW_STMT_BREAK | KW_STMT_CONTINUE | KW_STMT_GOTO | KW_STMT_RETURN |
-        KW_STMT_SYNC | KW_STMT_ASSERT | KW_STMT_NEW => true,
+        KW_STMT_SYNC | KW_STMT_NEW => true,
         _ => false,
     }
 }
@@ -455,7 +502,7 @@ fn is_reserved_expression_keyword(text: &[u8]) -> bool {
     match text {
         KW_LET |
         KW_LIT_TRUE | KW_LIT_FALSE | KW_LIT_NULL |
-        KW_FUNC_GET | KW_FUNC_PUT | KW_FUNC_FIRES | KW_FUNC_CREATE | KW_FUNC_LENGTH => true,
+        KW_FUNC_GET | KW_FUNC_PUT | KW_FUNC_FIRES | KW_FUNC_CREATE | KW_FUNC_ASSERT | KW_FUNC_LENGTH => true,
         _ => false,
     }
 }
@@ -498,39 +545,54 @@ pub(crate) fn construct_symbol_conflict_error(
     modules: &[Module], module_idx: usize, ctx: &PassCtx, new_symbol: &Symbol, old_symbol: &Symbol
 ) -> ParseError {
     let module = &modules[module_idx];
-    let get_symbol_span_and_msg = |symbol: &Symbol| -> (String, InputSpan) {
-        match symbol.introduced_at {
-            Some(import_id) => {
-                // Symbol is being imported
-                let import = &ctx.heap[import_id];
-                match import {
-                    Import::Module(import) => (
-                        format!("the module aliased as '{}' imported here", symbol.name.as_str()),
-                        import.span
-                    ),
-                    Import::Symbols(symbols) => (
-                        format!("the type '{}' imported here", symbol.name.as_str()),
-                        symbols.span
-                    ),
-                }
+    let get_symbol_span_and_msg = |symbol: &Symbol| -> (String, Option<InputSpan>) {
+        match &symbol.variant {
+            SymbolVariant::Module(module) => {
+                let import = &ctx.heap[module.introduced_at];
+                return (
+                    format!("the module aliased as '{}' imported here", symbol.name.as_str()),
+                    Some(import.as_module().span)
+                );
             },
-            None => {
-                // Symbol is being defined
-                debug_assert_eq!(symbol.defined_in_module, module.root_id);
-                debug_assert_ne!(symbol.definition.symbol_class(), SymbolClass::Module);
-                (
-                    format!("the type '{}' defined here", symbol.name.as_str()),
-                    symbol.identifier_span
-                )
+            SymbolVariant::Definition(definition) => {
+                if definition.defined_in_module.is_invalid() {
+                    // Must be a builtin thing
+                    return (format!("the builtin '{}'", symbol.name.as_str()), None)
+                } else {
+                    if let Some(import_id) = definition.imported_at {
+                        let import = &ctx.heap[import_id];
+                        return (
+                            format!("the type '{}' imported here", symbol.name.as_str()),
+                            Some(import.as_symbols().span)
+                        );
+                    } else {
+                        // This is a defined symbol. So this must mean that the
+                        // error was caused by it being defined.
+                        debug_assert_eq!(definition.defined_in_module, module.root_id);
+
+                        return (
+                            format!("the type '{}' defined here", symbol.name.as_str()),
+                            Some(definition.identifier_span)
+                        )
+                    }
+                }
             }
         }
     };
 
     let (new_symbol_msg, new_symbol_span) = get_symbol_span_and_msg(new_symbol);
     let (old_symbol_msg, old_symbol_span) = get_symbol_span_and_msg(old_symbol);
-    return ParseError::new_error_at_span(
-        &module.source, new_symbol_span, format!("symbol is defined twice: {}", new_symbol_msg)
-    ).with_info_at_span(
-        &module.source, old_symbol_span, format!("it conflicts with {}", old_symbol_msg)
-    )
+    let new_symbol_span = new_symbol_span.unwrap(); // because new symbols cannot be builtin
+
+    match old_symbol_span {
+        Some(old_symbol_span) => ParseError::new_error_at_span(
+            &module.source, new_symbol_span, format!("symbol is defined twice: {}", new_symbol_msg)
+        ).with_info_at_span(
+            &module.source, old_symbol_span, format!("it conflicts with {}", old_symbol_msg)
+        ),
+        None => ParseError::new_error_at_span(
+            &module.source, new_symbol_span,
+            format!("symbol is defined twice: {} conflicts with {}", new_symbol_msg, old_symbol_msg)
+        )
+    }
 }

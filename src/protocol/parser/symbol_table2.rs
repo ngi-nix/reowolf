@@ -18,6 +18,7 @@ const RESERVED_SYMBOLS: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolScope {
+    Global,
     Module(RootId),
     Definition(DefinitionId),
 }
@@ -97,7 +98,8 @@ pub struct SymbolModule {
 #[derive(Debug, Clone)]
 pub struct SymbolDefinition {
     // Definition location (not necessarily the place where the symbol
-    // is introduced, as it may be imported)
+    // is introduced, as it may be imported). Builtin symbols will have invalid
+    // spans and module IDs
     pub defined_in_module: RootId,
     pub defined_in_scope: SymbolScope,
     pub definition_span: InputSpan, // full span of definition
@@ -277,7 +279,10 @@ impl SymbolTable {
                         None // in-scope modules are always imported
                     },
                     SymbolVariant::Definition(variant) => {
-                        if variant.imported_at.is_some() {
+                        if variant.imported_at.is_some() || variant.defined_in_scope == SymbolScope::Global {
+                            // Symbol is imported or lives in the global scope.
+                            // Things in the global scope are defined by the
+                            // compiler.
                             None
                         } else {
                             Some(symbol)
