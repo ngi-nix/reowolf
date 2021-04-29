@@ -1,6 +1,6 @@
 use crate::collections::{ScopedBuffer};
 use crate::protocol::ast::*;
-use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError};
+use crate::protocol::input_source2::{InputSource2 as InputSource, InputSpan, ParseError};
 use crate::protocol::parser::{
     symbol_table2::*,
     type_table::*,
@@ -208,7 +208,7 @@ impl Visitor2 for PassValidationLinking {
         // Resolve break target
         let target_end_while = {
             let stmt = &ctx.heap[id];
-            let target_while_id = self.resolve_break_or_continue_target(ctx, stmt.position, &stmt.label)?;
+            let target_while_id = self.resolve_break_or_continue_target(ctx, stmt.span, &stmt.label)?;
             let target_while = &ctx.heap[target_while_id];
             debug_assert!(target_while.end_while.is_some());
             target_while.end_while.unwrap()
@@ -224,7 +224,7 @@ impl Visitor2 for PassValidationLinking {
         // Resolve continue target
         let target_while_id = {
             let stmt = &ctx.heap[id];
-            self.resolve_break_or_continue_target(ctx, stmt.position, &stmt.label)?
+            self.resolve_break_or_continue_target(ctx, stmt.span, &stmt.label)?
         };
 
         let stmt = &mut ctx.heap[id];
@@ -466,78 +466,40 @@ impl Visitor2 for PassValidationLinking {
         Ok(())
     }
 
-    fn visit_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> VisitorResult {
-        let upcast_id = id.upcast();
-        let array_expr = &mut ctx.heap[id];
-
-        let old_num_exprs = self.expression_buffer.len();
-        self.expression_buffer.extend(&array_expr.elements);
-        let new_num_exprs = self.expression_buffer.len();
-
-        let old_expr_parent = self.expr_parent;
-        array_expr.parent = old_expr_parent;
-
-        for field_expr_idx in old_num_exprs..new_num_exprs {
-            let field_expr_id = self.expression_buffer[field_expr_idx];
-            self.expr_parent = ExpressionParent::Expression(upcast_id, field_expr_idx as u32);
-            self.visit_expr(ctx, field_expr_id)?;
-        }
-
-        self.expression_buffer.truncate(old_num_exprs);
-        self.expr_parent = old_expr_parent;
-
-        Ok(())
-    }
-
     fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
-        const FIELD_NOT_FOUND_SENTINEL: usize = usize::max_value();
-
         let literal_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
         literal_expr.parent = old_expr_parent;
 
         match &mut literal_expr.value {
             Literal::Null | Literal::True | Literal::False |
-            Literal::Character(_) | Literal::Integer(_) => {
+            Literal::Character(_) | Literal::String(_) | Literal::Integer(_) => {
                 // Just the parent has to be set, done above
             },
             Literal::Struct(literal) => {
                 let upcast_id = id.upcast();
-
-                // Retrieve and set the literal's definition
-                let definition = self.find_symbol_of_type(
-                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types,
-                    &literal.identifier, TypeClass::Struct
-                )?;
-                literal.definition = Some(definition.ast_definition);
-
-                let definition = definition.definition.as_struct();
+                // Retrieve type definition
+                let type_definition = ctx.types.get_base_definition(&literal.definition).unwrap();
+                let struct_definition = type_definition.definition.as_struct();
 
                 // Make sure all fields are specified, none are specified twice
                 // and all fields exist on the struct definition
                 let mut specified = Vec::new(); // TODO: @performance
-                specified.resize(definition.fields.len(), false);
+                specified.resize(struct_definition.fields.len(), false);
 
                 for field in &mut literal.fields {
                     // Find field in the struct definition
-                    field.field_idx = FIELD_NOT_FOUND_SENTINEL;
-                    for (def_field_idx, def_field) in definition.fields.iter().enumerate() {
-                        if field.identifier == def_field.identifier {
-                            field.field_idx = def_field_idx;
-                            break;
-                        }
-                    }
-
-                    // Check if not found
-                    if field.field_idx == FIELD_NOT_FOUND_SENTINEL {
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, field.identifier.position,
-                            &format!(
+                    let field_idx = struct_definition.fields.iter().position(|v| v.identifier == field.identifier);
+                    if field_idx.is_none() {
+                        let ast_definition = &ctx.heap[literal.definition];
+                        return Err(ParseError::new_error_at_span(
+                            &ctx.module.source, field.identifier.span, format!(
                                 "This field does not exist on the struct '{}'",
-                                &String::from_utf8_lossy(&literal.identifier.value),
+                                ast_definition.identifier().value.as_str()
                             )
                         ));
                     }
+                    field.field_idx = field_idx.unwrap();
 
                     // Check if specified more than once
                     if specified[field.field_idx] {
@@ -557,157 +519,88 @@ impl Visitor2 for PassValidationLinking {
                     for (def_field_idx, is_specified) in specified.iter().enumerate() {
                         if !is_specified {
                             if !not_specified.is_empty() { not_specified.push_str(", ") }
-                            let field_ident = &definition.fields[def_field_idx].identifier;
-                            not_specified.push_str(&String::from_utf8_lossy(&field_ident.value));
+                            let field_ident = &struct_definition.fields[def_field_idx].identifier;
+                            not_specified.push_str(field_ident.value.as_str());
                             num_not_specified += 1;
                         }
                     }
 
                     debug_assert!(num_not_specified > 0);
                     let msg = if num_not_specified == 1 {
-                        format!("Not all fields are specified, '{}' is missing", not_specified)
+                        format!("not all fields are specified, '{}' is missing", not_specified)
                     } else {
-                        format!("Not all fields are specified, [{}] are missing", not_specified)
+                        format!("not all fields are specified, [{}] are missing", not_specified)
                     };
-                    return Err(ParseError::new_error(
-                        &ctx.module.source, literal.identifier.position, &msg
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, literal.parser_type.elements[0].full_span, msg
                     ));
                 }
 
                 // Need to traverse fields expressions in struct and evaluate
                 // the poly args
-                let old_num_exprs = self.expression_buffer.len();
-                self.expression_buffer.extend(literal.fields.iter().map(|v| v.value));
-                let new_num_exprs = self.expression_buffer.len();
+                let mut expr_section = self.expression_buffer.start_section();
+                for field in &literal.fields {
+                    expr_section.push(field.value);
+                }
 
-                self.visit_literal_poly_args(ctx, id)?;
-
-                for expr_idx in old_num_exprs..new_num_exprs {
-                    let expr_id = self.expression_buffer[expr_idx];
+                for expr_idx in 0..expr_section.len() {
+                    let expr_id = expr_section[expr_idx];
                     self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
                     self.visit_expr(ctx, expr_id)?;
                 }
 
-                self.expression_buffer.truncate(old_num_exprs);
+                expr_section.forget();
             },
             Literal::Enum(literal) => {
-                // TODO: @tokenizer, remove this horrible hack once we have a 
-                //  tokenizer and can distinguish types during AST-construction.
-                //  For now see this horrible hack and weep!
-                let (symbol, _) = ctx.symbols.resolve_namespaced_identifier(
-                    ctx.module.root_id, &literal.identifier
-                );
-                if let Some(symbol) = symbol {
-                    if let Symbol::Definition((_, definition_id)) = &symbol.symbol {
-                        if let Some(defined_type) = ctx.types.get_base_definition(definition_id) {
-                            if defined_type.definition.type_class() == TypeClass::Union {
-                                // Transmute into union literal and call this function again
-                                let old_identifier = literal.identifier.clone();
-                                let lit_expr = &ctx.heap[id];
-                                let old_position = lit_expr.position;
-
-                                ctx.heap[id] = LiteralExpression{
-                                    this: id,
-                                    position: old_position,
-                                    value: Literal::Union(LiteralUnion{
-                                        identifier: old_identifier,
-                                        values: vec!(),
-                                        poly_args2: Vec::new(),
-                                        definition: None,
-                                        variant_idx: 0,
-                                    }),
-                                    parent: ExpressionParent::None,
-                                    concrete_type: ConcreteType::default()
-                                };
-
-                                return self.visit_literal_expr(ctx, id);
-                            }
-                        }
-                    }
-                }
-
-                // Retrieve and set definion of enumeration
-                let (definition, ident_iter) = self.find_symbol_of_type_variant(
-                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types, 
-                    &literal.identifier, TypeClass::Enum
-                )?;
-                literal.definition = Some(definition.ast_definition);
-
                 // Make sure the variant exists
-                let (variant_ident, _) = ident_iter.prev().unwrap();
-                let enum_definition = definition.definition.as_enum();
+                let type_definition = ctx.types.get_base_definition(&literal.definition).unwrap();
+                let enum_definition = type_definition.definition.as_enum();
 
-                match enum_definition.variants.iter().position(|variant| {
-                    variant.identifier.value == variant_ident
-                }) {
-                    Some(variant_idx) => {
-                        literal.variant_idx = variant_idx;
-                    },
-                    None => {
-                        // Reborrow
-                        let variant = String::from_utf8_lossy(variant_ident).to_string();
-                        let literal = ctx.heap[id].value.as_enum();
-                        let enum_definition = ctx.heap[definition.ast_definition].as_enum();
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, literal.identifier.position,
-                            &format!(
-                                "The variant '{}' does not exist on the enum '{}'",
-                                &variant, &String::from_utf8_lossy(&enum_definition.identifier.value)
-                            )
-                        ));
-                    }
+                let variant_idx = enum_definition.variants.iter().position(|v| {
+                    v.identifier == literal.variant
+                });
+
+                if variant_idx.is_none() {
+                    let ast_definition = ctx.heap[literal.definition].as_enum();
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
+                            "the variant '{}' does not exist on the enum '{}'",
+                            literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
+                        )
+                    ));
                 }
 
-                self.visit_literal_poly_args(ctx, id)?;
+                literal.variant_idx = variant_idx.unwrap();
             },
             Literal::Union(literal) => {
-                let upcast_id = id.upcast();
-
-                // Retrieve and set definition of union
-                let (definition, ident_iter) = self.find_symbol_of_type_variant(
-                    &ctx.module.source, ctx.module.root_id, &ctx.symbols, &ctx.types,
-                    &literal.identifier, TypeClass::Union
-                )?;
-                literal.definition = Some(definition.ast_definition);
-                
                 // Make sure the variant exists
-                let (variant_ident, _) = ident_iter.prev().unwrap();
-                let union_definition = definition.definition.as_union();
+                let type_definition = ctx.types.get_base_definition(&literal.definition).unwrap();
+                let union_definition = type_definition.definition.as_union();
 
-                match union_definition.variants.iter().position(|variant| {
-                    variant.identifier.value == variant_ident
-                }) {
-                    Some(variant_idx) => {
-                        literal.variant_idx = variant_idx;
-                    },
-                    None => {
-                        // Reborrow
-                        let variant = String::from_utf8_lossy(variant_ident).to_string();
-                        let literal = ctx.heap[id].value.as_union();
-                        let union_definition = ctx.heap[definition.ast_definition].as_union();
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, literal.identifier.position,
-                            &format!(
-                                "The variant '{}' does not exist on the union '{}'",
-                                &variant, &String::from_utf8_lossy(&union_definition.identifier.value)
-                            )
-                        ));
-                    }
+                let variant_idx = union_definition.variants.iter().position(|v| {
+                    v.identifier == literal.variant
+                });
+                if variant_idx.is_none() {
+                    let ast_definition = ctx.heap[literal.definition].as_union();
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
+                            "the variant does '{}' does not exist on the union '{}'",
+                            literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
+                        )
+                    ));
                 }
+
+                literal.variant_idx = variant_idx.unwrap();
 
                 // Make sure the number of specified values matches the expected
                 // number of embedded values in the union variant.
                 let union_variant = &union_definition.variants[literal.variant_idx];
                 if union_variant.embedded.len() != literal.values.len() {
-                    // Reborrow
-                    let variant = String::from_utf8_lossy(variant_ident).to_string();
-                    let literal = ctx.heap[id].value.as_union();
-                    let union_definition = ctx.heap[definition.ast_definition].as_union();
-                    return Err(ParseError::new_error(
-                        &ctx.module.source, literal.identifier.position,
-                        &format!(
+                    let ast_definition = ctx.heap[literal.definition].as_union();
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
                             "The variant '{}' of union '{}' expects {} embedded values, but {} were specified",
-                            variant, &String::from_utf8_lossy(&union_definition.identifier.value),
+                            literal.variant.value.as_str(), ast_definition.identifier.value.as_str(),
                             union_variant.embedded.len(), literal.values.len()
                         ),
                     ))
@@ -715,19 +608,31 @@ impl Visitor2 for PassValidationLinking {
 
                 // Traverse embedded values of union (if any) and evaluate the
                 // polymorphic arguments
-                let old_num_exprs = self.expression_buffer.len();
-                self.expression_buffer.extend(&literal.values);
-                let new_num_exprs = self.expression_buffer.len();
+                let upcast_id = id.upcast();
+                let mut expr_section = self.expression_buffer.start_section();
+                for value in &literal.values {
+                    expr_section.push(*value);
+                }
 
-                self.visit_literal_poly_args(ctx, id)?;
-
-                for expr_idx in old_num_exprs..new_num_exprs {
-                    let expr_id = self.expression_buffer[expr_idx];
+                for expr_idx in 0..expr_section.len() {
+                    let expr_id = expr_section[expr_idx];
                     self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
                     self.visit_expr(ctx, expr_id)?;
                 }
 
-                self.expression_buffer.truncate(old_num_exprs);
+                expr_section.forget();
+            },
+            Literal::Array(literal) => {
+                // Visit all expressions in the array
+                let upcast_id = id.upcast();
+                let expr_section = self.expression_buffer.start_section_initialized(literal);
+                for expr_idx in 0..expr_section.len() {
+                    let expr_id = expr_section[expr_idx];
+                    self.expr_parent = ExpressionParent::Expression(upcast_id, expr_id as u32);
+                    self.visit_expr(ctx, expr_id)?;
+                }
+
+                expr_section.forget();
             }
         }
 
@@ -955,7 +860,7 @@ impl PassValidationLinking {
         debug_assert!(self.cur_scope.is_some());
 
         // Make sure we do not conflict with any global symbols
-        let cur_scope = SymbolScope::Definition(self.def_type.definition_id())
+        let cur_scope = SymbolScope::Definition(self.def_type.definition_id());
         {
             let ident = &ctx.heap[id].identifier;
             if let Some(symbol) = ctx.symbols.get_symbol_by_name(cur_scope, &ident.value.as_bytes()) {
@@ -1189,7 +1094,7 @@ impl PassValidationLinking {
     /// ID will be returned, otherwise a parsing error is constructed.
     /// The provided input position should be the position of the break/continue
     /// statement.
-    fn resolve_break_or_continue_target(&self, ctx: &Ctx, position: InputPosition, label: &Option<Identifier>) -> Result<WhileStatementId, ParseError> {
+    fn resolve_break_or_continue_target(&self, ctx: &Ctx, span: InputSpan, label: &Option<Identifier>) -> Result<WhileStatementId, ParseError> {
         let target = match label {
             Some(label) => {
                 let target_id = self.find_label(ctx, label)?;
@@ -1200,25 +1105,29 @@ impl PassValidationLinking {
                     // Even though we have a target while statement, the break might not be
                     // present underneath this particular labeled while statement
                     if !self.has_parent_while_scope(ctx, target_stmt.this) {
-                        ParseError::new_error(&ctx.module.source, label.position, "Break statement is not nested under the target label's while statement")
-                            .with_postfixed_info(&ctx.module.source, target.position, "The targeted label is found here");
+                        return Err(ParseError::new_error_str_at_span(
+                            &ctx.module.source, label.span, "break statement is not nested under the target label's while statement"
+                        ).with_info_str_at_span(
+                            &ctx.module.source, target.label.span, "the targeted label is found here"
+                        ));
                     }
 
                     target_stmt.this
                 } else {
-                    return Err(
-                        ParseError::new_error(&ctx.module.source, label.position, "Incorrect break target label, it must target a while loop")
-                            .with_postfixed_info(&ctx.module.source, target.position, "The targeted label is found here")
-                    );
+                    return Err(ParseError::new_error_str_at_span(
+                        &ctx.module.source, label.span, "incorrect break target label, it must target a while loop"
+                    ).with_info_str_at_span(
+                        &ctx.module.source, target.label.span, "The targeted label is found here"
+                    ));
                 }
             },
             None => {
                 // Use the enclosing while statement, the break must be
                 // nested within that while statement
                 if self.in_while.is_none() {
-                    return Err(
-                        ParseError::new_error(&ctx.module.source, position, "Break statement is not nested under a while loop")
-                    );
+                    return Err(ParseError::new_error_str_at_span(
+                        &ctx.module.source, span, "Break statement is not nested under a while loop"
+                    ));
                 }
 
                 self.in_while.unwrap()
@@ -1235,9 +1144,9 @@ impl PassValidationLinking {
                 debug_assert!(self.in_sync.is_some());
                 let sync_stmt = &ctx.heap[self.in_sync.unwrap()];
                 return Err(
-                    ParseError::new_error(&ctx.module.source, position, "Break may not escape the surrounding synchronous block")
-                        .with_postfixed_info(&ctx.module.source, target_while.position, "The break escapes out of this loop")
-                        .with_postfixed_info(&ctx.module.source, sync_stmt.position, "And would therefore escape this synchronous block")
+                    ParseError::new_error_str_at_span(&ctx.module.source, span, "break may not escape the surrounding synchronous block")
+                        .with_info_str_at_span(&ctx.module.source, target_while.span, "the break escapes out of this loop")
+                        .with_info_str_at_span(&ctx.module.source, sync_stmt.span, "And would therefore escape this synchronous block")
                 );
             }
         }

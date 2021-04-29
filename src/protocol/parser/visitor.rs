@@ -93,10 +93,6 @@ pub(crate) trait Visitor2 {
                 let this = stmt.this();
                 self.visit_local_stmt(ctx, this)
             },
-            Statement::Skip(stmt) => {
-                let this = stmt.this;
-                self.visit_skip_stmt(ctx, this)
-            },
             Statement::Labeled(stmt) => {
                 let this = stmt.this;
                 self.visit_labeled_stmt(ctx, this)
@@ -160,7 +156,6 @@ pub(crate) trait Visitor2 {
     fn visit_block_stmt(&mut self, _ctx: &mut Ctx, _id: BlockStatementId) -> VisitorResult { Ok(()) }
     fn visit_local_memory_stmt(&mut self, _ctx: &mut Ctx, _id: MemoryStatementId) -> VisitorResult { Ok(()) }
     fn visit_local_channel_stmt(&mut self, _ctx: &mut Ctx, _id: ChannelStatementId) -> VisitorResult { Ok(()) }
-    fn visit_skip_stmt(&mut self, _ctx: &mut Ctx, _id: SkipStatementId) -> VisitorResult { Ok(()) }
     fn visit_labeled_stmt(&mut self, _ctx: &mut Ctx, _id: LabeledStatementId) -> VisitorResult { Ok(()) }
     fn visit_if_stmt(&mut self, _ctx: &mut Ctx, _id: IfStatementId) -> VisitorResult { Ok(()) }
     fn visit_while_stmt(&mut self, _ctx: &mut Ctx, _id: WhileStatementId) -> VisitorResult { Ok(()) }
@@ -208,10 +203,6 @@ pub(crate) trait Visitor2 {
                 let this = expr.this;
                 self.visit_select_expr(ctx, this)
             }
-            Expression::Array(expr) => {
-                let this = expr.this;
-                self.visit_array_expr(ctx, this)
-            }
             Expression::Literal(expr) => {
                 let this = expr.this;
                 self.visit_literal_expr(ctx, this)
@@ -235,7 +226,6 @@ pub(crate) trait Visitor2 {
     fn visit_indexing_expr(&mut self, _ctx: &mut Ctx, _id: IndexingExpressionId) -> VisitorResult { Ok(()) }
     fn visit_slicing_expr(&mut self, _ctx: &mut Ctx, _id: SlicingExpressionId) -> VisitorResult { Ok(()) }
     fn visit_select_expr(&mut self, _ctx: &mut Ctx, _id: SelectExpressionId) -> VisitorResult { Ok(()) }
-    fn visit_array_expr(&mut self, _ctx: &mut Ctx, _id: ArrayExpressionId) -> VisitorResult { Ok(()) }
     fn visit_literal_expr(&mut self, _ctx: &mut Ctx, _id: LiteralExpressionId) -> VisitorResult { Ok(()) }
     fn visit_call_expr(&mut self, _ctx: &mut Ctx, _id: CallExpressionId) -> VisitorResult { Ok(()) }
     fn visit_variable_expr(&mut self, _ctx: &mut Ctx, _id: VariableExpressionId) -> VisitorResult { Ok(()) }

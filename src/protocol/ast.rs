@@ -1447,7 +1447,6 @@ pub enum Expression {
     Indexing(IndexingExpression),
     Slicing(SlicingExpression),
     Select(SelectExpression),
-    Array(ArrayExpression),
     Literal(LiteralExpression),
     Call(CallExpression),
     Variable(VariableExpression),
