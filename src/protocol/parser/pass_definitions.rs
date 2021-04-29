@@ -16,8 +16,9 @@ pub(crate) struct PassDefinitions {
     struct_fields: Vec<StructFieldDefinition>,
     enum_variants: Vec<EnumVariantDefinition>,
     union_variants: Vec<UnionVariantDefinition>,
-    parameters: Vec<ParameterId>,
+    parameters: ScopedBuffer<ParameterId>,
     expressions: ScopedBuffer<ExpressionId>,
+    statements: ScopedBuffer<StatementId>,
     parser_types: Vec<ParserType>,
 }
 
@@ -28,16 +29,21 @@ impl PassDefinitions {
         debug_assert_eq!(module.phase, ModuleCompilationPhase::ImportsResolved);
         debug_assert_eq!(module_range.range_kind, TokenRangeKind::Module);
 
-        // TODO: Very important to go through ALL ranges of the module so that we parse the entire
-        //  input source. Only skip the ones we're certain we've handled before.
+        // Although we only need to parse the definitions, we want to go through
+        // code ranges as well such that we can throw errors if we get
+        // unexpected tokens at the module level of the source.
         let mut range_idx = module_range.first_child_idx;
         loop {
             let range_idx_usize = range_idx as usize;
             let cur_range = &module.tokens.ranges[range_idx_usize];
 
-            if cur_range.range_kind == TokenRangeKind::Definition {
-                self.visit_definition_range(modules, module_idx, ctx, range_idx_usize)?;
+            match cur_range.range_kind {
+                TokenRangeKind::Module => unreachable!(), // should not be reachable
+                TokenRangeKind::Pragma | TokenRangeKind::Import => continue, // already fully parsed
+                TokenRangeKind::Definition | TokenRangeKind::Code => {}
             }
+
+            self.visit_range(modules, module_idx, ctx, range_idx_usize)?;
 
             match cur_range.next_sibling_idx {
                 Some(idx) => { range_idx = idx; },
@@ -50,39 +56,34 @@ impl PassDefinitions {
         Ok(())
     }
 
-    fn visit_definition_range(
+    fn visit_range(
         &mut self, modules: &[Module], module_idx: usize, ctx: &mut PassCtx, range_idx: usize
     ) -> Result<(), ParseError> {
         let module = &modules[module_idx];
         let cur_range = &module.tokens.ranges[range_idx];
-        debug_assert_eq!(cur_range.range_kind, TokenRangeKind::Definition);
+        debug_assert!(cur_range.range_kind == TokenRangeKind::Definition || cur_range.range_kind == TokenRangeKind::Code);
 
         // Detect which definition we're parsing
         let mut iter = module.tokens.iter_range(cur_range);
-        let keyword = peek_ident(&module.source, &mut iter).unwrap();
-        match keyword {
-            KW_STRUCT => {
+        loop {
+            let next = iter.next();
+            if next.is_none() {
+                return Ok(())
+            }
 
-            },
-            KW_ENUM => {
-
-            },
-            KW_UNION => {
-
-            },
-            KW_FUNCTION => {
-
-            },
-            KW_PRIMITIVE => {
-
-            },
-            KW_COMPOSITE => {
-
-            },
-            _ => unreachable!("encountered keyword '{}' in definition range", String::from_utf8_lossy(keyword)),
-        };
-
-        Ok(())
+            // Token was not None, so peek_ident returns None if not an ident
+            let ident = peek_ident(&module.source, &mut iter);
+            match ident {
+                Some(KW_STRUCT) => self.visit_struct_definition(module, &mut iter, ctx)?,
+                Some(KW_ENUM) => self.visit_enum_definition(module, &mut iter, ctx)?,
+                Some(KW_FUNCTION) => self.visit_function_definition(module, &mut iter, ctx)?,
+                Some(KW_PRIMITIVE) | Some(KW_COMPOSITE) => self.visit_component_definition(module, &mut iter, ctx)?,
+                _ => return Err(ParseError::new_error_str_at_pos(
+                    &module.source, iter.last_valid_pos(),
+                    "unexpected symbol, expected some kind of type or procedure definition"
+                )),
+            }
+        }
     }
 
     fn visit_struct_definition(
@@ -231,67 +232,187 @@ impl PassDefinitions {
         let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse function's argument list
+        let mut parameter_section = self.parameters.start_section();
         consume_parameter_list(
-            source, iter, ctx, &mut self.parameters, poly_vars, module_scope, definition_id
+            source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
         )?;
-        let parameters = self.parameters.clone();
-        self.parameters.clear();
+        let parameters = parameter_section.into_vec();
 
         // Consume return types
         consume_token(&module.source, iter, TokenKind::ArrowRight)?;
+        let mut open_curly_pos = iter.last_valid_pos();
         consume_comma_separated_until(
             TokenKind::OpenCurly, &module.source, iter,
             |source, iter| {
-                consume_parser_type(source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope, definition_id, false)
+                consume_parser_type(source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope, definition_id, false, 0)
             },
-            &mut self.parser_types, "a return type", None
+            &mut self.parser_types, "a return type", Some(&mut open_curly_pos)
         )?;
         let return_types = self.parser_types.clone();
-        self.parser_types.clear();
+
+        // TODO: @ReturnValues
+        match return_types.len() {
+            0 => return Err(ParseError::new_error_str_at_pos(&module.source, open_curly_pos, "expected a return type")),
+            1 => {},
+            _ => return Err(ParseError::new_error_str_at_pos(&module.source, open_curly_pos, "multiple return types are not (yet) allowed")),
+        }
 
         // Consume block
+        let body = self.consume_block_statement_without_leading_curly(module, iter, ctx, open_curly_pos)?;
+
+        // Assign everything in the preallocated AST node
+        let function = ctx.heap[definition_id].as_function_mut();
+        function.return_types = return_types;
+        function.parameters = parameters;
+        function.body = body;
+
+        Ok(())
+    }
+
+    fn visit_component_definition(
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
+    ) -> Result<(), ParseError> {
+        let (_variant_text, _) = consume_any_ident(&module.source, iter)?;
+        debug_assert!(variant_text == KW_PRIMITIVE || variant_text == KW_COMPOSITE);
+        let (ident_text, _) = consume_ident(&module.source, iter)?;
+
+        // Retrieve preallocated definition
+        let module_scope = SymbolScope::Module(module.root_id);
+        let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
+            .unwrap().variant.as_definition().definition_id;
+        let poly_vars = ctx.heap[definition_id].poly_vars();
+
+        // Parse component's argument list
+        let mut parameter_section = self.parameters.start_section();
+        consume_parameter_list(
+            source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
+        )?;
+        let parameters = parameter_section.into_vec();
+
+        // Consume block
+        let body = self.consume_block_statement(module, iter, ctx)?;
+
+        // Assign everything in the AST node
+        let component = ctx.heap[definition_id].as_component_mut();
+        component.parameters = parameters;
+        component.body = body;
+
+        Ok(())
+    }
+
+    /// Consumes a block statement. If the resulting statement is not a block
+    /// (e.g. for a shorthand "if (expr) single_statement") then it will be
+    /// wrapped in one
+    fn consume_block_or_wrapped_statement(
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
+    ) -> Result<BlockStatementId, ParseError> {
+        if Some(TokenKind::OpenCurly) == iter.next() {
+            // This is a block statement
+            self.consume_block_statement(module, iter, ctx)
+        } else {
+            // Not a block statement, so wrap it in one
+            let mut statements = self.statements.start_section();
+            let wrap_begin_pos = iter.last_valid_pos();
+            self.consume_statement(module, iter, ctx, &mut statements)?;
+            let wrap_end_pos = iter.last_valid_pos();
+
+            debug_assert_eq!(statements.len(), 1);
+            let statements = statements.into_vec();
+
+            ctx.heap.alloc_block_statement(|this| BlockStatement{
+                this,
+                is_implicit: true,
+                span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
+                statements,
+                parent_scope: None,
+                relative_pos_in_parent: 0,
+                locals: Vec::new(),
+                labels: Vec::new()
+            })
+        }
     }
 
     /// Consumes a statement and returns a boolean indicating whether it was a
     /// block or not.
     fn consume_statement(
-        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
-    ) -> Result<(StatementId, bool), ParseError> {
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx, section: &mut ScopedSection<StatementId>
+    ) -> Result<(), ParseError> {
         let next = iter.next().expect("consume_statement has a next token");
 
-        let mut was_block = false;
-        let statement = if next == TokenKind::OpenCurly {
-            was_block = true;
-            self.consume_block_statement(module, iter, ctx)?.upcast()
+        if next == TokenKind::OpenCurly {
+            let id = self.consume_block_statement(module, iter, ctx)?;
+            section.push(id.upcast());
         } else if next == TokenKind::Ident {
             let (ident, _) = consume_any_ident(source, iter)?;
             if ident == KW_STMT_IF {
-                self.consume_if_statement(module, iter, ctx)?
+                // Consume if statement and place end-if statement directly
+                // after it.
+                let id = self.consume_if_statement(module, iter, ctx)?;
+                section.push(id.upcast());
+
+                let end_if = ctx.heap.alloc_end_if_statement(|this| EndIfStatement{
+                    this, start_if: id, next: None
+                });
+                section.push(id.upcast());
+
+                let if_stmt = &mut ctx.heap[id];
+                if_stmt.end_if = Some(end_if);
             } else if ident == KW_STMT_WHILE {
-                self.consume_while_statement(module, iter, ctx)?
+                let id = self.consume_while_statement(module, iter, ctx)?;
+                section.push(id.upcast());
+
+                let end_while = ctx.heap.alloc_end_while_statement(|this| EndWhileStatement{
+                    this, start_while: id, next: None
+                });
+                section.push(id.upcast());
+
+                let while_stmt = &mut ctx.heap[id];
+                while_stmt.end_while = Some(end_while);
             } else if ident == KW_STMT_BREAK {
-                self.consume_break_statement(module, iter, ctx)?
+                let id = self.consume_break_statement(module, iter, ctx)?;
+                section.push(id.upcast());
             } else if ident == KW_STMT_CONTINUE {
-                self.consume_continue_statement(module, iter, ctx)?
+                let id = self.consume_continue_statement(module, iter, ctx)?;
+                section.push(id.upcast());
             } else if ident == KW_STMT_SYNC {
-                self.consume_synchronous_statement(module, iter, ctx)?
+                let id = self.consume_synchronous_statement(module, iter, ctx)?;
+                section.push(id.upcast());
+
+                let end_sync = ctx.heap.alloc_end_synchronous_statement(|this| EndSynchronousStatement{
+                    this, start_sync: id, next: None
+                });
+
+                let sync_stmt = &mut ctx.heap[id];
+                sync_stmt.end_sync = Some(end_sync);
             } else if ident == KW_STMT_RETURN {
-                self.consume_return_statement(module, iter, ctx)?
+                let id = self.consume_return_statement(module, iter, ctx)?;
+                section.push(id.upcast());
             } else if ident == KW_STMT_GOTO {
-                self.consume_goto_statement(module, iter, ctx)?
+                let id = self.consume_goto_statement(module, iter, ctx)?;
+                section.push(id.upcast());
             } else if ident == KW_STMT_NEW {
-                self.consume_new_statement(module, iter, ctx)?
+                let id = self.consume_new_statement(module, iter, ctx)?;
+                section.push(id.upcast());
             } else if ident == KW_STMT_CHANNEL {
-                self.consume_channel_statement(module, iter, ctx)?
+                let id = self.consume_channel_statement(module, iter, ctx)?;
+                section.push(id.upcast().upcast());
             } else if iter.peek() == Some(TokenKind::Colon) {
-                self.consume_labeled_statement(module, iter, ctx)?
+                self.consume_labeled_statement(module, iter, ctx, section)?;
             } else {
-                // Attempt to parse as expression
-                self.consume_expression_statement(module, iter, ctx)?
+                // Two fallback possibilities: the first one is a memory
+                // declaration, the other one is to parse it as a regular
+                // expression. This is a bit ugly
+                if let Some((memory_stmt_id, assignment_stmt_id)) = self.maybe_consume_memory_statement(module, iter, ctx)? {
+                    section.push(memory_stmt_id.upcast().upcast());
+                    section.push(assignment_stmt_id.upcast());
+                } else {
+                    let id = self.consume_expression_statement(module, iter, ctx)?;
+                    section.push(id.upcast());
+                }
             }
         };
 
-        return Ok((statement, was_block));
+        return Ok(());
     }
 
     fn consume_block_statement(
@@ -332,13 +453,12 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::OpenParen)?;
         let test = self.consume_expression(module, iter, ctx)?;
         consume_token(&module.source, iter, TokenKind::CloseParen)?;
-        let (true_body, was_block) = self.consume_statement(module, iter, ctx)?;
-        let true_body = Self::wrap_in_block(ctx, true_body, was_block);
+        let true_body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
 
         let false_body = if has_ident(source, iter, KW_STMT_ELSE) {
             iter.consume();
-            let (false_body, was_block) = self.consume_statement(module, iter, ctx)?;
-            Some(Self::wrap_in_block(ctx, false_body, was_block))
+            let false_body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
+            Some(false_body)
         } else {
             None
         };
@@ -360,8 +480,7 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::OpenParen)?;
         let test = self.consume_expression(module, iter, ctx)?;
         consume_token(&module.source, iter, TokenKind::CloseParen)?;
-        let (body, was_block) = self.consume_statement(module, iter, ctx)?;
-        let body = Self::wrap_in_block(ctx, body, was_block);
+        let body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
 
         Ok(ctx.heap.alloc_while_statement(|this| WhileStatement{
             this,
@@ -415,8 +534,8 @@ impl PassDefinitions {
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<SynchronousStatementId, ParseError> {
         let synchronous_span = consume_exact_ident(&module.source, iter, KW_STMT_SYNC)?;
-        let (body, was_block) = self.consume_statement(module, iter, ctx)?;
-        let body = Self::wrap_in_block(ctx, body, was_block);
+        let body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
+
         Ok(ctx.heap.alloc_synchronous_statement(|this| SynchronousStatement{
             this,
             span: synchronous_span,
@@ -553,17 +672,118 @@ impl PassDefinitions {
     }
 
     fn consume_labeled_statement(
-        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
-    ) -> Result<LabeledStatementId, ParseError> {
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx, section: &mut ScopedSection<StatementId>
+    ) -> Result<(), ParseError> {
         let label = consume_ident_interned(&module.source, iter, ctx)?;
         consume_token(&module.source, iter, TokenKind::Colon)?;
-        let (body, _) = self.consume_statement(module, iter, ctx)?;
 
-        Ok(ctx.heap.alloc_labeled_statement(|this| LabeledStatement{
-            this, label, body,
+        // Not pretty: consume_statement may produce more than one statement.
+        // The values in the section need to be in the correct order if some
+        // kind of outer block is consumed, so we take another section, push
+        // the expressions in that one, and then allocate the labeled statement.
+        let mut inner_section = self.statements.start_section();
+        self.consume_statement(module, iter, ctx, &mut inner_section)?;
+        debug_assert!(inner_section.len() >= 1);
+
+        let stmt_id = ctx.heap.alloc_labeled_statement(|this| LabeledStatement {
+            this,
+            label,
+            body: *inner_section[0],
             relative_pos_in_block: 0,
-            in_sync: None
-        }))
+            in_sync: None,
+        });
+
+        if inner_section.len() == 1 {
+            // Produce the labeled statement pointing to the first statement.
+            // This is by far the most common case.
+            inner_section.forget();
+            section.push(stmt_id.upcast());
+        } else {
+            // Produce the labeled statement using the first statement, and push
+            // the remaining ones at the end.
+            let inner_statements = inner_section.into_vec();
+            section.push(stmt_id.upcast());
+            for idx in 1..inner_statements.len() {
+                section.push(inner_statements[idx])
+            }
+        }
+
+        Ok(())
+    }
+
+    fn maybe_consume_memory_statement(
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
+    ) -> Result<Option<(MemoryStatementId, ExpressionStatementId)>, ParseError> {
+        // This is a bit ugly. It would be nicer if we could somehow
+        // consume the expression with a type hint if we do get a valid
+        // type, but we don't get an identifier following it
+        let iter_state = iter.save();
+        let definition_id = self.cur_definition;
+        let poly_vars = ctx.heap[definition_id].poly_vars();
+
+        let parser_type = consume_parser_type(
+            &module.source, iter, &ctx.symbols, &ctx.heap, poly_vars,
+            SymbolScope::Definition(definition_id), definition_id, true, 0
+        );
+
+        if let Ok(parser_type) = parser_type {
+            if Some(TokenKind::Ident) == iter.next() {
+                // Assume this is a proper memory statement
+                let identifier = consume_ident_interned(&module.source, iter, ctx)?;
+                let memory_span = InputSpan::from_positions(parser_type.elements[0].full_span.begin, identifier.span.end);
+                let assign_span = consume_token(&module.source, iter, TokenKind::Equal)?;
+
+                let initial_expr_begin_pos = iter.last_valid_pos();
+                let initial_expr_id = self.consume_expression(module, iter, ctx)?;
+                let initial_expr_end_pos = iter.last_valid_pos();
+                consume_token(&module.source, iter, TokenKind::SemiColon)?;
+
+                // Allocate the memory statement with the variable
+                let local_id = ctx.heap.alloc_local(|this| Local{
+                    this,
+                    identifier: identifier.clone(),
+                    parser_type,
+                    relative_pos_in_block: 0,
+                });
+                let memory_stmt_id = ctx.heap.alloc_memory_statement(|this| MemoryStatement{
+                    this,
+                    span: memory_span,
+                    variable: local_id,
+                    next: None
+                });
+
+                // Allocate the initial assignment
+                let variable_expr_id = ctx.heap.alloc_variable_expression(|this| VariableExpression{
+                    this,
+                    identifier,
+                    declaration: None,
+                    parent: ExpressionParent::None,
+                    concrete_type: Default::default()
+                });
+                let assignment_expr_id = ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
+                    this,
+                    span: assign_span,
+                    left: variable_expr_id.upcast(),
+                    operation: AssignmentOperator::Set,
+                    right: initial_expr_id,
+                    parent: ExpressionParent::None,
+                    concrete_type: Default::default(),
+                });
+                let assignment_stmt_id = ctx.heap.alloc_expression_statement(|this| ExpressionStatement{
+                    this,
+                    span: InputSpan::from_positions(initial_expr_begin_pos, initial_expr_end_pos),
+                    expression: assignment_expr_id.upcast(),
+                    next: None,
+                });
+
+                return Ok(Some((memory_stmt_id, assignment_stmt_id)))
+            }
+        }
+
+        // If here then one of the preconditions for a memory statement was not
+        // met. So recover the iterator and return
+        iter.load(iter_state);
+        Ok(None)
     }
 
     fn consume_expression_statement(
@@ -1226,24 +1446,6 @@ impl PassDefinitions {
         )?;
         Ok(section.into_vec())
     }
-
-    fn wrap_in_block(ctx: &mut PassCtx, statement: StatementId, was_block: bool) -> BlockStatementId {
-        debug_assert_eq!(was_block, ctx.heap[statement].is_block());
-        if was_block {
-            return BlockStatementId(StatementId::new(statement.index)); // Yucky
-        }
-
-        ctx.heap.alloc_block_statement(|this| BlockStatement{
-            this,
-            is_implicit: true,
-            span: ctx.heap[statement].span(),
-            statements: vec![statement],
-            parent_scope: None,
-            relative_pos_in_parent: 0,
-            locals: Vec::new(),
-            labels: Vec::new(),
-        })
-    }
 }
 
 /// Consumes a type. A type always starts with an identifier which may indicate
@@ -1598,7 +1800,7 @@ fn consume_polymorphic_vars_spilled(source: &InputSource, iter: &mut TokenIter) 
 
 /// Consumes the parameter list to functions/components
 fn consume_parameter_list(
-    source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx, target: &mut Vec<ParameterId>,
+    source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx, target: &mut ScopedSection<ParameterId>,
     poly_vars: &[Identifier], scope: SymbolScope, definition_id: DefinitionId
 ) -> Result<(), ParseError> {
     consume_comma_separated(

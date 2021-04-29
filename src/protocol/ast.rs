@@ -290,6 +290,13 @@ pub enum Import {
 }
 
 impl Import {
+    pub(crate) fn span(&self) -> InputSpan {
+        match self {
+            Import::Module(v) => v.span,
+            Import::Symbols(v) => v.span,
+        }
+    }
+
     pub(crate) fn as_module(&self) -> &ImportModule {
         match self {
             Import::Module(m) => m,
@@ -351,235 +358,7 @@ impl PartialEq for Identifier {
 
 impl Display for Identifier {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // A source identifier is in ASCII range.
-        write!(f, "{}", String::from_utf8_lossy(&self.value))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum NamespacedIdentifierPart {
-    // Regular identifier
-    Identifier{start: u16, end: u16},
-    // Polyargs associated with a preceding identifier
-    PolyArgs{start: u16, end: u16},
-}
-
-impl NamespacedIdentifierPart {
-    pub(crate) fn is_identifier(&self) -> bool {
-        match self {
-            NamespacedIdentifierPart::Identifier{..} => true,
-            NamespacedIdentifierPart::PolyArgs{..} => false,
-        }
-    }
-
-    pub(crate) fn as_identifier(&self) -> (u16, u16) {
-        match self {
-            NamespacedIdentifierPart::Identifier{start, end} => (*start, *end),
-            NamespacedIdentifierPart::PolyArgs{..} => {
-                unreachable!("Tried to obtain {:?} as Identifier", self);
-            }
-        }
-    }
-
-    pub(crate) fn as_poly_args(&self) -> (u16, u16) {
-        match self {
-            NamespacedIdentifierPart::PolyArgs{start, end} => (*start, *end),
-            NamespacedIdentifierPart::Identifier{..} => {
-                unreachable!("Tried to obtain {:?} as PolyArgs", self)
-            }
-        }
-    }
-}
-
-/// An identifier with optional namespaces and polymorphic variables. Note that 
-/// we allow each identifier to be followed by polymorphic arguments during the 
-/// parsing phase (e.g. Foo<A,B>::Bar<C,D>::Qux). But in our current language 
-/// implementation we can only have valid namespaced identifier that contain one
-/// set of polymorphic arguments at the appropriate position.
-/// TODO: @tokens Reimplement/rename once we have a tokenizer
-#[derive(Debug, Clone)]
-pub struct NamespacedIdentifier {
-    pub position: InputPosition,
-    pub value: Vec<u8>, // Full name as it resides in the input source
-    pub poly_args: Vec<ParserTypeId>, // All poly args littered throughout the namespaced identifier
-    pub parts: Vec<NamespacedIdentifierPart>, // Indices into value/poly_args
-}
-
-impl NamespacedIdentifier {
-    /// Returns the identifier value without any of the specific polymorphic
-    /// arguments.
-    pub fn strip_poly_args(&self) -> Vec<u8> {
-        debug_assert!(!self.parts.is_empty() && self.parts[0].is_identifier());
-
-        let mut result = Vec::with_capacity(self.value.len());
-        let mut iter = self.iter();
-        let (first_ident, _) = iter.next().unwrap();
-        result.extend(first_ident);
-
-        for (ident, _) in iter.next() {
-            result.push(b':');
-            result.push(b':');
-            result.extend(ident);
-        }
-
-        result
-    }
-
-    /// Returns an iterator of the elements in the namespaced identifier
-    pub fn iter(&self) -> NamespacedIdentifierIter {
-        return NamespacedIdentifierIter{
-            identifier: self,
-            element_idx: 0
-        }
-    }
-
-    pub fn get_poly_args(&self) -> Option<&[ParserTypeId]> {
-        let has_poly_args = self.parts.iter().any(|v| !v.is_identifier());
-        if has_poly_args {
-            Some(&self.poly_args)
-        } else {
-            None
-        }
-    }
-
-    // Check if two namespaced identifiers match eachother when not considering
-    // the polymorphic arguments
-    pub fn matches_namespaced_identifier(&self, other: &Self) -> bool {
-        let mut iter_self = self.iter();
-        let mut iter_other = other.iter();
-
-        loop {
-            let val_self = iter_self.next();
-            let val_other = iter_other.next();
-            if val_self.is_some() != val_other.is_some() {
-                // One is longer than the other
-                return false;
-            }
-            if val_self.is_none() {
-                // Both are none
-                return true;
-            }
-
-            // Both are something
-            let (val_self, _) = val_self.unwrap();
-            let (val_other, _) = val_other.unwrap();
-            if val_self != val_other { return false; }
-        }
-    }
-
-    // Check if the namespaced identifier matches an identifier when not 
-    // considering the polymorphic arguments
-    pub fn matches_identifier(&self, other: &Identifier) -> bool {
-        let mut iter = self.iter();
-        let (first_ident, _) = iter.next().unwrap();
-        if first_ident != other.value { 
-            return false;
-        }
-
-        if iter.next().is_some() {
-            return false;
-        }
-
-        return true;
-    }
-}
-
-/// Iterator over elements of the namespaced identifier. The element index will
-/// only ever be at the start of an identifier element.
-#[derive(Debug)]
-pub struct NamespacedIdentifierIter<'a> {
-    identifier: &'a NamespacedIdentifier,
-    element_idx: usize,
-}
-
-impl<'a> Iterator for NamespacedIdentifierIter<'a> {
-    type Item = (&'a [u8], Option<&'a [ParserTypeId]>);
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.get(self.element_idx) {
-            Some((ident, poly)) => {
-                self.element_idx += 1;
-                if poly.is_some() {
-                    self.element_idx += 1;
-                }
-                Some((ident, poly))
-            },
-            None => None
-        }
-    }
-}
-
-impl<'a> NamespacedIdentifierIter<'a> {
-    /// Returns number of parts iterated over, may not correspond to number of
-    /// times one called `next()` because returning an identifier with 
-    /// polymorphic arguments increments the internal counter by 2.
-    pub fn num_returned(&self) -> usize {
-        return self.element_idx;
-    }
-
-    pub fn num_remaining(&self) -> usize {
-        return self.identifier.parts.len() - self.element_idx;
-    }
-
-    pub fn returned_section(&self) -> &[u8] {
-        if self.element_idx == 0 { return &self.identifier.value[0..0]; }
-
-        let last_idx = match &self.identifier.parts[self.element_idx - 1] {
-            NamespacedIdentifierPart::Identifier{end, ..} => *end,
-            NamespacedIdentifierPart::PolyArgs{end, ..} => *end,
-        };
-
-        return &self.identifier.value[..last_idx as usize];
-    }
-
-    /// Returns a specific element from the namespaced identifier
-    pub fn get(&self, idx: usize) -> Option<<Self as Iterator>::Item> {
-        if idx >= self.identifier.parts.len() { 
-            return None 
-        }
-
-        let cur_part = &self.identifier.parts[idx];
-        let next_part = self.identifier.parts.get(idx + 1);
-
-        let (ident_start, ident_end) = cur_part.as_identifier();
-        let poly_slice = match next_part {
-            Some(part) => match part {
-                NamespacedIdentifierPart::Identifier{..} => None,
-                NamespacedIdentifierPart::PolyArgs{start, end} => Some(
-                    &self.identifier.poly_args[*start as usize..*end as usize]
-                ),
-            },
-            None => None
-        };
-
-        Some((
-            &self.identifier.value[ident_start as usize..ident_end as usize],
-            poly_slice
-        ))
-    }
-
-    /// Returns the previously returend index into the parts array of the 
-    /// identifier.
-    pub fn prev_idx(&self) -> Option<usize> {
-        if self.element_idx == 0 { 
-            return None;
-        };
-        
-        if self.identifier.parts[self.element_idx - 1].is_identifier() { 
-            return Some(self.element_idx - 1);
-        }
-
-        // Previous part had polymorphic arguments, so the one before that must
-        // be an identifier (if well formed)
-        debug_assert!(self.element_idx >= 2 && self.identifier.parts[self.element_idx - 2].is_identifier());
-        return Some(self.element_idx - 2)
-    }
-
-    /// Returns the previously returned result from `next()`
-    pub fn prev(&self) -> Option<<Self as Iterator>::Item> {
-        match self.prev_idx() {
-            None => None,
-            Some(idx) => self.get(idx)
-        }
+        write!(f, "{}", self.value.as_str())
     }
 }
 
@@ -593,6 +372,7 @@ pub enum ParserTypeVariant {
     Character, String,
     // Literals (need to get concrete builtin type during typechecking)
     IntegerLiteral,
+    // Marker for inference
     Inferred,
     // Builtins expecting one subsequent type
     Array,
@@ -629,21 +409,6 @@ pub struct ParserTypeElement {
 #[derive(Debug, Clone)]
 pub struct ParserType {
     pub elements: Vec<ParserTypeElement>
-}
-
-/// SymbolicParserType is the specification of a symbolic type. During the
-/// parsing phase we will only store the identifier of the type. During the
-/// validation phase we will determine whether it refers to a user-defined type,
-/// or a polymorphic argument. After the validation phase it may still be the
-/// case that the resulting `variant` will not pass the typechecker.
-#[derive(Debug, Clone)]
-pub struct SymbolicParserType {
-    // Phase 1: parser
-    pub identifier: NamespacedIdentifier,
-    // Phase 2: validation/linking (for types in function/component bodies) and
-    //  type table construction (for embedded types of structs/unions)
-    pub poly_args2: Vec<ParserTypeId>, // taken from identifier or inferred
-    pub variant: Option<SymbolicParserTypeVariant>
 }
 
 /// Specifies whether the symbolic type points to an actual user-defined type,
@@ -1000,6 +765,15 @@ impl Definition {
             _ => panic!("Unable to cast `Definition` to `Function`"),
         }
     }
+    pub fn defined_in(&self) -> RootId {
+        match self {
+            Definition::Struct(def) => def.defined_in,
+            Definition::Enum(def) => def.defined_in,
+            Definition::Union(def) => def.defined_in,
+            Definition::Component(def) => def.defined_in,
+            Definition::Function(def) => def.defined_in,
+        }
+    }
     pub fn identifier(&self) -> &Identifier {
         match self {
             Definition::Struct(def) => &def.identifier,
@@ -1018,12 +792,11 @@ impl Definition {
             _ => &EMPTY_VEC,
         }
     }
-    pub fn body(&self) -> StatementId {
-        // TODO: Fix this
+    pub fn body(&self) -> BlockStatementId {
         match self {
             Definition::Component(com) => com.body,
             Definition::Function(fun) => fun.body,
-            _ => panic!("cannot retrieve body (for EnumDefinition or StructDefinition)")
+            _ => panic!("cannot retrieve body (for EnumDefinition/UnionDefinition or StructDefinition)")
         }
     }
     pub fn poly_vars(&self) -> &Vec<Identifier> {
@@ -1047,6 +820,7 @@ pub struct StructFieldDefinition {
 #[derive(Debug, Clone)]
 pub struct StructDefinition {
     pub this: StructDefinitionId,
+    pub defined_in: RootId,
     // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
@@ -1056,8 +830,11 @@ pub struct StructDefinition {
 }
 
 impl StructDefinition {
-    pub(crate) fn new_empty(this: StructDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
-        Self{ this, span, identifier, poly_vars, fields: Vec::new() }
+    pub(crate) fn new_empty(
+        this: StructDefinitionId, defined_in: RootId, span: InputSpan,
+        identifier: Identifier, poly_vars: Vec<Identifier>
+    ) -> Self {
+        Self{ this, defined_in, span, identifier, poly_vars, fields: Vec::new() }
     }
 }
 
@@ -1076,6 +853,7 @@ pub struct EnumVariantDefinition {
 #[derive(Debug, Clone)]
 pub struct EnumDefinition {
     pub this: EnumDefinitionId,
+    pub defined_in: RootId,
     // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
@@ -1085,8 +863,11 @@ pub struct EnumDefinition {
 }
 
 impl EnumDefinition {
-    pub(crate) fn new_empty(this: EnumDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
-        Self{ this, span, identifier, poly_vars, variants: Vec::new() }
+    pub(crate) fn new_empty(
+        this: EnumDefinitionId, defined_in: RootId, span: InputSpan,
+        identifier: Identifier, poly_vars: Vec<Identifier>
+    ) -> Self {
+        Self{ this, defined_in, span, identifier, poly_vars, variants: Vec::new() }
     }
 }
 
@@ -1106,6 +887,7 @@ pub struct UnionVariantDefinition {
 #[derive(Debug, Clone)]
 pub struct UnionDefinition {
     pub this: UnionDefinitionId,
+    pub defined_in: RootId,
     // Phase 1: symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
@@ -1115,8 +897,11 @@ pub struct UnionDefinition {
 }
 
 impl UnionDefinition {
-    pub(crate) fn new_empty(this: UnionDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
-        Self{ this, span, identifier, poly_vars, variants: Vec::new() }
+    pub(crate) fn new_empty(
+        this: UnionDefinitionId, defined_in: RootId, span: InputSpan,
+        identifier: Identifier, poly_vars: Vec<Identifier>
+    ) -> Self {
+        Self{ this, defined_in, span, identifier, poly_vars, variants: Vec::new() }
     }
 }
 
@@ -1129,6 +914,7 @@ pub enum ComponentVariant {
 #[derive(Debug, Clone)]
 pub struct ComponentDefinition {
     pub this: ComponentDefinitionId,
+    pub defined_in: RootId,
     // Phase 1: symbol scanning
     pub span: InputSpan,
     pub variant: ComponentVariant,
@@ -1136,15 +922,18 @@ pub struct ComponentDefinition {
     pub poly_vars: Vec<Identifier>,
     // Phase 2: parsing
     pub parameters: Vec<ParameterId>,
-    pub body: StatementId,
+    pub body: BlockStatementId,
 }
 
 impl ComponentDefinition {
-    pub(crate) fn new_empty(this: ComponentDefinitionId, span: InputSpan, variant: ComponentVariant, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
+    pub(crate) fn new_empty(
+        this: ComponentDefinitionId, defined_in: RootId, span: InputSpan,
+        variant: ComponentVariant, identifier: Identifier, poly_vars: Vec<Identifier>
+    ) -> Self {
         Self{ 
-            this, span, variant, identifier, poly_vars,
+            this, defined_in, span, variant, identifier, poly_vars,
             parameters: Vec::new(), 
-            body: StatementId::new_invalid()
+            body: BlockStatementId::new_invalid()
         }
     }
 }
@@ -1154,6 +943,7 @@ impl ComponentDefinition {
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
     pub this: FunctionDefinitionId,
+    pub defined_in: RootId,
     // Phase 1: symbol scanning
     pub builtin: bool,
     pub span: InputSpan,
@@ -1162,18 +952,21 @@ pub struct FunctionDefinition {
     // Phase 2: parsing
     pub return_types: Vec<ParserType>,
     pub parameters: Vec<ParameterId>,
-    pub body: StatementId,
+    pub body: BlockStatementId,
 }
 
 impl FunctionDefinition {
-    pub(crate) fn new_empty(this: FunctionDefinitionId, span: InputSpan, identifier: Identifier, poly_vars: Vec<Identifier>) -> Self {
+    pub(crate) fn new_empty(
+        this: FunctionDefinitionId, defined_in: RootId, span: InputSpan,
+        identifier: Identifier, poly_vars: Vec<Identifier>
+    ) -> Self {
         Self {
-            this,
+            this, defined_in,
             builtin: false,
             span, identifier, poly_vars,
             return_types: Vec::new(),
             parameters: Vec::new(),
-            body: StatementId::new_invalid(),
+            body: BlockStatementId::new_invalid(),
         }
     }
 }
@@ -1536,9 +1329,8 @@ pub struct IfStatement {
 #[derive(Debug, Clone)]
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
-    // Phase 2: linker
     pub start_if: IfStatementId,
-    pub position: InputPosition, // of corresponding if statement
+    // Phase 2: linker
     pub next: Option<StatementId>,
 }
 
@@ -1557,9 +1349,8 @@ pub struct WhileStatement {
 #[derive(Debug, Clone)]
 pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
-    // Phase 2: linker
     pub start_while: WhileStatementId,
-    pub position: InputPosition, // of corresponding while
+    // Phase 2: linker
     pub next: Option<StatementId>,
 }
 
@@ -1597,9 +1388,8 @@ pub struct SynchronousStatement {
 #[derive(Debug, Clone)]
 pub struct EndSynchronousStatement {
     pub this: EndSynchronousStatementId,
-    // Phase 2: linker
-    pub position: InputPosition, // of corresponding sync statement
     pub start_sync: SynchronousStatementId,
+    // Phase 2: linker
     pub next: Option<StatementId>,
 }
 

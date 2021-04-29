@@ -329,4 +329,15 @@ impl<'a> TokenIter<'a> {
             }
         }
     }
+
+    /// Saves the current iteration position, may be passed to `load` to return
+    /// the iterator to a previous position.
+    pub(crate) fn save(&self) -> (usize, usize) {
+        (self.cur, self.end)
+    }
+
+    pub(crate) fn load(&mut self, saved: (usize, usize)) {
+        self.cur = saved.0;
+        self.end = saved.1;
+    }
 }

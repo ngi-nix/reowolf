@@ -128,6 +128,20 @@ pub enum SymbolVariant {
 }
 
 impl SymbolVariant {
+    /// Returns the span at which the item was introduced. For an imported
+    /// item (all modules, and imported types) this returns the span of the
+    /// import. For a defined type this returns the span of the identifier
+    pub(crate) fn span_of_introduction(&self, heap: &Heap) -> InputSpan {
+        match self {
+            SymbolVariant::Module(v) => heap[v.introduced_at].span(),
+            SymbolVariant::Definition(v) => if let Some(import_id) = v.imported_at {
+                heap[import_id].span()
+            } else {
+                v.identifier_span
+            },
+        }
+    }
+
     pub(crate) fn as_module(&self) -> &SymbolModule {
         match self {
             SymbolVariant::Module(v) => v,

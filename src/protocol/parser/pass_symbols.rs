@@ -185,7 +185,7 @@ impl PassSymbols {
         maybe_consume_comma_separated(
             TokenKind::OpenAngle, TokenKind::CloseAngle, &module.source, &mut iter,
             |source, iter| consume_ident_interned(source, iter, ctx),
-            &mut poly_vars, "a polymorphic variable"
+            &mut poly_vars, "a polymorphic variable", None
         )?;
         let ident_text = identifier.value.clone(); // because we need it later
 

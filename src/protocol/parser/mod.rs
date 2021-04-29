@@ -29,10 +29,6 @@ use crate::protocol::lexer::*;
 use std::collections::HashMap;
 use crate::protocol::ast_printer::ASTWriter;
 
-pub(crate) const LIMIT_NUM_TYPE_NODES: usize = 64;
-pub(crate) const LIMIT_NUM_POLY_VARS: usize = 64;
-pub(crate) const LIMIT_NUM_PROC_ARGS: usize = 64;
-
 #[derive(PartialEq, Eq)]
 pub enum ModuleCompilationPhase {
     Source,                 // only source is set
@@ -40,6 +36,7 @@ pub enum ModuleCompilationPhase {
     SymbolsScanned,         // all definitions are linked to their type class
     ImportsResolved,        // all imports are added to the symbol table
     DefinitionsParsed,      // produced the AST for the entire module
+    TypesParsed,            // added all definitions to the type table
     ValidatedAndLinked,     // AST is traversed and has linked the required AST nodes
     Typed,                  // Type inference and checking has been performed
 }

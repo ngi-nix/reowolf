@@ -1,62 +1,9 @@
-/**
-TypeTable
-
-Contains the type table: a datastructure that, when compilation succeeds,
-contains a concrete type definition for each AST type definition. In general
-terms the type table will go through the following phases during the compilation
-process:
-
-1. The base type definitions are resolved after the parser phase has
-    finished. This implies that the AST is fully constructed, but not yet
-    annotated.
-2. With the base type definitions resolved, the validation/linker phase will
-    use the type table (together with the symbol table) to disambiguate
-    terms (e.g. does an expression refer to a variable, an enum, a constant,
-    etc.)
-3. During the type checking/inference phase the type table is used to ensure
-    that the AST contains valid use of types in expressions and statements.
-    At the same time type inference will find concrete instantiations of
-    polymorphic types, these will be stored in the type table as monomorphed
-    instantiations of a generic type.
-4. After type checking and inference (and possibly when constructing byte
-    code) the type table will construct a type graph and solidify each
-    non-polymorphic type and monomorphed instantiations of polymorphic types
-    into concrete types.
-
-So a base type is defined by its (optionally polymorphic) representation in the
-AST. A concrete type has concrete types for each of the polymorphic arguments. A
-struct, enum or union may have polymorphic arguments but not actually be a
-polymorphic type. This happens when the polymorphic arguments are not used in
-the type definition itself. Similarly for functions/components: but here we just
-check the arguments/return type of the signature.
-
-Apart from base types and concrete types, we also use the term "embedded type"
-for types that are embedded within another type, such as a type of a struct
-struct field or of a union variant. Embedded types may themselves have
-polymorphic arguments and therefore form an embedded type tree.
-
-NOTE: for now a polymorphic definition of a function/component is illegal if the
-    polymorphic arguments are not used in the arguments/return type. It should
-    be legal, but we disallow it for now.
-
-TODO: Allow potentially cyclic datatypes and reject truly cyclic datatypes.
-TODO: Allow for the full potential of polymorphism
-TODO: Detect "true" polymorphism: for datatypes like structs/enum/unions this
-    is simple. For functions we need to check the entire body. Do it here? Or
-    do it somewhere else?
-TODO: Do we want to check fn argument collision here, or in validation phase?
-TODO: Make type table an on-demand thing instead of constructing all base types.
-TODO: Cleanup everything, feels like a lot can be written cleaner and with less
-    assumptions on each function call.
-// TODO: Review all comments
-*/
-
 use std::fmt::{Formatter, Result as FmtResult};
 use std::collections::{HashMap, VecDeque};
 
 use crate::protocol::ast::*;
-use crate::protocol::parser::symbol_table::{SymbolTable, Symbol};
-use crate::protocol::inputsource::*;
+use crate::protocol::parser::symbol_table2::{SymbolTable, Symbol, SymbolScope};
+use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError};
 use crate::protocol::parser::*;
 
 //------------------------------------------------------------------------------
@@ -109,7 +56,7 @@ pub struct DefinedType {
     pub(crate) ast_root: RootId,
     pub(crate) ast_definition: DefinitionId,
     pub(crate) definition: DefinedTypeVariant,
-    pub(crate) poly_vars: Vec<PolyVar>,
+    pub(crate) poly_vars: Vec<PolymorphicVariable>,
     pub(crate) is_polymorph: bool,
     pub(crate) is_pointerlike: bool,
     // TODO: @optimize
@@ -142,13 +89,6 @@ pub enum DefinedTypeVariant {
     Struct(StructType),
     Function(FunctionType),
     Component(ComponentType)
-}
-
-pub struct PolyVar {
-    identifier: Identifier,
-    /// Whether the polymorphic variables is used directly in the definition of
-    /// the type (not including bodies of function/component types)
-    is_in_use: bool,
 }
 
 impl DefinedTypeVariant {
@@ -184,6 +124,11 @@ impl DefinedTypeVariant {
     }
 }
 
+struct PolymorphicVariable {
+    identifier: Identifier,
+    is_in_use: bool, // a polymorphic argument may be defined, but not used by the type definition
+}
+
 /// `EnumType` is the classical C/C++ enum type. It has various variants with
 /// an assigned integer value. The integer values may be user-defined,
 /// compiler-defined, or a mix of the two. If a user assigns the same enum
@@ -210,7 +155,7 @@ pub struct UnionType {
 
 pub struct UnionVariant {
     pub(crate) identifier: Identifier,
-    pub(crate) embedded: Vec<ParserTypeId>, // zero-length does not have embedded values
+    pub(crate) embedded: Vec<ParserType>, // zero-length does not have embedded values
     pub(crate) tag_value: i64,
 }
 
@@ -220,11 +165,11 @@ pub struct StructType {
 
 pub struct StructField {
     pub(crate) identifier: Identifier,
-    pub(crate) parser_type: ParserTypeId,
+    pub(crate) parser_type: ParserType,
 }
 
 pub struct FunctionType {
-    pub return_type: ParserTypeId,
+    pub return_types: Vec<ParserType>,
     pub arguments: Vec<FunctionArgument>
 }
 
@@ -235,7 +180,7 @@ pub struct ComponentType {
 
 pub struct FunctionArgument {
     identifier: Identifier,
-    parser_type: ParserTypeId,
+    parser_type: ParserType,
 }
 
 //------------------------------------------------------------------------------
@@ -282,20 +227,14 @@ impl TypeIterator {
 /// Result from attempting to resolve a `ParserType` using the symbol table and
 /// the type table.
 enum ResolveResult {
-    /// ParserType is a builtin type
-    BuiltIn,
-    /// ParserType points to a polymorphic argument, contains the index of the
-    /// polymorphic argument in the outermost definition (e.g. we may have 
-    /// structs nested three levels deep, but in the innermost struct we can 
-    /// only use the polyargs that are specified in the type definition of the
-    /// outermost struct).
-    PolyArg(usize),
+    Builtin,
+    PolymoprhicArgument,
     /// ParserType points to a user-defined type that is already resolved in the
     /// type table.
-    Resolved((RootId, DefinitionId)),
+    Resolved(RootId, DefinitionId),
     /// ParserType points to a user-defined type that is not yet resolved into
     /// the type table.
-    Unresolved((RootId, DefinitionId))
+    Unresolved(RootId, DefinitionId)
 }
 
 pub(crate) struct TypeTable {
@@ -313,11 +252,11 @@ pub(crate) struct TypeTable {
 pub(crate) struct TypeCtx<'a> {
     symbols: &'a SymbolTable,
     heap: &'a mut Heap,
-    modules: &'a [LexedModule]
+    modules: &'a [Module]
 }
 
 impl<'a> TypeCtx<'a> {
-    pub(crate) fn new(symbols: &'a SymbolTable, heap: &'a mut Heap, modules: &'a [LexedModule]) -> Self {
+    pub(crate) fn new(symbols: &'a SymbolTable, heap: &'a mut Heap, modules: &'a [Module]) -> Self {
         Self{ symbols, heap, modules }
     }
 }
@@ -348,7 +287,6 @@ impl TypeTable {
         let reserve_size = ctx.heap.definitions.len();
         self.lookup.reserve(reserve_size);
 
-        // TODO: @cleanup Rework this hack
         for root_idx in 0..ctx.modules.len() {
             let last_definition_idx = ctx.heap[ctx.modules[root_idx].root_id].definitions.len();
             for definition_idx in 0..last_definition_idx {
@@ -465,11 +403,13 @@ impl TypeTable {
         self.check_identifier_collision(
             ctx, root_id, &variants, |variant| &variant.identifier, "enum variant"
         )?;
-        self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
-        // Note: although we cannot have embedded type dependent on the
-        // polymorphic variables, they might still be present as tokens
-        let definition_id = definition.this.upcast();
+        // Because we're parsing an enum, the programmer cannot put the
+        // polymorphic variables inside the variants. But the polymorphic
+        // variables might still be present as "marker types"
+        self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
+        let poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+
         self.lookup.insert(definition_id, DefinedType {
             ast_root: root_id,
             ast_definition: definition_id,
@@ -477,7 +417,7 @@ impl TypeTable {
                 variants,
                 representation: Self::enum_tag_type(min_enum_value, max_enum_value)
             }),
-            poly_vars: self.create_initial_poly_vars(&definition.poly_vars),
+            poly_vars,
             is_polymorph: false,
             is_pointerlike: false,
             monomorphs: Vec::new()
@@ -501,8 +441,8 @@ impl TypeTable {
             match &variant.value {
                 UnionVariantValue::None => {},
                 UnionVariantValue::Embedded(embedded) => {
-                    for embedded_id in embedded {
-                        let resolve_result = self.resolve_base_parser_type(ctx, &definition.poly_vars, root_id, *embedded_id)?;
+                    for parser_type in embedded {
+                        let resolve_result = self.resolve_base_parser_type(ctx, root_id, parser_type)?;
                         if !self.ingest_resolve_result(ctx, resolve_result)? {
                             return Ok(false)
                         }
@@ -539,10 +479,11 @@ impl TypeTable {
         )?;
         self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
-        let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
+        // Construct polymorphic variables and mark the ones that are in use
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
         for variant in &variants {
-            for embedded_id in &variant.embedded {
-                self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, *embedded_id)?;
+            for parser_type in &variant.embedded {
+                Self::mark_used_polymorphic_variables(&mut poly_vars, parser_type);
             }
         }
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
@@ -575,7 +516,7 @@ impl TypeTable {
 
         // Make sure all fields point to resolvable types
         for field_definition in &definition.fields {
-            let resolve_result = self.resolve_base_parser_type(ctx, &definition.poly_vars, root_id, field_definition.parser_type)?;
+            let resolve_result = self.resolve_base_parser_type(ctx, root_id, &field_definition.parser_type)?;
             if !self.ingest_resolve_result(ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -586,7 +527,7 @@ impl TypeTable {
         for field_definition in &definition.fields {
             fields.push(StructField{
                 identifier: field_definition.field.clone(),
-                parser_type: field_definition.parser_type,
+                parser_type: field_definition.parser_type.clone(),
             })
         }
 
@@ -597,9 +538,9 @@ impl TypeTable {
         self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
         // Construct representation of polymorphic arguments
-        let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
         for field in &fields {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, field.parser_type)?;
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &field.parser_type);
         }
 
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
@@ -627,12 +568,10 @@ impl TypeTable {
         debug_assert!(!self.lookup.contains_key(&definition_id), "base function already resolved");
 
         let definition = ctx.heap[definition_id].as_function();
-        let return_type = definition.return_type;
 
         // Check the return type
-        let resolve_result = self.resolve_base_parser_type(
-            ctx, &definition.poly_vars, root_id, definition.return_type
-        )?;
+        debug_assert_eq!(definition.return_types.len(), 1, "not one return type"); // TODO: @ReturnValues
+        let resolve_result = self.resolve_base_parser_type(ctx, root_id, &definition.return_types[0])?;
         if !self.ingest_resolve_result(ctx, resolve_result)? {
             return Ok(false)
         }
@@ -640,9 +579,7 @@ impl TypeTable {
         // Check the argument types
         for param_id in &definition.parameters {
             let param = &ctx.heap[*param_id];
-            let resolve_result = self.resolve_base_parser_type(
-                ctx, &definition.poly_vars, root_id, param.parser_type
-            )?;
+            let resolve_result = self.resolve_base_parser_type(ctx, root_id, &param.parser_type)?;
             if !self.ingest_resolve_result(ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -654,7 +591,7 @@ impl TypeTable {
             let param = &ctx.heap[*param_id];
             arguments.push(FunctionArgument{
                 identifier: param.identifier.clone(),
-                parser_type: param.parser_type,
+                parser_type: param.parser_type.clone(),
             })
         }
 
@@ -665,13 +602,11 @@ impl TypeTable {
         self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
         // Construct polymorphic arguments
-        let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
-        let return_type_id = definition.return_type;
-        self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, return_type_id)?;
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+        Self::mark_used_polymorphic_variables(&mut poly_vars, &definition.return_types[0]);
         for argument in &arguments {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, argument.parser_type)?;
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &argument.parser_type);
         }
-
         let is_polymorph = poly_args.iter().any(|arg| arg.is_in_use);
 
         // Construct entry in type table
@@ -679,7 +614,7 @@ impl TypeTable {
             ast_root: root_id,
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Function(FunctionType{
-                return_type,
+                return_types: definition.return_types.clone(),
                 arguments,
             }),
             poly_vars: poly_args,
@@ -704,9 +639,7 @@ impl TypeTable {
         // Check argument types
         for param_id in &definition.parameters {
             let param = &ctx.heap[*param_id];
-            let resolve_result = self.resolve_base_parser_type(
-                ctx, &definition.poly_vars, root_id, param.parser_type
-            )?;
+            let resolve_result = self.resolve_base_parser_type(ctx, root_id, &param.parser_type)?;
             if !self.ingest_resolve_result(ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -718,7 +651,7 @@ impl TypeTable {
             let param = &ctx.heap[*param_id];
             arguments.push(FunctionArgument{
                 identifier: param.identifier.clone(),
-                parser_type: param.parser_type
+                parser_type: param.parser_type.clone()
             })
         }
 
@@ -729,12 +662,12 @@ impl TypeTable {
         self.check_poly_args_collision(ctx, root_id, &definition.poly_vars)?;
 
         // Construct polymorphic arguments
-        let mut poly_args = self.create_initial_poly_vars(&definition.poly_vars);
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
         for argument in &arguments {
-            self.check_and_resolve_embedded_type_and_modify_poly_args(ctx, definition_id, &mut poly_args, root_id, argument.parser_type)?;
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &argument.parser_type)?;
         }
 
-        let is_polymorph = poly_args.iter().any(|v| v.is_in_use);
+        let is_polymorph = poly_vars.iter().any(|v| v.is_in_use);
 
         // Construct entry in type table
         self.lookup.insert(definition_id, DefinedType{
@@ -744,7 +677,7 @@ impl TypeTable {
                 variant: component_variant,
                 arguments,
             }),
-            poly_vars: poly_args,
+            poly_vars,
             is_polymorph,
             is_pointerlike: false, // TODO: @cyclic
             monomorphs: Vec::new(),
@@ -760,14 +693,15 @@ impl TypeTable {
     /// that the type must be resolved first.
     fn ingest_resolve_result(&mut self, ctx: &TypeCtx, result: ResolveResult) -> Result<bool, ParseError> {
         match result {
-            ResolveResult::BuiltIn | ResolveResult::PolyArg(_) => Ok(true),
-            ResolveResult::Resolved(_) => Ok(true),
-            ResolveResult::Unresolved((root_id, definition_id)) => {
+            ResolveResult::Builtin | ResolveResult::PolymoprhicArgument => Ok(true),
+            ResolveResult::Resolved(_, _) => Ok(true),
+            ResolveResult::Unresolved(root_id, definition_id) => {
                 if self.iter.contains(root_id, definition_id) {
                     // Cyclic dependency encountered
                     // TODO: Allow this
-                    let mut error = ParseError::new_error(
-                        &ctx.modules[root_id.index as usize].source, ctx.heap[definition_id].position(),
+                    let module_source = &ctx.modules[root_id.index as usize].source;
+                    let mut error = ParseError::new_error_str_at_span(
+                        module_source, ctx.heap[definition_id].identifier().span,
                         "Evaluating this type definition results in a cyclic type"
                     );
 
@@ -778,10 +712,8 @@ impl TypeTable {
                             "Which depends on this definition"
                         };
 
-                        error = error.with_postfixed_info(
-                            &ctx.modules[root_id.index as usize].source,
-                            ctx.heap[*definition_id].position(), msg
-                        );
+                        let module_source = &ctx.modules[root_id.index as usize].source;
+                        error = error.with_info_str_at_span(module_source, ctx.heap[*definition_id].identifier().span, msg);
                     }
 
                     Err(error)
@@ -795,155 +727,58 @@ impl TypeTable {
         }
     }
 
-    /// Each type definition may consist of several embedded subtypes. This
-    /// function checks whether that embedded type is a builtin, a direct
-    /// reference to a polymorphic argument, or an (un)resolved type definition.
-    /// If the embedded type's symbol cannot be found then this function returns
-    /// an error.
+    /// Each type may consist of embedded types. If this type does not have a
+    /// fixed implementation (e.g. an input port may have an embedded type
+    /// indicating the type of messages, but it always exists in the runtime as
+    /// a port identifier, so it has a fixed implementation) then this function
+    /// will traverse the embedded types to ensure all of them are resolved.
     ///
-    /// If the embedded type is resolved, then one always receives the type's
-    /// (module, definition) tuple. If any of the types in the embedded type's
-    /// tree is not yet resolved, then one may receive a (module, definition)
-    /// tuple that does not correspond to the `parser_type_id` passed into this
-    /// function.
-    fn resolve_base_parser_type(&mut self, ctx: &TypeCtx, poly_vars: &Vec<Identifier>, root_id: RootId, parser_type_id: ParserTypeId) -> Result<ResolveResult, ParseError> {
+    /// Hence if one checks a particular parser type for being resolved, one may
+    /// get back a result value indicating an embedded type (with a different
+    /// DefinitionId) is unresolved.
+    fn resolve_base_parser_type(&mut self, ctx: &TypeCtx, root_id: RootId, parser_type: &ParserType) -> Result<ResolveResult, ParseError> {
+        // Note that as we iterate over the elements of a
         use ParserTypeVariant as PTV;
 
-        // Prepping iterator
-        self.parser_type_iter.clear();
-        self.parser_type_iter.push_back(parser_type_id);
-
-        // Result for the very first time we resolve a
+        // Result for the very first time we resolve a type (i.e the outer type
+        // that we're actually looking up)
         let mut resolve_result = None;
         let mut set_resolve_result = |v: ResolveResult| {
             if resolve_result.is_none() { resolve_result = Some(v); }
         };
 
-        'resolve_loop: while let Some(parser_type_id) = self.parser_type_iter.pop_back() {
-            let parser_type = &ctx.heap[parser_type_id];
-
-            match &parser_type.variant {
-                // Builtin types. An array is a builtin as it is implemented as a
-                // couple of pointers, so we do not require the subtype to be fully
-                // resolved. Similar for input/output ports.
-                PTV::Array(_) | PTV::Input(_) | PTV::Output(_) | PTV::Message |
-                PTV::Bool | PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
-                PTV::String => {
-                    set_resolve_result(ResolveResult::BuiltIn);
+        for element in parser_type.elements.iter() {
+            match element.variant {
+                PTV::Message | PTV::Bool |
+                PTV::UInt8 | PTV::UInt16 | PTV::UInt32 | PTV::UInt64 |
+                PTV::SInt8 | PTV::SInt16 | PTV::SInt32 | PTV::SInt64 |
+                PTV::Character | PTV::String |
+                PTV::Array | PTV::Input | PTV::Output => {
+                    // Nothing to do: these are builtin types or types with a
+                    // fixed implementation
+                    set_resolve_result(ResolveResult::Builtin);
                 },
-                // IntegerLiteral types and the inferred marker are not allowed in
-                // definitions of types
-                PTV::IntegerLiteral |
-                PTV::Inferred => {
-                    debug_assert!(false, "Encountered illegal ParserTypeVariant within type definition");
-                    unreachable!();
+                PTV::IntegerLiteral | PTV::Inferred => {
+                    // As we're parsing the type definitions where these kinds
+                    // of types are impossible/disallowed to express:
+                    unreachable!("illegal ParserTypeVariant within type definition");
                 },
-                // Symbolic type, make sure its base type, and the base types
-                // of all members of the embedded type tree are resolved. We
-                // don't care about monomorphs yet.
-                PTV::Symbolic(symbolic) => {
-                    // Check if the symbolic type is one of the definition's
-                    // polymorphic arguments. If so then we can halt the
-                    // execution
-                    for (poly_arg_idx, poly_arg) in poly_vars.iter().enumerate() {
-                        if symbolic.identifier.matches_identifier(poly_arg) {
-                            set_resolve_result(ResolveResult::PolyArg(poly_arg_idx));
-                            continue 'resolve_loop;
-                        }
-                    }
-
-                    // Lookup the definition in the symbol table
-                    let (symbol, mut ident_iter) = ctx.symbols.resolve_namespaced_identifier(root_id, &symbolic.identifier);
-                    if symbol.is_none() {
-                        return Err(ParseError::new_error(
-                            &ctx.modules[root_id.index as usize].source, symbolic.identifier.position,
-                            "Could not resolve type"
+                PTV::PolymorphicArgument(_, _) => {
+                    set_resolve_result(ResolveResult::PolymoprhicArgument);
+                },
+                PTV::Definition(embedded_id, _) => {
+                    let definition = &ctx.heap[embedded_id];
+                    if !(definition.is_struct() || definition.is_enum() || definition.is_union()) {
+                        let module_source = &ctx.modules[root_id.index as usize].source;
+                        return Err(ParseError::new_error_str_at_span(
+                            module_source, element.full_span, "expected a datatype (struct, enum or union)"
                         ))
                     }
 
-                    let symbol_value = symbol.unwrap();
-                    let module_source = &ctx.modules[root_id.index as usize].source;
-
-                    match symbol_value.symbol {
-                        Symbol::Namespace(_) => {
-                            // Reference to a namespace instead of a type
-                            let last_ident = ident_iter.prev();
-                            return if ident_iter.num_remaining() == 0 {
-                                // Could also have polymorphic args, but we 
-                                // don't care, just throw this error: 
-                                Err(ParseError::new_error(
-                                    module_source, symbolic.identifier.position,
-                                    "Expected a type, got a module name"
-                                ))
-                            } else if last_ident.is_some() && last_ident.map(|(_, poly_args)| poly_args.is_some()).unwrap() {
-                                // Halted at a namespaced because we encountered
-                                // polymorphic arguments
-                                Err(ParseError::new_error(
-                                    module_source, symbolic.identifier.position,
-                                    "Illegal specification of polymorphic arguments to a module name"
-                                ))
-                            } else {
-                                // Impossible (with the current implementation 
-                                // of the symbol table)
-                                unreachable!(
-                                    "Got namespace symbol with {} returned symbols from {}",
-                                    ident_iter.num_returned(),
-                                    &String::from_utf8_lossy(&symbolic.identifier.value)
-                                );
-                            }
-                        },
-                        Symbol::Definition((root_id, definition_id)) => {
-                            let definition = &ctx.heap[definition_id];
-                            if ident_iter.num_remaining() > 0 {
-                                // Namespaced identifier is longer than the type
-                                // we found. Return the appropriate message
-                                return if definition.is_struct() || definition.is_enum() {
-                                    Err(ParseError::new_error(
-                                        module_source, symbolic.identifier.position,
-                                        &format!(
-                                            "Unknown type '{}', did you mean to use '{}'?",
-                                            String::from_utf8_lossy(&symbolic.identifier.value),
-                                            String::from_utf8_lossy(&definition.identifier().value)
-                                        )
-                                    ))
-                                } else {
-                                    Err(ParseError::new_error(
-                                        module_source, symbolic.identifier.position,
-                                        "Unknown datatype"
-                                    ))
-                                }
-                            }
-
-                            // Found a match, make sure it is a datatype
-                            if !(definition.is_struct() || definition.is_enum() || definition.is_union()) {
-                                return Err(ParseError::new_error(
-                                    module_source, symbolic.identifier.position,
-                                    "Embedded types must be datatypes (structs or enums)"
-                                ))
-                            }
-
-                            // Found a struct/enum definition
-                            if !self.lookup.contains_key(&definition_id) {
-                                // Type is not yet resoled, immediately return
-                                // this
-                                return Ok(ResolveResult::Unresolved((root_id, definition_id)));
-                            }
-
-                            // Type is resolved, so set as result, but continue
-                            // iterating over the parser types in the embedded
-                            // type's tree
-                            set_resolve_result(ResolveResult::Resolved((root_id, definition_id)));
-
-                            // Note: because we're resolving parser types, not
-                            // embedded types, we're parsing a tree, so we can't
-                            // get stuck in a cyclic loop.
-                            let last_ident = ident_iter.prev();
-                            if let Some((_, Some(poly_args))) = last_ident {
-                                for poly_arg_type_id in poly_args {
-                                    self.parser_type_iter.push_back(*poly_arg_type_id);
-                                }
-                            }
-                        }
+                    if self.lookup.contains_key(&embedded_id) {
+                        set_resolve_result(ResolveResult::Resolved(definition.defined_in(), embedded_id))
+                    } else {
+                        return Ok(ResolveResult::Unresolved(definition.defined_in(), embedded_id))
                     }
                 }
             }
@@ -952,127 +787,6 @@ impl TypeTable {
         // If here then all types in the embedded type's tree were resolved.
         debug_assert!(resolve_result.is_some(), "faulty logic in ParserType resolver");
         return Ok(resolve_result.unwrap())
-    }
-
-    fn create_initial_poly_vars(&self, poly_args: &[Identifier]) -> Vec<PolyVar> {
-        poly_args
-            .iter()
-            .map(|v| PolyVar{ identifier: v.clone(), is_in_use: false })
-            .collect()
-    }
-
-    /// This function modifies the passed `poly_args` by checking the embedded
-    /// type tree. This should be called after `resolve_base_parser_type` is
-    /// called on each node in this tree: we assume that each symbolic type was
-    /// resolved to either a polymorphic arg or a definition.
-    ///
-    /// This function will also make sure that if the embedded type has
-    /// polymorphic variables itself, that the number of polymorphic variables
-    /// matches the number of arguments in the associated definition.
-    ///
-    /// Finally, for all embedded types (which includes function/component 
-    /// arguments and return types) in type definitions we will modify the AST
-    /// when the embedded type is a polymorphic variable or points to another
-    /// user-defined type.
-    fn check_and_resolve_embedded_type_and_modify_poly_args(
-        &mut self, ctx: &mut TypeCtx, 
-        type_definition_id: DefinitionId, poly_args: &mut [PolyVar], 
-        root_id: RootId, embedded_type_id: ParserTypeId,
-    ) -> Result<(), ParseError> {
-        use ParserTypeVariant as PTV;
-
-        self.parser_type_iter.clear();
-        self.parser_type_iter.push_back(embedded_type_id);
-
-        'type_loop: while let Some(embedded_type_id) = self.parser_type_iter.pop_back() {
-            let embedded_type = &mut ctx.heap[embedded_type_id];
-
-            match &mut embedded_type.variant {
-                PTV::Message | PTV::Bool | 
-                PTV::Byte | PTV::Short | PTV::Int | PTV::Long |
-                PTV::String => {
-                    // Builtins, no modification/iteration required
-                },
-                PTV::IntegerLiteral | PTV::Inferred => {
-                    // TODO: @hack Allowed for now so we can continue testing 
-                    //  the parser/lexer
-                    // debug_assert!(false, "encountered illegal parser type during ParserType/PolyArg modification");
-                    // unreachable!();
-                },
-                PTV::Array(subtype_id) |
-                PTV::Input(subtype_id) |
-                PTV::Output(subtype_id) => {
-                    // Outer type is fixed, but inner type might be symbolic
-                    self.parser_type_iter.push_back(*subtype_id);
-                },
-                PTV::Symbolic(symbolic) => {
-                    for (poly_arg_idx, poly_arg) in poly_args.iter_mut().enumerate() {
-                        if symbolic.identifier.matches_identifier(&poly_arg.identifier) {
-                            poly_arg.is_in_use = true;
-                            // TODO: If we allow higher-kinded types in the future,
-                            //  then we can't continue here, but must resolve the
-                            //  polyargs as well
-                            debug_assert!(symbolic.identifier.get_poly_args().is_none(), "got polymorphic arguments to a polymorphic variable");
-                            debug_assert!(symbolic.variant.is_none(), "symbolic parser type's variant already resolved");
-                            symbolic.variant = Some(SymbolicParserTypeVariant::PolyArg(type_definition_id, poly_arg_idx));
-                            continue 'type_loop;
-                        }
-                    }
-
-                    // Must match a definition
-                    let (symbol, ident_iter) = ctx.symbols.resolve_namespaced_identifier(root_id, &symbolic.identifier);
-                    debug_assert!(symbol.is_some(), "could not resolve symbolic parser type when determining poly args");
-                    let symbol = symbol.unwrap();
-                    debug_assert_eq!(ident_iter.num_remaining(), 0, "no exact symbol match when determining poly args");
-                    let (_root_id, definition_id) = symbol.as_definition().unwrap();
-    
-                    // Must be a struct, enum, or union, we checked this
-                    let defined_type = self.lookup.get(&definition_id).unwrap();
-                    let (_, poly_args) = ident_iter.prev().unwrap();
-                    let poly_args = poly_args.unwrap_or_default();
-
-                    if cfg!(debug_assertions) {
-                        // Everything here should already be checked in 
-                        // `resolve_base_parser_type`.
-                        let type_class = defined_type.definition.type_class();
-                        debug_assert!(
-                            type_class == TypeClass::Struct || type_class == TypeClass::Enum || type_class == TypeClass::Union,
-                            "embedded type's class is not struct, enum or union"
-                        );
-                        debug_assert_eq!(poly_args.len(), symbolic.identifier.poly_args.len());
-                    }
-    
-                    if poly_args.len() != defined_type.poly_vars.len() {
-                        // Mismatch in number of polymorphic arguments. This is 
-                        // not allowed in type definitions (no inference is 
-                        // allowed within type definitions, only in bodies of
-                        // functions/components).
-                        let module_source = &ctx.modules[root_id.index as usize].source;
-                        let number_args_msg = if defined_type.poly_vars.is_empty() {
-                            String::from("is not polymorphic")
-                        } else {
-                            format!("accepts {} polymorphic arguments", defined_type.poly_vars.len())
-                        };
-    
-                        return Err(ParseError::new_error(
-                            module_source, symbolic.identifier.position,
-                            &format!(
-                                "The type '{}' {}, but {} polymorphic arguments were provided",
-                                String::from_utf8_lossy(&symbolic.identifier.strip_poly_args()),
-                                number_args_msg, poly_args.len()
-                            )
-                        ));
-                    }
-    
-                    self.parser_type_iter.extend(poly_args);
-                    debug_assert!(symbolic.variant.is_none(), "symbolic parser type's variant already resolved");
-                    symbolic.variant = Some(SymbolicParserTypeVariant::Definition(definition_id));
-                }
-            }
-        }
-
-        // All nodes in the embedded type tree were valid
-        Ok(())
     }
 
     /// Go through a list of identifiers and ensure that all identifiers have
@@ -1086,10 +800,10 @@ impl TypeTable {
                 let other_item_ident = getter(other_item);
                 if item_ident == other_item_ident {
                     let module_source = &ctx.modules[root_id.index as usize].source;
-                    return Err(ParseError::new_error(
-                        module_source, item_ident.position, &format!("This {} is defined more than once", item_name)
-                    ).with_postfixed_info(
-                        module_source, other_item_ident.position, &format!("The other {} is defined here", item_name)
+                    return Err(ParseError::new_error_at_span(
+                        module_source, item_ident.span, format!("This {} is defined more than once", item_name)
+                    ).with_info_at_span(
+                        module_source, other_item_ident.span, format!("The other {} is defined here", item_name)
                     ));
                 }
             }
@@ -1110,11 +824,11 @@ impl TypeTable {
             for other_poly_arg in &poly_args[..arg_idx] {
                 if poly_arg == other_poly_arg {
                     let module_source = &ctx.modules[root_id.index as usize].source;
-                    return Err(ParseError::new_error(
-                        module_source, poly_arg.position,
+                    return Err(ParseError::new_error_str_at_span(
+                        module_source, poly_arg.span,
                         "This polymorphic argument is defined more than once"
                     ).with_postfixed_info(
-                        module_source, other_poly_arg.position,
+                        module_source, other_poly_arg.span,
                         "It conflicts with this polymorphic argument"
                     ));
                 }
@@ -1122,14 +836,15 @@ impl TypeTable {
 
             // Check if identifier conflicts with a symbol defined or imported
             // in the current module
-            if let Some(symbol) = ctx.symbols.resolve_symbol(root_id, &poly_arg.value) {
+            if let Some(symbol) = ctx.symbols.get_symbol_by_name(SymbolScope::Module(root_id), poly_arg.value.as_bytes()) {
                 // We have a conflict
                 let module_source = &ctx.modules[root_id.index as usize].source;
-                return Err(ParseError::new_error(
-                    module_source, poly_arg.position,
+                let introduction_span = symbol.variant.span_of_introduction(ctx.heap);
+                return Err(ParseError::new_error_str_at_span(
+                    module_source, poly_arg.span,
                     "This polymorphic argument conflicts with another symbol"
-                ).with_postfixed_info(
-                    module_source, symbol.position,
+                ).with_info_str_at_span(
+                    module_source, introduction_span,
                     "It conflicts due to this symbol"
                 ));
             }
@@ -1142,6 +857,23 @@ impl TypeTable {
     //--------------------------------------------------------------------------
     // Small utilities
     //--------------------------------------------------------------------------
+
+    fn create_polymorphic_variables(variables: &[Identifier]) -> Vec<PolymorphicVariable> {
+        let mut result = Vec::with_capacity(variables.len());
+        for variable in variables.iter() {
+            result.push(PolymorphicVariable{ identifier: variable.clone(), is_in_use: false });
+        }
+
+        result
+    }
+
+    fn mark_used_polymorphic_variables(poly_vars: &mut Vec<PolymorphicVariable>, parser_type: &ParserType) {
+        for element in & parser_type.elements {
+            if let ParserTypeVariant::PolymorphicArgument(_, idx) = element {
+                poly_vars[*idx].is_in_use = true;
+            }
+        }
+    }
 
     fn enum_tag_type(min_tag_value: i64, max_tag_value: i64) -> PrimitiveType {
         // TODO: @consistency tag values should be handled correctly

@@ -181,14 +181,14 @@ impl PassImport {
                 }
             } else if Some(TokenKind::OpenCurly) = next {
                 // Importing multiple symbols
+                let mut end_of_list = iter.last_valid_pos();
                 consume_comma_separated(
                     TokenKind::OpenCurly, TokenKind::CloseCurly, source, &mut iter,
                     |source, iter| consume_symbol_and_maybe_alias(
                         source, iter, ctx, &module_identifier.value, target_root_id
                     ),
-                    &mut self.found_symbols, "a symbol", "a list of symbols to import"
+                    &mut self.found_symbols, "a symbol", "a list of symbols to import", Some(&mut end_of_list)
                 )?;
-                let end_of_list = iter.last_valid_pos();
 
                 // Preallocate import
                 import_id = ctx.heap.alloc_import(|this| Import::Symbols(ImportSymbols {

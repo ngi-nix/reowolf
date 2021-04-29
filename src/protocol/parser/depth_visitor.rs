@@ -29,13 +29,13 @@ pub(crate) trait Visitor: Sized {
     fn visit_union_definition(&mut self, _h: &mut Heap, _def: UnionId) -> VisitorResult {
         Ok(())
     }
-    fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         recursive_component_definition(self, h, def)
     }
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         recursive_composite_definition(self, h, def)
     }
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         recursive_primitive_definition(self, h, def)
     }
     fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
@@ -260,7 +260,7 @@ fn recursive_symbol_definition<T: Visitor>(
 fn recursive_component_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: ComponentId,
+    def: ComponentDefinitionId,
 ) -> VisitorResult {
     let component_variant = h[def].variant;
     match component_variant {
@@ -272,23 +272,23 @@ fn recursive_component_definition<T: Visitor>(
 fn recursive_composite_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: ComponentId,
+    def: ComponentDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
         recursive_parameter_as_variable(this, h, param)?;
     }
-    this.visit_statement(h, h[def].body)
+    this.visit_block_statement(h, h[def].body)
 }
 
 fn recursive_primitive_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: ComponentId,
+    def: ComponentDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
         recursive_parameter_as_variable(this, h, param)?;
     }
-    this.visit_statement(h, h[def].body)
+    this.visit_block_statement(h, h[def].body)
 }
 
 fn recursive_function_definition<T: Visitor>(
@@ -374,8 +374,11 @@ fn recursive_if_statement<T: Visitor>(
     stmt: IfStatementId,
 ) -> VisitorResult {
     this.visit_expression(h, h[stmt].test)?;
-    this.visit_statement(h, h[stmt].true_body)?;
-    this.visit_statement(h, h[stmt].false_body)
+    this.visit_block_statement(h, h[stmt].true_body)?;
+    if let Some(false_body) = h[stmt].false_body {
+        this.visit_block_statement(h, false_body)?;
+    }
+    Ok(())
 }
 
 fn recursive_while_statement<T: Visitor>(
@@ -384,7 +387,7 @@ fn recursive_while_statement<T: Visitor>(
     stmt: WhileStatementId,
 ) -> VisitorResult {
     this.visit_expression(h, h[stmt].test)?;
-    this.visit_statement(h, h[stmt].body)
+    this.visit_block_statement(h, h[stmt].body)
 }
 
 fn recursive_synchronous_statement<T: Visitor>(
@@ -396,7 +399,7 @@ fn recursive_synchronous_statement<T: Visitor>(
     // for &param in h[stmt].parameters.clone().iter() {
     //     recursive_parameter_as_variable(this, h, param)?;
     // }
-    this.visit_statement(h, h[stmt].body)
+    this.visit_block_statement(h, h[stmt].body)
 }
 
 fn recursive_return_statement<T: Visitor>(
@@ -561,14 +564,14 @@ impl NestedSynchronousStatements {
 }
 
 impl Visitor for NestedSynchronousStatements {
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         assert!(!self.illegal);
         self.illegal = true;
         recursive_composite_definition(self, h, def)?;
         self.illegal = false;
         Ok(())
     }
-    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
+    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionDefinitionId) -> VisitorResult {
         assert!(!self.illegal);
         self.illegal = true;
         recursive_function_definition(self, h, def)?;
@@ -607,7 +610,7 @@ impl ChannelStatementOccurrences {
 }
 
 impl Visitor for ChannelStatementOccurrences {
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         assert!(!self.illegal);
         self.illegal = true;
         recursive_primitive_definition(self, h, def)?;
@@ -644,7 +647,7 @@ impl FunctionStatementReturns {
 }
 
 impl Visitor for FunctionStatementReturns {
-    fn visit_component_definition(&mut self, _h: &mut Heap, _def: ComponentId) -> VisitorResult {
+    fn visit_component_definition(&mut self, _h: &mut Heap, _def: ComponentDefinitionId) -> VisitorResult {
         Ok(())
     }
     fn visit_variable_declaration(&mut self, _h: &mut Heap, _decl: VariableId) -> VisitorResult {
@@ -698,14 +701,14 @@ impl ComponentStatementReturnNew {
 }
 
 impl Visitor for ComponentStatementReturnNew {
-    fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         assert!(!(self.illegal_new || self.illegal_return));
         self.illegal_return = true;
         recursive_component_definition(self, h, def)?;
         self.illegal_return = false;
         Ok(())
     }
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentId) -> VisitorResult {
+    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         assert!(!self.illegal_new);
         self.illegal_new = true;
         recursive_primitive_definition(self, h, def)?;
@@ -875,13 +878,15 @@ impl Visitor for LinkStatements {
         let end_if_id = end_if_id.unwrap();
 
         assert!(self.prev.is_none());
-        self.visit_statement(h, h[stmt].true_body)?;
+        self.visit_block_statement(h, h[stmt].true_body)?;
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
             h[prev].link_next(end_if_id.upcast());
         }
 
         assert!(self.prev.is_none());
-        self.visit_statement(h, h[stmt].false_body)?;
+        if let Some(false_body) = h[stmt].false_body {
+            self.visit_block_statement(h, false_body)?;
+        }
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
             h[prev].link_next(end_if_id.upcast());
         }
@@ -903,7 +908,7 @@ impl Visitor for LinkStatements {
         // let end_while_id = end_while_id.unwrap();
 
         assert!(self.prev.is_none());
-        self.visit_statement(h, h[stmt].body)?;
+        self.visit_block_statement(h, h[stmt].body)?;
         // The body's next statement loops back to the while statement itself
         // Note: continue statements also loop back to the while statement itself
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
@@ -941,7 +946,7 @@ impl Visitor for LinkStatements {
         let end_sync_id = end_sync_id.unwrap();
 
         assert!(self.prev.is_none());
-        self.visit_statement(h, h[stmt].body)?;
+        self.visit_block_statement(h, h[stmt].body)?;
         // The body's next statement points to the pseudo element
         if let Some(UniqueStatementId(prev)) = self.prev.take() {
             h[prev].link_next(end_sync_id.upcast());
