@@ -596,7 +596,9 @@ impl PassDefinitions {
 
         let mut call_id = CallExpressionId.new_invalid();
         if let Expression::Call(expression) = expression {
-            if expression.method == Method::UserComponent {
+            // Allow both components and functions, as it makes more sense to
+            // check their correct use in the validation and linking pass
+            if expression.method == Method::UserComponent || expression.method == Method::UserFunction {
                 call_id = expression.this;
                 valid = true;
             }
@@ -605,7 +607,7 @@ impl PassDefinitions {
         if !valid {
             return Err(ParseError::new_error_str_at_span(
                 source, InputSpan::from_positions(start_pos, iter.last_valid_pos()),
-                "expected a call to a component"
+                "expected a call expression"
             ));
         }
         consume_token(&module.source, iter, TokenKind::SemiColon)?;

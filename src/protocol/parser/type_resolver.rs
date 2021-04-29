@@ -2766,7 +2766,7 @@ impl TypeResolvingVisitor {
             EP::ExpressionStmt(_) | EP::Expression(_, _) =>
                 // Determined during type inference
                 InferenceType::new(false, false, vec![ITP::Unknown]),
-            EP::If(_) | EP::While(_) | EP::Assert(_) =>
+            EP::If(_) | EP::While(_) =>
                 // Must be a boolean
                 InferenceType::new(false, true, vec![ITP::Bool]),
             EP::Return(_) =>

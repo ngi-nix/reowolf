@@ -10,11 +10,6 @@ use crate::collections::StringRef;
 use crate::protocol::inputsource::*;
 use crate::protocol::input_source2::{InputPosition2, InputSpan};
 
-/// Global limits to the AST, should be checked by lexer and parser. Some are
-/// arbitrary
-const MAX_LEVEL: usize = 128;
-const MAX_NAMESPACES: usize = 64;
-
 /// Helper macro that defines a type alias for a AST element ID. In this case 
 /// only used to alias the `Id<T>` types.
 macro_rules! define_aliased_ast_id {
@@ -147,7 +142,6 @@ define_new_ast_id!(ContinueStatementId, StatementId, index(ContinueStatement, St
 define_new_ast_id!(SynchronousStatementId, StatementId, index(SynchronousStatement, Statement::Synchronous, statements), alloc(alloc_synchronous_statement));
 define_new_ast_id!(EndSynchronousStatementId, StatementId, index(EndSynchronousStatement, Statement::EndSynchronous, statements), alloc(alloc_end_synchronous_statement));
 define_new_ast_id!(ReturnStatementId, StatementId, index(ReturnStatement, Statement::Return, statements), alloc(alloc_return_statement));
-define_new_ast_id!(AssertStatementId, StatementId, index(AssertStatement, Statement::Assert, statements), alloc(alloc_assert_statement));
 define_new_ast_id!(GotoStatementId, StatementId, index(GotoStatement, Statement::Goto, statements), alloc(alloc_goto_statement));
 define_new_ast_id!(NewStatementId, StatementId, index(NewStatement, Statement::New, statements), alloc(alloc_new_statement));
 define_new_ast_id!(ExpressionStatementId, StatementId, index(ExpressionStatement, Statement::Expression, statements), alloc(alloc_expression_statement));
@@ -242,9 +236,10 @@ pub struct Root {
 }
 
 impl Root {
+    // TODO: @Cleanup
     pub fn get_definition_ident(&self, h: &Heap, id: &[u8]) -> Option<DefinitionId> {
         for &def in self.definitions.iter() {
-            if h[def].identifier().value == id {
+            if h[def].identifier().value.as_bytes() == id {
                 return Some(def);
             }
         }
@@ -1437,7 +1432,6 @@ pub enum ExpressionParent {
     If(IfStatementId),
     While(WhileStatementId),
     Return(ReturnStatementId),
-    Assert(AssertStatementId),
     New(NewStatementId),
     ExpressionStmt(ExpressionStatementId),
     Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)

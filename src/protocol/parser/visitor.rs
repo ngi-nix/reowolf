@@ -1,6 +1,7 @@
 use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
-use crate::protocol::parser::{symbol_table::*, type_table::*, LexedModule};
+use crate::protocol::input_source2::ParseError;
+use crate::protocol::parser::{type_table::*, Module};
+use crate::protocol::symbol_table2::{SymbolTable};
 
 type Unit = ();
 pub(crate) type VisitorResult = Result<Unit, ParseError>;
@@ -18,7 +19,7 @@ pub(crate) const TYPE_BUFFER_INIT_CAPACITY: usize = 128;
 /// General context structure that is used while traversing the AST.
 pub(crate) struct Ctx<'p> {
     pub heap: &'p mut Heap,
-    pub module: &'p LexedModule,
+    pub module: &'p Module,
     pub symbols: &'p mut SymbolTable,
     pub types: &'p mut TypeTable,
 }
@@ -77,8 +78,8 @@ pub(crate) trait Visitor2 {
     fn visit_enum_definition(&mut self, _ctx: &mut Ctx, _id: EnumId) -> VisitorResult { Ok(()) }
     fn visit_union_definition(&mut self, _ctx: &mut Ctx, _id: UnionId) -> VisitorResult{ Ok(()) }
     fn visit_struct_definition(&mut self, _ctx: &mut Ctx, _id: StructId) -> VisitorResult { Ok(()) }
-    fn visit_component_definition(&mut self, _ctx: &mut Ctx, _id: ComponentId) -> VisitorResult { Ok(()) }
-    fn visit_function_definition(&mut self, _ctx: &mut Ctx, _id: FunctionId) -> VisitorResult { Ok(()) }
+    fn visit_component_definition(&mut self, _ctx: &mut Ctx, _id: ComponentDefinitionId) -> VisitorResult { Ok(()) }
+    fn visit_function_definition(&mut self, _ctx: &mut Ctx, _id: FunctionDefinitionId) -> VisitorResult { Ok(()) }
 
     // Statements
     // --- enum matching
@@ -127,10 +128,6 @@ pub(crate) trait Visitor2 {
                 let this = stmt.this;
                 self.visit_return_stmt(ctx, this)
             },
-            Statement::Assert(stmt) => {
-                let this = stmt.this;
-                self.visit_assert_stmt(ctx, this)
-            },
             Statement::Goto(stmt) => {
                 let this = stmt.this;
                 self.visit_goto_stmt(ctx, this)
@@ -171,7 +168,6 @@ pub(crate) trait Visitor2 {
     fn visit_continue_stmt(&mut self, _ctx: &mut Ctx, _id: ContinueStatementId) -> VisitorResult { Ok(()) }
     fn visit_synchronous_stmt(&mut self, _ctx: &mut Ctx, _id: SynchronousStatementId) -> VisitorResult { Ok(()) }
     fn visit_return_stmt(&mut self, _ctx: &mut Ctx, _id: ReturnStatementId) -> VisitorResult { Ok(()) }
-    fn visit_assert_stmt(&mut self, _ctx: &mut Ctx, _id: AssertStatementId) -> VisitorResult { Ok(()) }
     fn visit_goto_stmt(&mut self, _ctx: &mut Ctx, _id: GotoStatementId) -> VisitorResult { Ok(()) }
     fn visit_new_stmt(&mut self, _ctx: &mut Ctx, _id: NewStatementId) -> VisitorResult { Ok(()) }
     fn visit_expr_stmt(&mut self, _ctx: &mut Ctx, _id: ExpressionStatementId) -> VisitorResult { Ok(()) }
@@ -243,7 +239,4 @@ pub(crate) trait Visitor2 {
     fn visit_literal_expr(&mut self, _ctx: &mut Ctx, _id: LiteralExpressionId) -> VisitorResult { Ok(()) }
     fn visit_call_expr(&mut self, _ctx: &mut Ctx, _id: CallExpressionId) -> VisitorResult { Ok(()) }
     fn visit_variable_expr(&mut self, _ctx: &mut Ctx, _id: VariableExpressionId) -> VisitorResult { Ok(()) }
-
-    // Types
-    fn visit_parser_type(&mut self, _ctx: &mut Ctx, _id: ParserTypeId) -> VisitorResult { Ok(()) }
 }

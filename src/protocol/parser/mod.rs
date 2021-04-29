@@ -10,7 +10,7 @@ pub(crate) mod pass_imports;
 pub(crate) mod pass_definitions;
 mod type_resolver;
 mod visitor;
-mod visitor_linker;
+mod pass_validation_linking;
 mod utils;
 
 use depth_visitor::*;
@@ -18,7 +18,7 @@ use tokens::*;
 use crate::collections::*;
 use symbol_table2::SymbolTable;
 use visitor::Visitor2;
-use visitor_linker::ValidityAndLinkerVisitor;
+use pass_validation_linking::PassValidationLinking;
 use type_resolver::{TypeResolvingVisitor, ResolveQueue};
 use type_table::{TypeTable, TypeCtx};
 
@@ -229,7 +229,7 @@ impl Parser {
         self.resolve_symbols_and_types()?;
 
         // Validate and link all modules
-        let mut visit = ValidityAndLinkerVisitor::new();
+        let mut visit = PassValidationLinking::new();
         for module in &self.modules {
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
