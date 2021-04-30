@@ -57,7 +57,7 @@ macro_rules! debug_log {
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
+use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError};
 use crate::protocol::parser::type_table::*;
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
@@ -70,6 +70,8 @@ use std::collections::hash_map::Entry;
 
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::Byte ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
+const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
+const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
 const INTEGERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::IntegerLike ];
 const ARRAY_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Array, InferenceTypePart::Unknown ];
@@ -99,10 +101,15 @@ pub(crate) enum InferenceTypePart {
     Void, // For builtin functions that do not return anything
     // Concrete types without subtypes
     Bool,
-    Byte,
-    Short,
-    Int,
-    Long,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    SInt8,
+    SInt16,
+    SInt32,
+    SInt64,
+    Character,
     String,
     // One subtype
     Message,
@@ -251,7 +258,7 @@ impl InferenceType {
             let parts_done = parts.iter().all(|v| v.is_concrete());
             debug_assert_eq!(is_done, parts_done, "{:?}", parts);
         }
-        Self{ has_body_marker: has_body_marker, is_done, parts }
+        Self{ has_body_marker, is_done, parts }
     }
 
     /// Replaces a type subtree with the provided subtree. The caller must make
@@ -704,7 +711,7 @@ impl InferenceType {
             },
             ITP::Instance(definition_id, num_sub) => {
                 let definition = &heap[*definition_id];
-                buffer.push_str(&String::from_utf8_lossy(&definition.identifier().value));
+                buffer.push_str(definition.identifier().value.as_str());
                 if *num_sub > 0 {
                     buffer.push('<');
                     idx = Self::write_display_name(buffer, heap, parts, idx + 1);
@@ -760,7 +767,7 @@ impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
 
                 // Modify internal index, then return items
                 self.idx = end_idx;
-                return Some((marker, &self.parts[start_idx..end_idx]))
+                return Some((marker, &self.parts[start_idx..end_idx]));
             }
 
             self.idx += 1;
@@ -802,9 +809,17 @@ enum SingleInferenceResult {
 }
 
 enum DefinitionType{
-    None, // Token value, never used during actual inference
-    Component(ComponentId),
-    Function(FunctionId),
+    Component(ComponentDefinitionId),
+    Function(FunctionDefinitionId),
+}
+
+impl DefinitionType {
+    fn definition_id(&self) -> DefinitionId {
+        match self {
+            DefinitionType::Component(v) => v.upcast(),
+            DefinitionType::Function(v) => v.upcast(),
+        }
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -940,7 +955,7 @@ impl TypeResolvingVisitor {
 impl Visitor2 for TypeResolvingVisitor {
     // Definitions
 
-    fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentId) -> VisitorResult {
+    fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentDefinitionId) -> VisitorResult {
         self.definition_type = DefinitionType::Component(id);
 
         let comp_def = &ctx.heap[id];
@@ -952,16 +967,16 @@ impl Visitor2 for TypeResolvingVisitor {
 
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let var_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type, true);
+            let var_type = self.determine_inference_type_from_parser_type(ctx, &param.parser_type, true);
             debug_assert!(var_type.is_done, "expected component arguments to be concrete types");
             self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
         }
 
         let body_stmt_id = ctx.heap[id].body;
-        self.visit_stmt(ctx, body_stmt_id)
+        self.visit_block_stmt(ctx, body_stmt_id)
     }
 
-    fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionId) -> VisitorResult {
+    fn visit_function_definition(&mut self, ctx: &mut Ctx, id: FunctionDefinitionId) -> VisitorResult {
         self.definition_type = DefinitionType::Function(id);
 
         let func_def = &ctx.heap[id];
@@ -973,13 +988,13 @@ impl Visitor2 for TypeResolvingVisitor {
 
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let var_type = self.determine_inference_type_from_parser_type(ctx, param.parser_type, true);
+            let var_type = self.determine_inference_type_from_parser_type(ctx, &param.parser_type, true);
             debug_assert!(var_type.is_done, "expected function arguments to be concrete types");
             self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
         }
 
         let body_stmt_id = ctx.heap[id].body;
-        self.visit_stmt(ctx, body_stmt_id)
+        self.visit_block_stmt(ctx, body_stmt_id)
     }
 
     // Statements
@@ -999,7 +1014,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let memory_stmt = &ctx.heap[id];
 
         let local = &ctx.heap[memory_stmt.variable];
-        let var_type = self.determine_inference_type_from_parser_type(ctx, local.parser_type, true);
+        let var_type = self.determine_inference_type_from_parser_type(ctx, &local.parser_type, true);
         self.var_types.insert(memory_stmt.variable.upcast(), VarData::new_local(var_type));
 
         Ok(())
@@ -1009,11 +1024,11 @@ impl Visitor2 for TypeResolvingVisitor {
         let channel_stmt = &ctx.heap[id];
 
         let from_local = &ctx.heap[channel_stmt.from];
-        let from_var_type = self.determine_inference_type_from_parser_type(ctx, from_local.parser_type, true);
+        let from_var_type = self.determine_inference_type_from_parser_type(ctx, &from_local.parser_type, true);
         self.var_types.insert(from_local.this.upcast(), VarData::new_channel(from_var_type, channel_stmt.to.upcast()));
 
         let to_local = &ctx.heap[channel_stmt.to];
-        let to_var_type = self.determine_inference_type_from_parser_type(ctx, to_local.parser_type, true);
+        let to_var_type = self.determine_inference_type_from_parser_type(ctx, &to_local.parser_type, true);
         self.var_types.insert(to_local.this.upcast(), VarData::new_channel(to_var_type, channel_stmt.from.upcast()));
 
         Ok(())
@@ -1033,8 +1048,10 @@ impl Visitor2 for TypeResolvingVisitor {
         let test_expr_id = if_stmt.test;
 
         self.visit_expr(ctx, test_expr_id)?;
-        self.visit_stmt(ctx, true_body_id)?;
-        self.visit_stmt(ctx, false_body_id)?;
+        self.visit_block_stmt(ctx, true_body_id)?;
+        if let Some(false_body_id) = false_body_id {
+            self.visit_block_stmt(ctx, false_body_id)?;
+        }
 
         Ok(())
     }
@@ -1046,7 +1063,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let test_expr_id = while_stmt.test;
 
         self.visit_expr(ctx, test_expr_id)?;
-        self.visit_stmt(ctx, body_id)?;
+        self.visit_block_stmt(ctx, body_id)?;
 
         Ok(())
     }
@@ -1055,7 +1072,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let sync_stmt = &ctx.heap[id];
         let body_id = sync_stmt.body;
 
-        self.visit_stmt(ctx, body_id)
+        self.visit_block_stmt(ctx, body_id)
     }
 
     fn visit_return_stmt(&mut self, ctx: &mut Ctx, id: ReturnStatementId) -> VisitorResult {
@@ -1063,13 +1080,6 @@ impl Visitor2 for TypeResolvingVisitor {
         let expr_id = return_stmt.expression;
 
         self.visit_expr(ctx, expr_id)
-    }
-
-    fn visit_assert_stmt(&mut self, ctx: &mut Ctx, id: AssertStatementId) -> VisitorResult {
-        let assert_stmt = &ctx.heap[id];
-        let test_expr_id = assert_stmt.expression;
-
-        self.visit_expr(ctx, test_expr_id)
     }
 
     fn visit_new_stmt(&mut self, ctx: &mut Ctx, id: NewStatementId) -> VisitorResult {
@@ -1187,19 +1197,6 @@ impl Visitor2 for TypeResolvingVisitor {
         self.progress_select_expr(ctx, id)
     }
 
-    fn visit_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> VisitorResult {
-        let upcast_id = id.upcast();
-        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
-
-        let array_expr = &ctx.heap[id];
-        // TODO: @performance
-        for element_id in array_expr.elements.clone().into_iter() {
-            self.visit_expr(ctx, element_id)?;
-        }
-
-        self.progress_array_expr(ctx, id)
-    }
-
     fn visit_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
@@ -1207,7 +1204,7 @@ impl Visitor2 for TypeResolvingVisitor {
         let literal_expr = &ctx.heap[id];
         match &literal_expr.value {
             Literal::Null | Literal::False | Literal::True |
-            Literal::Integer(_) | Literal::Character(_) => {
+            Literal::Integer(_) | Literal::Character(_) | Literal::String(_) => {
                 // No subexpressions
             },
             Literal::Struct(literal) => {
@@ -1236,6 +1233,13 @@ impl Visitor2 for TypeResolvingVisitor {
                 let expr_ids = literal.values.clone();
                 self.insert_initial_union_polymorph_data(ctx, id);
 
+                for expr_id in expr_ids {
+                    self.visit_expr(ctx, expr_id)?;
+                }
+            },
+            Literal::Array(expressions) => {
+                // TODO: @performance
+                let expr_ids = expressions.clone();
                 for expr_id in expr_ids {
                     self.visit_expr(ctx, expr_id)?;
                 }
@@ -1333,13 +1337,12 @@ impl TypeResolvingVisitor {
                     expr_type.parts[0] = InferenceTypePart::Int;
                 } else {
                     let expr = &ctx.heap[*expr_id];
-                    return Err(ParseError::new_error(
-                        &ctx.module.source, expr.position(),
-                        &format!(
-                            "Could not fully infer the type of this expression (got '{}')",
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, expr.span(), format!(
+                            "could not fully infer the type of this expression (got '{}')",
                             expr_type.display_name(&ctx.heap)
                         )
-                    ))
+                    ));
                 }
             }
 
@@ -1381,10 +1384,9 @@ impl TypeResolvingVisitor {
                         // TODO: Single clean function for function signatures and polyvars.
                         // TODO: Better error message
                         let expr = &ctx.heap[*expr_id];
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, expr.position(),
-                            &format!(
-                                "Could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
+                        return Err(ParseError::new_error_at_span(
+                            &ctx.module.source, expr.span(), format!(
+                                "could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
                                 poly_idx, poly_type.display_name(&ctx.heap)
                             )
                         ))
@@ -1473,10 +1475,6 @@ impl TypeResolvingVisitor {
             Expression::Select(expr) => {
                 let id = expr.this;
                 self.progress_select_expr(ctx, id)
-            },
-            Expression::Array(expr) => {
-                let id = expr.this;
-                self.progress_array_expr(ctx, id)
             },
             Expression::Literal(expr) => {
                 let id = expr.this;
@@ -1823,9 +1821,8 @@ impl TypeResolvingVisitor {
                             let struct_def = if let DefinedTypeVariant::Struct(struct_def) = &type_def.definition {
                                 struct_def
                             } else {
-                                return Err(ParseError::new_error(
-                                    &ctx.module.source, field.identifier.position,
-                                    &format!(
+                                return Err(ParseError::new_error_at_span(
+                                    &ctx.module.source, field.identifier.span, format!(
                                         "Can only apply field access to structs, got a subject of type '{}'",
                                         subject_type.display_name(&ctx.heap)
                                     )
@@ -1842,13 +1839,12 @@ impl TypeResolvingVisitor {
                             }
 
                             if field.definition.is_none() {
-                                let field_position = field.identifier.position;
+                                let field_span = field.identifier.span;
                                 let ast_struct_def = ctx.heap[type_def.ast_definition].as_struct();
-                                return Err(ParseError::new_error(
-                                    &ctx.module.source, field_position,
-                                    &format!(
-                                        "This field does not exist on the struct '{}'",
-                                        &String::from_utf8_lossy(&ast_struct_def.identifier.value)
+                                return Err(ParseError::new_error_at_span(
+                                    &ctx.module.source, field_span, format!(
+                                        "this field does not exist on the struct '{}'",
+                                        ast_struct_def.identifier.value.as_str()
                                     )
                                 ))
                             }
@@ -1863,9 +1859,8 @@ impl TypeResolvingVisitor {
                             return Ok(())
                         },
                         Err(()) => {
-                            return Err(ParseError::new_error(
-                                &ctx.module.source, field.identifier.position,
-                                &format!(
+                            return Err(ParseError::new_error_at_span(
+                                &ctx.module.source, field.identifier.span, format!(
                                     "Can only apply field access to structs, got a subject of type '{}'",
                                     subject_type.display_name(&ctx.heap)
                                 )
@@ -1939,47 +1934,6 @@ impl TypeResolvingVisitor {
         Ok(())
     }
 
-    fn progress_array_expr(&mut self, ctx: &mut Ctx, id: ArrayExpressionId) -> Result<(), ParseError> {
-        let upcast_id = id.upcast();
-        let expr = &ctx.heap[id];
-        let expr_elements = expr.elements.clone(); // TODO: @performance
-
-        debug_log!("Array expr ({} elements): {}", expr_elements.len(), upcast_id.index);
-        debug_log!(" * Before:");
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
-
-        // All elements should have an equal type
-        let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
-        for (progress_arg, arg_id) in progress.iter().zip(expr_elements.iter()) {
-            if *progress_arg {
-                self.queue_expr(*arg_id);
-            }
-        }
-
-        // And the output should be an array of the element types
-        let mut expr_progress = self.apply_forced_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
-        if !expr_elements.is_empty() {
-            let first_arg_id = expr_elements[0];
-            let (inner_expr_progress, arg_progress) = self.apply_equal2_constraint(
-                ctx, upcast_id, upcast_id, 1, first_arg_id, 0
-            )?;
-
-            expr_progress = expr_progress || inner_expr_progress;
-
-            // Note that if the array type progressed the type of the arguments,
-            // then we should enqueue this progression function again
-            // TODO: @fix Make apply_equal_n accept a start idx as well
-            if arg_progress { self.queue_expr(upcast_id); }
-        }
-
-        debug_log!(" * After:");
-        debug_log!("   - Expr type [{}]: {}", expr_progress, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
-
-        if expr_progress { self.queue_expr_parent(ctx, upcast_id); }
-
-        Ok(())
-    }
-
     fn progress_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
@@ -1998,7 +1952,14 @@ impl TypeResolvingVisitor {
             Literal::True | Literal::False => {
                 self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?
             },
-            Literal::Character(_) => todo!("character literals"),
+            Literal::Character(_) => {
+                todo!("check character literal type inference");
+                self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?
+            },
+            Literal::String(_) => {
+                todo!("check string literal type inference");
+                self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?
+            },
             Literal::Struct(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
                 for poly in &extra.poly_vars {
@@ -2212,7 +2173,42 @@ impl TypeResolvingVisitor {
                 );
 
                 progress_expr
-            }
+            },
+            Literal::Array(data) => {
+                let expr_elements = data.clone(); // TODO: @performance
+                debug_log!("Array expr ({} elements): {}", expr_elements.len(), upcast_id.index);
+                debug_log!(" * Before:");
+                debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
+                // All elements should have an equal type
+                let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
+                for (progress_arg, arg_id) in progress.iter().zip(expr_elements.iter()) {
+                    if *progress_arg {
+                        self.queue_expr(*arg_id);
+                    }
+                }
+
+                // And the output should be an array of the element types
+                let mut progress_expr = self.apply_forced_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
+                if !expr_elements.is_empty() {
+                    let first_arg_id = expr_elements[0];
+                    let (inner_expr_progress, arg_progress) = self.apply_equal2_constraint(
+                        ctx, upcast_id, upcast_id, 1, first_arg_id, 0
+                    )?;
+
+                    progress_expr = progress_expr || inner_expr_progress;
+
+                    // Note that if the array type progressed the type of the arguments,
+                    // then we should enqueue this progression function again
+                    // TODO: @fix Make apply_equal_n accept a start idx as well
+                    if arg_progress { self.queue_expr(upcast_id); }
+                }
+
+                debug_log!(" * After:");
+                debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+
+                progress_expr
+            },
         };
 
         debug_log!(" * After:");
@@ -2359,15 +2355,13 @@ impl TypeResolvingVisitor {
         ) };
         if infer_res == DualInferenceResult::Incompatible {
             let var_decl = &ctx.heap[var_id];
-            return Err(ParseError::new_error(
-                &ctx.module.source, var_decl.position(),
-                &format!(
+            return Err(ParseError::new_error_at_span(
+                &ctx.module.source, var_decl.identifier().span, format!(
                     "Conflicting types for this variable, previously assigned the type '{}'",
                     var_data.var_type.display_name(&ctx.heap)
                 )
-            ).with_postfixed_info(
-                &ctx.module.source, var_expr.position,
-                &format!(
+            ).with_info_at_span(
+                &ctx.module.source, var_expr.identifier.span, format!(
                     "But inferred to have incompatible type '{}' here",
                     expr_type.display_name(&ctx.heap)
                 )
@@ -2413,15 +2407,13 @@ impl TypeResolvingVisitor {
                         let var_decl = &ctx.heap[var_id];
                         let link_decl = &ctx.heap[linked_id];
 
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, var_decl.position(),
-                            &format!(
+                        return Err(ParseError::new_error_at_span(
+                            &ctx.module.source, var_decl.identifier().span, format!(
                                 "Conflicting types for this variable, assigned the type '{}'",
                                 var_data.var_type.display_name(&ctx.heap)
                             )
-                        ).with_postfixed_info(
-                            &ctx.module.source, link_decl.position(),
-                            &format!(
+                        ).with_info_at_span(
+                            &ctx.module.source, link_decl.identifier().span, format!(
                                 "Because it is incompatible with this variable, assigned the type '{}'",
                                 link_data.var_type.display_name(&ctx.heap)
                             )
@@ -2535,24 +2527,23 @@ impl TypeResolvingVisitor {
 
         if infer_res == DualInferenceResult::Incompatible {
             // TODO: Check if I still need to use this
-            let outer_position = ctx.heap[outer_expr_id].position();
-            let (position_name, position) = match expr_id {
-                Some(expr_id) => ("argument's", ctx.heap[expr_id].position()),
-                None => ("type's", outer_position)
+            let outer_span = ctx.heap[outer_expr_id].span();
+            let (span_name, span) = match expr_id {
+                Some(expr_id) => ("argument's", ctx.heap[expr_id].span()),
+                None => ("type's", outer_span)
             };
             let (signature_display_type, expression_display_type) = unsafe { (
                 (&*signature_type).display_name(&ctx.heap),
                 (&*expression_type).display_name(&ctx.heap)
             ) };
 
-            return Err(ParseError::new_error(
-                &ctx.module.source, outer_position,
-                "Failed to fully resolve the types of this expression"
-            ).with_postfixed_info(
-                &ctx.module.source, position,
-                &format!(
-                    "Because the {} signature has been resolved to '{}', but the expression has been resolved to '{}'",
-                    position_name, signature_display_type, expression_display_type
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, outer_span,
+                "failed to fully resolve the types of this expression"
+            ).with_info_at_span(
+                &ctx.module.source, span, format!(
+                    "because the {} signature has been resolved to '{}', but the expression has been resolved to '{}'",
+                    span_name, signature_display_type, expression_display_type
                 )
             ));
         }
@@ -2873,8 +2864,7 @@ impl TypeResolvingVisitor {
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
                         for param_id in definition.parameters.clone() {
                             let param = &ctx.heap[param_id];
-                            let param_parser_type_id = param.parser_type;
-                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, param_parser_type_id, false));
+                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, &param.parser_type, false));
                         }
 
                         (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Void]))
@@ -2884,11 +2874,12 @@ impl TypeResolvingVisitor {
                         let mut parameter_types = Vec::with_capacity(definition.parameters.len());
                         for param_id in definition.parameters.clone() {
                             let param = &ctx.heap[param_id];
-                            let param_parser_type_id = param.parser_type;
-                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, param_parser_type_id, false));
+                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, &param.parser_type, false));
                         }
 
-                        let return_type = self.determine_inference_type_from_parser_type(ctx, definition.return_type, false);
+                        debug_assert_eq!(definition.return_types.len(), 1, "multiple return types not yet implemented");
+
+                        let return_type = self.determine_inference_type_from_parser_type(ctx, &definition.return_types[0], false);
                         (parameter_types, return_type)
                     },
                     Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => {
@@ -2939,7 +2930,7 @@ impl TypeResolvingVisitor {
         for lit_field in literal.fields.iter() {
             let def_field = &definition.fields[lit_field.field_idx];
             let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, def_field.parser_type, false
+                ctx, &def_field.parser_type, false
             );
             embedded_types.push(inference_type);
         }
@@ -3103,7 +3094,7 @@ impl TypeResolvingVisitor {
 
         // Generate initial field type
         let field_type = self.determine_inference_type_from_parser_type(
-            ctx, definition.fields[field_idx].parser_type, false
+            ctx, &definition.fields[field_idx].parser_type, false
         );
 
         self.extra_data.insert(select_id.upcast(), ExtraData{
@@ -3126,97 +3117,64 @@ impl TypeResolvingVisitor {
     /// In the second case we place InferenceTypePart::Marker instances such
     /// that we can perform type inference on the polymorphic variables.
     fn determine_inference_type_from_parser_type(
-        &mut self, ctx: &Ctx, parser_type_id: ParserTypeId,
+        &mut self, ctx: &Ctx, parser_type: &ParserType,
         parser_type_in_body: bool
     ) -> InferenceType {
         use ParserTypeVariant as PTV;
         use InferenceTypePart as ITP;
 
-        let mut to_consider = VecDeque::with_capacity(16);
-        to_consider.push_back(parser_type_id);
-
-        let mut infer_type = Vec::new();
+        let mut infer_type = Vec::with_capacity(parser_type.elements.len());
         let mut has_inferred = false;
         let mut has_markers = false;
 
-        while !to_consider.is_empty() {
-            let parser_type_id = to_consider.pop_front().unwrap();
-            let parser_type = &ctx.heap[parser_type_id];
-            match &parser_type.variant {
+        for element in &parser_type.elements {
+            match &element.variant {
                 PTV::Message => {
                     // TODO: @types Remove the Message -> Byte hack at some point...
                     infer_type.push(ITP::Message);
-                    infer_type.push(ITP::Byte);
+                    infer_type.push(ITP::UInt8);
                 },
                 PTV::Bool => { infer_type.push(ITP::Bool); },
-                PTV::Byte => { infer_type.push(ITP::Byte); },
-                PTV::Short => { infer_type.push(ITP::Short); },
-                PTV::Int => { infer_type.push(ITP::Int); },
-                PTV::Long => { infer_type.push(ITP::Long); },
+                PTV::UInt8 => { infer_type.push(ITP::UInt8); },
+                PTV::UInt16 => { infer_type.push(ITP::UInt16); },
+                PTV::UInt32 => { infer_type.push(ITP::UInt32); },
+                PTV::UInt64 => { infer_type.push(ITP::UInt64); },
+                PTV::SInt8 => { infer_type.push(ITP::SInt8); },
+                PTV::SInt16 => { infer_type.push(ITP::SInt16); },
+                PTV::SInt32 => { infer_type.push(ITP::SInt32); },
+                PTV::SInt64 => { infer_type.push(ITP::SInt64); },
+                PTV::Character => { infer_type.push(ITP::Character); },
                 PTV::String => { infer_type.push(ITP::String); },
                 PTV::IntegerLiteral => { unreachable!("integer literal type on variable type"); },
                 PTV::Inferred => {
                     infer_type.push(ITP::Unknown);
                     has_inferred = true;
                 },
-                PTV::Array(subtype_id) => {
-                    infer_type.push(ITP::Array);
-                    to_consider.push_front(*subtype_id);
-                },
-                PTV::Input(subtype_id) => {
-                    infer_type.push(ITP::Input);
-                    to_consider.push_front(*subtype_id);
-                },
-                PTV::Output(subtype_id) => {
-                    infer_type.push(ITP::Output);
-                    to_consider.push_front(*subtype_id);
-                },
-                PTV::Symbolic(symbolic) => {
-                    debug_assert!(symbolic.variant.is_some(), "symbolic variant not yet determined");
-                    match symbolic.variant.as_ref().unwrap() {
-                        SymbolicParserTypeVariant::PolyArg(_, arg_idx) => {
-                            let arg_idx = *arg_idx;
-                            debug_assert!(symbolic.poly_args2.is_empty()); // TODO: @hkt
+                PTV::Array => { infer_type.push(ITP::Array); },
+                PTV::Input => { infer_type.push(ITP::Input); },
+                PTV::Output => { infer_type.push(ITP::Output); },
+                PTV::PolymorphicArgument(belongs_to_definition, poly_arg_idx) => {
+                    let poly_arg_idx = *poly_arg_idx;
+                    if parser_type_in_body {
+                        // Refers to polymorphic argument on procedure we're currently processing.
+                        // This argument is already known.
+                        debug_assert_eq!(belongs_to_definition, self.definition_type.definition_id());
+                        debug_assert!((poly_arg_idx as usize) < self.poly_vars.len());
 
-                            if parser_type_in_body {
-                                // Polymorphic argument refers to definition's
-                                // polymorphic variables
-                                debug_assert!(arg_idx < self.poly_vars.len());
-                                debug_assert!(!self.poly_vars[arg_idx].has_marker());
-                                infer_type.push(ITP::MarkerDefinition(arg_idx));
-                                for concrete_part in &self.poly_vars[arg_idx].parts {
-                                    infer_type.push(ITP::from(*concrete_part));
-                                }
-                            } else {
-                                // Polymorphic argument has to be inferred
-                                has_markers = true;
-                                has_inferred = true;
-                                infer_type.push(ITP::MarkerBody(arg_idx));
-                                infer_type.push(ITP::Unknown);
-                            }
-                        },
-                        SymbolicParserTypeVariant::Definition(definition_id) => {
-                            // TODO: @cleanup
-                            if cfg!(debug_assertions) {
-                                let definition = &ctx.heap[*definition_id];
-                                debug_assert!(definition.is_struct() || definition.is_enum() || definition.is_union()); // TODO: @function_ptrs
-                                let num_poly = match definition {
-                                    Definition::Struct(v) => v.poly_vars.len(),
-                                    Definition::Enum(v) => v.poly_vars.len(),
-                                    Definition::Union(v) => v.poly_vars.len(),
-                                    _ => unreachable!(),
-                                };
-                                debug_assert_eq!(symbolic.poly_args2.len(), num_poly);
-                            }
-
-                            infer_type.push(ITP::Instance(*definition_id, symbolic.poly_args2.len()));
-                            let mut poly_arg_idx = symbolic.poly_args2.len();
-                            while poly_arg_idx > 0 {
-                                poly_arg_idx -= 1;
-                                to_consider.push_front(symbolic.poly_args2[poly_arg_idx]);
-                            }
+                        infer_type.push(ITP::MarkerDefinition(poly_arg_idx as usize));
+                        for concrete_part in &self.poly_vars[poly_arg_idx].parts {
+                            infer_types.push(ITP::from(*concrete_part));
                         }
+                    } else {
+                        // Polymorphic argument has to be inferred
+                        has_markers = true;
+                        has_inferred = true;
+                        infer_type.push(ITP::MarkerBody(poly_arg_idx));
+                        infer_type.push(ITP::Unknown)
                     }
+                },
+                PTV::Definition(definition_id, num_embedded) => {
+                    infer_type.push(ITP::Instance(*definition_id, *num_embedded));
                 }
             }
         }
@@ -3238,16 +3196,14 @@ impl TypeResolvingVisitor {
         let expr_type = self.expr_types.get(&expr_id).unwrap();
         let arg_type = self.expr_types.get(&arg_id).unwrap();
 
-        return ParseError::new_error(
-            &ctx.module.source, expr.position(),
-            &format!(
-                "Incompatible types: this expression expected a '{}'", 
+        return ParseError::new_error_at_span(
+            &ctx.module.source, expr.span(), format!(
+                "incompatible types: this expression expected a '{}'",
                 expr_type.display_name(&ctx.heap)
             )
         ).with_postfixed_info(
-            &ctx.module.source, arg_expr.position(),
-            &format!(
-                "But this expression yields a '{}'",
+            &ctx.module.source, arg_expr.span(), format!(
+                "but this expression yields a '{}'",
                 arg_type.display_name(&ctx.heap)
             )
         )
@@ -3264,18 +3220,16 @@ impl TypeResolvingVisitor {
         let arg1_type = self.expr_types.get(&arg1_id).unwrap();
         let arg2_type = self.expr_types.get(&arg2_id).unwrap();
 
-        return ParseError::new_error(
-            &ctx.module.source, expr.position(),
-            "Incompatible types: cannot apply this expression"
-        ).with_postfixed_info(
-            &ctx.module.source, arg1.position(),
-            &format!(
+        return ParseError::new_error_str_at_span(
+            &ctx.module.source, expr.span(),
+            "incompatible types: cannot apply this expression"
+        ).with_info_at_span(
+            &ctx.module.source, arg1.span(), format!(
                 "Because this expression has type '{}'",
                 arg1_type.display_name(&ctx.heap)
             )
-        ).with_postfixed_info(
-            &ctx.module.source, arg2.position(),
-            &format!(
+        ).with_info_at_span(
+            &ctx.module.source, arg2.span(), format!(
                 "But this expression has type '{}'",
                 arg2_type.display_name(&ctx.heap)
             )
@@ -3288,10 +3242,9 @@ impl TypeResolvingVisitor {
         let expr = &ctx.heap[expr_id];
         let expr_type = self.expr_types.get(&expr_id).unwrap();
 
-        return ParseError::new_error(
-            &ctx.module.source, expr.position(),
-            &format!(
-                "Incompatible types: got a '{}' but expected a '{}'",
+        return ParseError::new_error_at_span(
+            &ctx.module.source, expr.span(), format!(
+                "incompatible types: got a '{}' but expected a '{}'",
                 expr_type.display_name(&ctx.heap), 
                 InferenceType::partial_display_name(&ctx.heap, template)
             )
@@ -3552,9 +3505,9 @@ mod tests {
     fn test_single_part_inference() {
         // lhs argument inferred from rhs
         let pairs = [
-            (ITP::NumberLike, ITP::Byte),
-            (ITP::IntegerLike, ITP::Int),
-            (ITP::Unknown, ITP::Long),
+            (ITP::NumberLike, ITP::UInt8),
+            (ITP::IntegerLike, ITP::SInt32),
+            (ITP::Unknown, ITP::UInt64),
             (ITP::Unknown, ITP::String)
         ];
         for (lhs, rhs) in pairs.iter() {
@@ -3581,13 +3534,13 @@ mod tests {
     #[test]
     fn test_multi_part_inference() {
         let pairs = [
-            (vec![ITP::ArrayLike, ITP::NumberLike], vec![ITP::Slice, ITP::Byte]),
+            (vec![ITP::ArrayLike, ITP::NumberLike], vec![ITP::Slice, ITP::SInt8]),
             (vec![ITP::Unknown], vec![ITP::Input, ITP::Array, ITP::String]),
-            (vec![ITP::PortLike, ITP::Int], vec![ITP::Input, ITP::Int]),
-            (vec![ITP::Unknown], vec![ITP::Output, ITP::Int]),
+            (vec![ITP::PortLike, ITP::SInt32], vec![ITP::Input, ITP::SInt32]),
+            (vec![ITP::Unknown], vec![ITP::Output, ITP::SInt32]),
             (
                 vec![ITP::Instance(Id::new(0), 2), ITP::Input, ITP::Unknown, ITP::Output, ITP::Unknown],
-                vec![ITP::Instance(Id::new(0), 2), ITP::Input, ITP::Array, ITP::Int, ITP::Output, ITP::Int]
+                vec![ITP::Instance(Id::new(0), 2), ITP::Input, ITP::Array, ITP::SInt32, ITP::Output, ITP::SInt32]
             )
         ];
 

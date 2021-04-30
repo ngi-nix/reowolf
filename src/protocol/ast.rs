@@ -1531,6 +1531,21 @@ impl Expression {
             _ => panic!("Unable to cast `Expression` to `VariableExpression`"),
         }
     }
+    pub fn span(&self) -> InputSpan {
+        match self {
+            Expression::Assignment(expr) => expr.span,
+            Expression::Binding(expr) => expr.span,
+            Expression::Conditional(expr) => expr.span,
+            Expression::Binary(expr) => expr.span,
+            Expression::Unary(expr) => expr.span,
+            Expression::Indexing(expr) => expr.span,
+            Expression::Slicing(expr) => expr.span,
+            Expression::Select(expr) => expr.span,
+            Expression::Literal(expr) => expr.span,
+            Expression::Call(expr) => expr.span,
+            Expression::Variable(expr) => expr.identifier.span,
+        }
+    }
     // TODO: @cleanup
     pub fn parent(&self) -> &ExpressionParent {
         match self {
@@ -1542,7 +1557,6 @@ impl Expression {
             Expression::Indexing(expr) => &expr.parent,
             Expression::Slicing(expr) => &expr.parent,
             Expression::Select(expr) => &expr.parent,
-            Expression::Array(expr) => &expr.parent,
             Expression::Literal(expr) => &expr.parent,
             Expression::Call(expr) => &expr.parent,
             Expression::Variable(expr) => &expr.parent,
@@ -1567,7 +1581,6 @@ impl Expression {
             Expression::Indexing(expr) => expr.parent = parent,
             Expression::Slicing(expr) => expr.parent = parent,
             Expression::Select(expr) => expr.parent = parent,
-            Expression::Array(expr) => expr.parent = parent,
             Expression::Literal(expr) => expr.parent = parent,
             Expression::Call(expr) => expr.parent = parent,
             Expression::Variable(expr) => expr.parent = parent,
@@ -1583,7 +1596,6 @@ impl Expression {
             Expression::Indexing(expr) => &expr.concrete_type,
             Expression::Slicing(expr) => &expr.concrete_type,
             Expression::Select(expr) => &expr.concrete_type,
-            Expression::Array(expr) => &expr.concrete_type,
             Expression::Literal(expr) => &expr.concrete_type,
             Expression::Call(expr) => &expr.concrete_type,
             Expression::Variable(expr) => &expr.concrete_type,
@@ -1601,7 +1613,6 @@ impl Expression {
             Expression::Indexing(expr) => &mut expr.concrete_type,
             Expression::Slicing(expr) => &mut expr.concrete_type,
             Expression::Select(expr) => &mut expr.concrete_type,
-            Expression::Array(expr) => &mut expr.concrete_type,
             Expression::Literal(expr) => &mut expr.concrete_type,
             Expression::Call(expr) => &mut expr.concrete_type,
             Expression::Variable(expr) => &mut expr.concrete_type,
