@@ -1,7 +1,7 @@
-use crate::protocol::input_source2::{
-    InputSource2 as InputSource,
+use crate::protocol::input_source::{
+    InputSource as InputSource,
     ParseError,
-    InputPosition2 as InputPosition,
+    InputPosition as InputPosition,
     InputSpan
 };
 
@@ -43,7 +43,6 @@ impl PassTokenizer {
         // Set up for tokenization by pushing the first range onto the stack.
         // This range may get transformed into the appropriate range kind later,
         // see `push_range` and `pop_range`.
-        self.curly_depth = 0;
         self.stack_idx = 0;
         target.ranges.push(TokenRange{
             parent_idx: 0,
@@ -101,7 +100,7 @@ impl PassTokenizer {
                         // Check if this marks the end of a range we're
                         // currently processing
                         if self.curly_stack.is_empty() {
-                            return Err(ParseError::new_error(
+                            return Err(ParseError::new_error_str_at_pos(
                                 source, token_pos, "unmatched closing curly brace '}'"
                             ));
                         }
@@ -109,7 +108,7 @@ impl PassTokenizer {
                         self.curly_stack.pop();
 
                         let range = &target.ranges[self.stack_idx];
-                        if range.range_kind == TokenRangeKind::Definition && range.curly_depth == self.curly_depth {
+                        if range.range_kind == TokenRangeKind::Definition && range.curly_depth == self.curly_stack.len() as u32 {
                             self.pop_range(target, target.tokens.len() as u32);
                         }
 
@@ -123,7 +122,9 @@ impl PassTokenizer {
                         }
                     }
                 } else {
-                    return Err(ParseError::new_error(source, source.pos(), "unexpected character"));
+                    return Err(ParseError::new_error_str_at_pos(
+                        source, source.pos(), "unexpected character"
+                    ));
                 }
             }
         }
@@ -137,7 +138,7 @@ impl PassTokenizer {
             // Let's not add a lot of heuristics and just tell the programmer
             // that something is wrong
             let last_unmatched_open = self.curly_stack.pop().unwrap();
-            return Err(ParseError::new_error(
+            return Err(ParseError::new_error_str_at_pos(
                 source, last_unmatched_open, "unmatched opening curly brace '{'"
             ));
         }
@@ -320,15 +321,15 @@ impl PassTokenizer {
         } else if first_char == b'>' {
             source.consume();
             let next = source.next();
-            if let Some(b'>') = next {
+            if Some(b'>') == next {
                 source.consume();
-                if let Some(b'=') = source.next() {
+                if Some(b'=') == source.next() {
                     source.consume();
                     token_kind = TokenKind::ShiftRightEquals;
                 } else {
                     token_kind = TokenKind::ShiftRight;
                 }
-            } else if Some(b'=') = next {
+            } else if Some(b'=') == next {
                 source.consume();
                 token_kind = TokenKind::GreaterEquals;
             } else {
@@ -391,7 +392,7 @@ impl PassTokenizer {
         let mut prev_char = b'\'';
         while let Some(c) = source.next() {
             if !c.is_ascii() {
-                return Err(ParseError::new_error(source, source.pos(), "non-ASCII character in char literal"));
+                return Err(ParseError::new_error_str_at_pos(source, source.pos(), "non-ASCII character in char literal"));
             }
             source.consume();
 
@@ -406,7 +407,7 @@ impl PassTokenizer {
 
         if prev_char != b'\'' {
             // Unterminated character literal, reached end of file.
-            return Err(ParseError::new_error(source, begin_pos, "encountered unterminated character literal"));
+            return Err(ParseError::new_error_str_at_pos(source, begin_pos, "encountered unterminated character literal"));
         }
 
         let end_pos = source.pos();
@@ -427,7 +428,7 @@ impl PassTokenizer {
         let mut prev_char = b'"';
         while let Some(c) = source.next() {
             if !c.is_ascii() {
-                return Err(ParseError::new_error(source, source.pos(), "non-ASCII character in string literal"));
+                return Err(ParseError::new_error_str_at_pos(source, source.pos(), "non-ASCII character in string literal"));
             }
 
             source.consume();
@@ -441,7 +442,7 @@ impl PassTokenizer {
 
         if prev_char != b'"' {
             // Unterminated string literal
-            return Err(ParseError::new_error(source, begin_pos, "encountered unterminated string literal"));
+            return Err(ParseError::new_error_str_at_pos(source, begin_pos, "encountered unterminated string literal"));
         }
 
         let end_pos = source.pos();
@@ -548,7 +549,9 @@ impl PassTokenizer {
         }
 
         if !is_closed {
-            return Err(ParseError::new_error(source, source.pos(), "encountered unterminated block comment"));
+            return Err(ParseError::new_error_str_at_pos(
+                source, source.pos(), "encountered unterminated block comment")
+            );
         }
 
         let end_pos = source.pos();
@@ -646,7 +649,7 @@ impl PassTokenizer {
             target.ranges.push(TokenRange{
                 parent_idx: self.stack_idx,
                 range_kind: TokenRangeKind::Code,
-                curly_depth: self.curly_depth,
+                curly_depth: self.curly_stack.len() as u32,
                 start: code_start,
                 end: first_token,
                 num_child_ranges: 0,
@@ -672,7 +675,7 @@ impl PassTokenizer {
         target.ranges.push(TokenRange{
             parent_idx,
             range_kind,
-            curly_depth: self.curly_depth,
+            curly_depth: self.curly_stack.len() as u32,
             start: first_token,
             end: first_token,
             num_child_ranges: 0,
@@ -701,7 +704,7 @@ impl PassTokenizer {
     fn check_ascii(&self, source: &InputSource) -> Result<(), ParseError> {
         match source.next() {
             Some(c) if !c.is_ascii() => {
-                Err(ParseError::new_error(source, source.pos(), "encountered a non-ASCII character"))
+                Err(ParseError::new_error_str_at_pos(source, source.pos(), "encountered a non-ASCII character"))
             },
             _else => {
                 Ok(())

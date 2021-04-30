@@ -1,5 +1,5 @@
 use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
+use crate::protocol::input_source::*;
 
 // The following indirection is needed due to a bug in the cbindgen tool.
 type Unit = ();
@@ -20,13 +20,13 @@ pub(crate) trait Visitor: Sized {
     fn visit_symbol_definition(&mut self, h: &mut Heap, def: DefinitionId) -> VisitorResult {
         recursive_symbol_definition(self, h, def)
     }
-    fn visit_struct_definition(&mut self, _h: &mut Heap, _def: StructId) -> VisitorResult {
+    fn visit_struct_definition(&mut self, _h: &mut Heap, _def: StructDefinitionId) -> VisitorResult {
         Ok(())
     }
-    fn visit_enum_definition(&mut self, _h: &mut Heap, _def: EnumId) -> VisitorResult {
+    fn visit_enum_definition(&mut self, _h: &mut Heap, _def: EnumDefinitionId) -> VisitorResult {
         Ok(())
     }
-    fn visit_union_definition(&mut self, _h: &mut Heap, _def: UnionId) -> VisitorResult {
+    fn visit_union_definition(&mut self, _h: &mut Heap, _def: UnionDefinitionId) -> VisitorResult {
         Ok(())
     }
     fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
@@ -38,7 +38,7 @@ pub(crate) trait Visitor: Sized {
     fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
         recursive_primitive_definition(self, h, def)
     }
-    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
+    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionDefinitionId) -> VisitorResult {
         recursive_function_definition(self, h, def)
     }
 
@@ -73,9 +73,6 @@ pub(crate) trait Visitor: Sized {
     }
     fn visit_labeled_statement(&mut self, h: &mut Heap, stmt: LabeledStatementId) -> VisitorResult {
         recursive_labeled_statement(self, h, stmt)
-    }
-    fn visit_skip_statement(&mut self, _h: &mut Heap, _stmt: SkipStatementId) -> VisitorResult {
-        Ok(())
     }
     fn visit_if_statement(&mut self, h: &mut Heap, stmt: IfStatementId) -> VisitorResult {
         recursive_if_statement(self, h, stmt)
@@ -112,14 +109,11 @@ pub(crate) trait Visitor: Sized {
     fn visit_return_statement(&mut self, h: &mut Heap, stmt: ReturnStatementId) -> VisitorResult {
         recursive_return_statement(self, h, stmt)
     }
-    fn visit_assert_statement(&mut self, h: &mut Heap, stmt: AssertStatementId) -> VisitorResult {
-        recursive_assert_statement(self, h, stmt)
+    fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
+        recursive_new_statement(self, h, stmt)
     }
     fn visit_goto_statement(&mut self, _h: &mut Heap, _stmt: GotoStatementId) -> VisitorResult {
         Ok(())
-    }
-    fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
-        recursive_new_statement(self, h, stmt)
     }
     fn visit_expression_statement(
         &mut self,
@@ -175,9 +169,6 @@ pub(crate) trait Visitor: Sized {
     }
     fn visit_select_expression(&mut self, h: &mut Heap, expr: SelectExpressionId) -> VisitorResult {
         recursive_select_expression(self, h, expr)
-    }
-    fn visit_array_expression(&mut self, h: &mut Heap, expr: ArrayExpressionId) -> VisitorResult {
-        recursive_array_expression(self, h, expr)
     }
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         recursive_call_expression(self, h, expr)
@@ -294,12 +285,12 @@ fn recursive_primitive_definition<T: Visitor>(
 fn recursive_function_definition<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
-    def: FunctionId,
+    def: FunctionDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
         recursive_parameter_as_variable(this, h, param)?;
     }
-    this.visit_statement(h, h[def].body)
+    this.visit_block_statement(h, h[def].body)
 }
 
 fn recursive_variable_declaration<T: Visitor>(
@@ -317,7 +308,6 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
     match h[stmt].clone() {
         Statement::Block(stmt) => this.visit_block_statement(h, stmt.this),
         Statement::Local(stmt) => this.visit_local_statement(h, stmt.this()),
-        Statement::Skip(stmt) => this.visit_skip_statement(h, stmt.this),
         Statement::Labeled(stmt) => this.visit_labeled_statement(h, stmt.this),
         Statement::If(stmt) => this.visit_if_statement(h, stmt.this),
         Statement::While(stmt) => this.visit_while_statement(h, stmt.this),
@@ -325,7 +315,6 @@ fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId
         Statement::Continue(stmt) => this.visit_continue_statement(h, stmt.this),
         Statement::Synchronous(stmt) => this.visit_synchronous_statement(h, stmt.this),
         Statement::Return(stmt) => this.visit_return_statement(h, stmt.this),
-        Statement::Assert(stmt) => this.visit_assert_statement(h, stmt.this),
         Statement::Goto(stmt) => this.visit_goto_statement(h, stmt.this),
         Statement::New(stmt) => this.visit_new_statement(h, stmt.this),
         Statement::Expression(stmt) => this.visit_expression_statement(h, stmt.this),
@@ -407,15 +396,8 @@ fn recursive_return_statement<T: Visitor>(
     h: &mut Heap,
     stmt: ReturnStatementId,
 ) -> VisitorResult {
-    this.visit_expression(h, h[stmt].expression)
-}
-
-fn recursive_assert_statement<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    stmt: AssertStatementId,
-) -> VisitorResult {
-    this.visit_expression(h, h[stmt].expression)
+    debug_assert_eq!(h[stmt].expressions.len(), 1);
+    this.visit_expression(h, h[stmt].expressions[0])
 }
 
 fn recursive_new_statement<T: Visitor>(
@@ -448,7 +430,6 @@ fn recursive_expression<T: Visitor>(
         Expression::Indexing(expr) => this.visit_indexing_expression(h, expr.this),
         Expression::Slicing(expr) => this.visit_slicing_expression(h, expr.this),
         Expression::Select(expr) => this.visit_select_expression(h, expr.this),
-        Expression::Array(expr) => this.visit_array_expression(h, expr.this),
         Expression::Literal(expr) => this.visit_constant_expression(h, expr.this),
         Expression::Call(expr) => this.visit_call_expression(h, expr.this),
         Expression::Variable(expr) => this.visit_variable_expression(h, expr.this),
@@ -527,17 +508,6 @@ fn recursive_select_expression<T: Visitor>(
     this.visit_expression(h, h[expr].subject)
 }
 
-fn recursive_array_expression<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    expr: ArrayExpressionId,
-) -> VisitorResult {
-    for &expr in h[expr].elements.clone().iter() {
-        this.visit_expression(h, expr)?;
-    }
-    Ok(())
-}
-
 fn recursive_call_expression<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
@@ -552,287 +522,6 @@ fn recursive_call_expression<T: Visitor>(
 // ====================
 // Grammar Rules
 // ====================
-
-pub(crate) struct NestedSynchronousStatements {
-    illegal: bool,
-}
-
-impl NestedSynchronousStatements {
-    pub(crate) fn new() -> Self {
-        NestedSynchronousStatements { illegal: false }
-    }
-}
-
-impl Visitor for NestedSynchronousStatements {
-    fn visit_composite_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
-        assert!(!self.illegal);
-        self.illegal = true;
-        recursive_composite_definition(self, h, def)?;
-        self.illegal = false;
-        Ok(())
-    }
-    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionDefinitionId) -> VisitorResult {
-        assert!(!self.illegal);
-        self.illegal = true;
-        recursive_function_definition(self, h, def)?;
-        self.illegal = false;
-        Ok(())
-    }
-    fn visit_synchronous_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: SynchronousStatementId,
-    ) -> VisitorResult {
-        if self.illegal {
-            return Err((
-                h[stmt].position(),
-                "Illegal nested synchronous statement".to_string(),
-            ));
-        }
-        self.illegal = true;
-        recursive_synchronous_statement(self, h, stmt)?;
-        self.illegal = false;
-        Ok(())
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct ChannelStatementOccurrences {
-    illegal: bool,
-}
-
-impl ChannelStatementOccurrences {
-    pub(crate) fn new() -> Self {
-        ChannelStatementOccurrences { illegal: false }
-    }
-}
-
-impl Visitor for ChannelStatementOccurrences {
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
-        assert!(!self.illegal);
-        self.illegal = true;
-        recursive_primitive_definition(self, h, def)?;
-        self.illegal = false;
-        Ok(())
-    }
-    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
-        assert!(!self.illegal);
-        self.illegal = true;
-        recursive_function_definition(self, h, def)?;
-        self.illegal = false;
-        Ok(())
-    }
-    fn visit_channel_statement(&mut self, h: &mut Heap, stmt: ChannelStatementId) -> VisitorResult {
-        if self.illegal {
-            return Err((h[stmt].position(), "Illegal channel declaration".to_string()));
-        }
-        Ok(())
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct FunctionStatementReturns {}
-
-impl FunctionStatementReturns {
-    pub(crate) fn new() -> Self {
-        FunctionStatementReturns {}
-    }
-    fn function_error(&self, position: InputPosition) -> VisitorResult {
-        Err((position, "Function definition must return".to_string()))
-    }
-}
-
-impl Visitor for FunctionStatementReturns {
-    fn visit_component_definition(&mut self, _h: &mut Heap, _def: ComponentDefinitionId) -> VisitorResult {
-        Ok(())
-    }
-    fn visit_variable_declaration(&mut self, _h: &mut Heap, _decl: VariableId) -> VisitorResult {
-        Ok(())
-    }
-    fn visit_block_statement(&mut self, h: &mut Heap, block: BlockStatementId) -> VisitorResult {
-        let len = h[block].statements.len();
-        assert!(len > 0);
-        self.visit_statement(h, h[block].statements[len - 1])
-    }
-    fn visit_skip_statement(&mut self, h: &mut Heap, stmt: SkipStatementId) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_break_statement(&mut self, h: &mut Heap, stmt: BreakStatementId) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_continue_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: ContinueStatementId,
-    ) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_assert_statement(&mut self, h: &mut Heap, stmt: AssertStatementId) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_expression_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: ExpressionStatementId,
-    ) -> VisitorResult {
-        self.function_error(h[stmt].position)
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct ComponentStatementReturnNew {
-    illegal_new: bool,
-    illegal_return: bool,
-}
-
-impl ComponentStatementReturnNew {
-    pub(crate) fn new() -> Self {
-        ComponentStatementReturnNew { illegal_new: false, illegal_return: false }
-    }
-}
-
-impl Visitor for ComponentStatementReturnNew {
-    fn visit_component_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
-        assert!(!(self.illegal_new || self.illegal_return));
-        self.illegal_return = true;
-        recursive_component_definition(self, h, def)?;
-        self.illegal_return = false;
-        Ok(())
-    }
-    fn visit_primitive_definition(&mut self, h: &mut Heap, def: ComponentDefinitionId) -> VisitorResult {
-        assert!(!self.illegal_new);
-        self.illegal_new = true;
-        recursive_primitive_definition(self, h, def)?;
-        self.illegal_new = false;
-        Ok(())
-    }
-    fn visit_function_definition(&mut self, h: &mut Heap, def: FunctionId) -> VisitorResult {
-        assert!(!(self.illegal_new || self.illegal_return));
-        self.illegal_new = true;
-        recursive_function_definition(self, h, def)?;
-        self.illegal_new = false;
-        Ok(())
-    }
-    fn visit_variable_declaration(&mut self, _h: &mut Heap, _decl: VariableId) -> VisitorResult {
-        Ok(())
-    }
-    fn visit_return_statement(&mut self, h: &mut Heap, stmt: ReturnStatementId) -> VisitorResult {
-        if self.illegal_return {
-            Err((h[stmt].position, "Component definition must not return".to_string()))
-        } else {
-            recursive_return_statement(self, h, stmt)
-        }
-    }
-    fn visit_new_statement(&mut self, h: &mut Heap, stmt: NewStatementId) -> VisitorResult {
-        if self.illegal_new {
-            Err((
-                h[stmt].position,
-                "Symbol definition contains illegal new statement".to_string(),
-            ))
-        } else {
-            recursive_new_statement(self, h, stmt)
-        }
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct CheckBuiltinOccurrences {
-    legal: bool,
-}
-
-impl CheckBuiltinOccurrences {
-    pub(crate) fn new() -> Self {
-        CheckBuiltinOccurrences { legal: false }
-    }
-}
-
-impl Visitor for CheckBuiltinOccurrences {
-    fn visit_synchronous_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: SynchronousStatementId,
-    ) -> VisitorResult {
-        assert!(!self.legal);
-        self.legal = true;
-        recursive_synchronous_statement(self, h, stmt)?;
-        self.legal = false;
-        Ok(())
-    }
-    fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
-        match h[expr].method {
-            Method::Get | Method::Fires => {
-                if !self.legal {
-                    return Err((h[expr].position, "Illegal built-in occurrence".to_string()));
-                }
-            }
-            _ => {}
-        }
-        recursive_call_expression(self, h, expr)
-    }
-}
-
-pub(crate) struct BuildScope {
-    scope: Option<Scope>,
-}
-
-impl BuildScope {
-    pub(crate) fn new() -> Self {
-        BuildScope { scope: None }
-    }
-}
-
-impl Visitor for BuildScope {
-    fn visit_symbol_definition(&mut self, h: &mut Heap, def: DefinitionId) -> VisitorResult {
-        assert!(self.scope.is_none());
-        self.scope = Some(Scope::Definition(def));
-        recursive_symbol_definition(self, h, def)?;
-        self.scope = None;
-        Ok(())
-    }
-    fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
-        assert!(!self.scope.is_none());
-        let old = self.scope;
-        // First store the current scope
-        h[stmt].parent_scope = self.scope;
-        // Then move scope down to current block
-        self.scope = Some(Scope::Regular(stmt));
-        recursive_block_statement(self, h, stmt)?;
-        // Move scope back up
-        self.scope = old;
-        Ok(())
-    }
-    fn visit_synchronous_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: SynchronousStatementId,
-    ) -> VisitorResult {
-        assert!(!self.scope.is_none());
-        let old = self.scope;
-        // First store the current scope
-        h[stmt].parent_scope = self.scope;
-        // Then move scope down to current sync
-        // TODO: Should be legal-ish, but very wrong
-        self.scope = Some(Scope::Synchronous((stmt, BlockStatementId(stmt.upcast()))));
-        recursive_synchronous_statement(self, h, stmt)?;
-        // Move scope back up
-        self.scope = old;
-        Ok(())
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
 
 pub(crate) struct UniqueStatementId(StatementId);
 
@@ -866,10 +555,6 @@ impl Visitor for LinkStatements {
     }
     fn visit_labeled_statement(&mut self, h: &mut Heap, stmt: LabeledStatementId) -> VisitorResult {
         recursive_labeled_statement(self, h, stmt)
-    }
-    fn visit_skip_statement(&mut self, _h: &mut Heap, stmt: SkipStatementId) -> VisitorResult {
-        self.prev = Some(UniqueStatementId(stmt.upcast()));
-        Ok(())
     }
     fn visit_if_statement(&mut self, h: &mut Heap, stmt: IfStatementId) -> VisitorResult {
         // Link the two branches to the corresponding EndIf pseudo-statement
@@ -963,10 +648,6 @@ impl Visitor for LinkStatements {
     fn visit_return_statement(&mut self, _h: &mut Heap, _stmt: ReturnStatementId) -> VisitorResult {
         Ok(())
     }
-    fn visit_assert_statement(&mut self, _h: &mut Heap, stmt: AssertStatementId) -> VisitorResult {
-        self.prev = Some(UniqueStatementId(stmt.upcast()));
-        Ok(())
-    }
     fn visit_goto_statement(&mut self, _h: &mut Heap, _stmt: GotoStatementId) -> VisitorResult {
         Ok(())
     }
@@ -980,237 +661,6 @@ impl Visitor for LinkStatements {
         stmt: ExpressionStatementId,
     ) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));
-        Ok(())
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct BuildLabels {
-    block: Option<BlockStatementId>,
-    sync_enclosure: Option<SynchronousStatementId>,
-}
-
-impl BuildLabels {
-    pub(crate) fn new() -> Self {
-        BuildLabels { block: None, sync_enclosure: None }
-    }
-}
-
-impl Visitor for BuildLabels {
-    fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
-        assert_eq!(self.block, h[stmt].parent_block(h));
-        let old = self.block;
-        self.block = Some(stmt);
-        recursive_block_statement(self, h, stmt)?;
-        self.block = old;
-        Ok(())
-    }
-    fn visit_labeled_statement(&mut self, h: &mut Heap, stmt: LabeledStatementId) -> VisitorResult {
-        assert!(!self.block.is_none());
-        // Store label in current block (on the fly)
-        h[self.block.unwrap()].labels.push(stmt);
-        // Update synchronous scope of label
-        h[stmt].in_sync = self.sync_enclosure;
-        recursive_labeled_statement(self, h, stmt)
-    }
-    fn visit_while_statement(&mut self, h: &mut Heap, stmt: WhileStatementId) -> VisitorResult {
-        h[stmt].in_sync = self.sync_enclosure;
-        recursive_while_statement(self, h, stmt)
-    }
-    fn visit_synchronous_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: SynchronousStatementId,
-    ) -> VisitorResult {
-        assert!(self.sync_enclosure.is_none());
-        self.sync_enclosure = Some(stmt);
-        recursive_synchronous_statement(self, h, stmt)?;
-        self.sync_enclosure = None;
-        Ok(())
-    }
-    fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
-        Ok(())
-    }
-}
-
-pub(crate) struct ResolveLabels {
-    block: Option<BlockStatementId>,
-    while_enclosure: Option<WhileStatementId>,
-    sync_enclosure: Option<SynchronousStatementId>,
-}
-
-impl ResolveLabels {
-    pub(crate) fn new() -> Self {
-        ResolveLabels { block: None, while_enclosure: None, sync_enclosure: None }
-    }
-    fn check_duplicate_impl(
-        h: &Heap,
-        block: Option<BlockStatementId>,
-        stmt: LabeledStatementId,
-    ) -> VisitorResult {
-        if let Some(block) = block {
-            // Checking the parent first is important. Otherwise, labels
-            // overshadow previously defined labels: and this is illegal!
-            ResolveLabels::check_duplicate_impl(h, h[block].parent_block(h), stmt)?;
-            // For the current block, check for a duplicate.
-            for &other_stmt in h[block].labels.iter() {
-                if other_stmt == stmt {
-                    continue;
-                } else {
-                    if h[other_stmt].label == h[stmt].label {
-                        return Err((h[stmt].position, "Duplicate label".to_string()));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-    fn check_duplicate(&self, h: &Heap, stmt: LabeledStatementId) -> VisitorResult {
-        ResolveLabels::check_duplicate_impl(h, self.block, stmt)
-    }
-    fn get_target(
-        &self,
-        h: &Heap,
-        id: &Identifier,
-    ) -> Result<LabeledStatementId, VisitorError> {
-        if let Some(stmt) = ResolveLabels::find_target(h, self.block, id) {
-            Ok(stmt)
-        } else {
-            Err((id.position, "Unresolved label".to_string()))
-        }
-    }
-    fn find_target(
-        h: &Heap,
-        block: Option<BlockStatementId>,
-        id: &Identifier,
-    ) -> Option<LabeledStatementId> {
-        if let Some(block) = block {
-            // It does not matter in what order we find the labels.
-            // If there are duplicates: that is checked elsewhere.
-            for &stmt in h[block].labels.iter() {
-                if h[stmt].label == *id {
-                    return Some(stmt);
-                }
-            }
-            if let Some(stmt) = ResolveLabels::find_target(h, h[block].parent_block(h), id) {
-                return Some(stmt);
-            }
-        }
-        None
-    }
-}
-
-impl Visitor for ResolveLabels {
-    fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
-        assert_eq!(self.block, h[stmt].parent_block(h));
-        let old = self.block;
-        self.block = Some(stmt);
-        recursive_block_statement(self, h, stmt)?;
-        self.block = old;
-        Ok(())
-    }
-    fn visit_labeled_statement(&mut self, h: &mut Heap, stmt: LabeledStatementId) -> VisitorResult {
-        assert!(!self.block.is_none());
-        self.check_duplicate(h, stmt)?;
-        recursive_labeled_statement(self, h, stmt)
-    }
-    fn visit_while_statement(&mut self, h: &mut Heap, stmt: WhileStatementId) -> VisitorResult {
-        let old = self.while_enclosure;
-        self.while_enclosure = Some(stmt);
-        recursive_while_statement(self, h, stmt)?;
-        self.while_enclosure = old;
-        Ok(())
-    }
-    fn visit_break_statement(&mut self, h: &mut Heap, stmt: BreakStatementId) -> VisitorResult {
-        let the_while;
-        if let Some(label) = &h[stmt].label {
-            let target = self.get_target(h, label)?;
-            let target = &h[h[target].body];
-            if !target.is_while() {
-                return Err((
-                    h[stmt].position,
-                    "Illegal break: target not a while statement".to_string(),
-                ));
-            }
-            the_while = target.as_while();
-            // TODO: check if break is nested under while
-        } else {
-            if self.while_enclosure.is_none() {
-                return Err((
-                    h[stmt].position,
-                    "Illegal break: no surrounding while statement".to_string(),
-                ));
-            }
-            the_while = &h[self.while_enclosure.unwrap()];
-            // break is always nested under while, by recursive vistor
-        }
-        if the_while.in_sync != self.sync_enclosure {
-            return Err((
-                h[stmt].position,
-                "Illegal break: synchronous statement escape".to_string(),
-            ));
-        }
-        h[stmt].target = the_while.end_while;
-        Ok(())
-    }
-    fn visit_continue_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: ContinueStatementId,
-    ) -> VisitorResult {
-        let the_while;
-        if let Some(label) = &h[stmt].label {
-            let target = self.get_target(h, label)?;
-            let target = &h[h[target].body];
-            if !target.is_while() {
-                return Err((
-                    h[stmt].position,
-                    "Illegal continue: target not a while statement".to_string(),
-                ));
-            }
-            the_while = target.as_while();
-            // TODO: check if continue is nested under while
-        } else {
-            if self.while_enclosure.is_none() {
-                return Err((
-                    h[stmt].position,
-                    "Illegal continue: no surrounding while statement".to_string(),
-                ));
-            }
-            the_while = &h[self.while_enclosure.unwrap()];
-            // continue is always nested under while, by recursive vistor
-        }
-        if the_while.in_sync != self.sync_enclosure {
-            return Err((
-                h[stmt].position,
-                "Illegal continue: synchronous statement escape".to_string(),
-            ));
-        }
-        h[stmt].target = Some(the_while.this);
-        Ok(())
-    }
-    fn visit_synchronous_statement(
-        &mut self,
-        h: &mut Heap,
-        stmt: SynchronousStatementId,
-    ) -> VisitorResult {
-        assert!(self.sync_enclosure.is_none());
-        self.sync_enclosure = Some(stmt);
-        recursive_synchronous_statement(self, h, stmt)?;
-        self.sync_enclosure = None;
-        Ok(())
-    }
-    fn visit_goto_statement(&mut self, h: &mut Heap, stmt: GotoStatementId) -> VisitorResult {
-        let target = self.get_target(h, &h[stmt].label)?;
-        if h[target].in_sync != self.sync_enclosure {
-            return Err((
-                h[stmt].position,
-                "Illegal goto: synchronous statement escape".to_string(),
-            ));
-        }
-        h[stmt].target = Some(target);
         Ok(())
     }
     fn visit_expression(&mut self, _h: &mut Heap, _expr: ExpressionId) -> VisitorResult {
@@ -1238,7 +688,7 @@ impl Visitor for AssignableExpressions {
         expr: AssignmentExpressionId,
     ) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             self.assignable = true;
             self.visit_expression(h, h[expr].left)?;
@@ -1252,21 +702,21 @@ impl Visitor for AssignableExpressions {
         expr: ConditionalExpressionId,
     ) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_conditional_expression(self, h, expr)
         }
     }
     fn visit_binary_expression(&mut self, h: &mut Heap, expr: BinaryExpressionId) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_binary_expression(self, h, expr)
         }
     }
     fn visit_unary_expression(&mut self, h: &mut Heap, expr: UnaryExpressionId) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             match h[expr].operation {
                 UnaryOperation::PostDecrement
@@ -1306,7 +756,7 @@ impl Visitor for AssignableExpressions {
     }
     fn visit_select_expression(&mut self, h: &mut Heap, expr: SelectExpressionId) -> VisitorResult {
         if h[expr].field.is_length() && self.assignable {
-            return self.error(h[expr].position);
+            return self.error(h[expr].span.begin);
         }
         let old = self.assignable;
         self.assignable = false;
@@ -1314,16 +764,9 @@ impl Visitor for AssignableExpressions {
         self.assignable = old;
         Ok(())
     }
-    fn visit_array_expression(&mut self, h: &mut Heap, expr: ArrayExpressionId) -> VisitorResult {
-        if self.assignable {
-            self.error(h[expr].position)
-        } else {
-            recursive_array_expression(self, h, expr)
-        }
-    }
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_call_expression(self, h, expr)
         }
@@ -1334,7 +777,7 @@ impl Visitor for AssignableExpressions {
         expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.assignable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             Ok(())
         }
@@ -1368,7 +811,7 @@ impl Visitor for IndexableExpressions {
         expr: AssignmentExpressionId,
     ) -> VisitorResult {
         if self.indexable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_assignment_expression(self, h, expr)
         }
@@ -1387,14 +830,14 @@ impl Visitor for IndexableExpressions {
     }
     fn visit_binary_expression(&mut self, h: &mut Heap, expr: BinaryExpressionId) -> VisitorResult {
         if self.indexable && h[expr].operation != BinaryOperator::Concatenate {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_binary_expression(self, h, expr)
         }
     }
     fn visit_unary_expression(&mut self, h: &mut Heap, expr: UnaryExpressionId) -> VisitorResult {
         if self.indexable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_unary_expression(self, h, expr)
         }
@@ -1433,13 +876,6 @@ impl Visitor for IndexableExpressions {
         self.indexable = old;
         Ok(())
     }
-    fn visit_array_expression(&mut self, h: &mut Heap, expr: ArrayExpressionId) -> VisitorResult {
-        let old = self.indexable;
-        self.indexable = false;
-        recursive_array_expression(self, h, expr)?;
-        self.indexable = old;
-        Ok(())
-    }
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         let old = self.indexable;
         self.indexable = false;
@@ -1453,7 +889,7 @@ impl Visitor for IndexableExpressions {
         expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.indexable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             Ok(())
         }
@@ -1500,14 +936,14 @@ impl Visitor for SelectableExpressions {
     }
     fn visit_binary_expression(&mut self, h: &mut Heap, expr: BinaryExpressionId) -> VisitorResult {
         if self.selectable && h[expr].operation != BinaryOperator::Concatenate {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_binary_expression(self, h, expr)
         }
     }
     fn visit_unary_expression(&mut self, h: &mut Heap, expr: UnaryExpressionId) -> VisitorResult {
         if self.selectable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             recursive_unary_expression(self, h, expr)
         }
@@ -1541,13 +977,6 @@ impl Visitor for SelectableExpressions {
         self.selectable = old;
         Ok(())
     }
-    fn visit_array_expression(&mut self, h: &mut Heap, expr: ArrayExpressionId) -> VisitorResult {
-        let old = self.selectable;
-        self.selectable = false;
-        recursive_array_expression(self, h, expr)?;
-        self.selectable = old;
-        Ok(())
-    }
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         let old = self.selectable;
         self.selectable = false;
@@ -1561,7 +990,7 @@ impl Visitor for SelectableExpressions {
         expr: LiteralExpressionId,
     ) -> VisitorResult {
         if self.selectable {
-            self.error(h[expr].position)
+            self.error(h[expr].span.begin)
         } else {
             Ok(())
         }

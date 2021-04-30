@@ -1,16 +1,12 @@
 use crate::collections::{ScopedBuffer};
 use crate::protocol::ast::*;
-use crate::protocol::input_source2::{InputSource2 as InputSource, InputSpan, ParseError};
-use crate::protocol::parser::{
-    symbol_table2::*,
-    type_table::*,
-    utils::*,
-};
+use crate::protocol::input_source::*;
+use crate::protocol::parser::symbol_table::*;
+use crate::protocol::parser::type_table::*;
 
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
-    TYPE_BUFFER_INIT_CAPACITY,
     Ctx, 
     Visitor2, 
     VisitorResult
@@ -86,7 +82,7 @@ impl PassValidationLinking {
             in_while: None,
             cur_scope: None,
             expr_parent: ExpressionParent::None,
-            def_type: DefinitionType::None,
+            def_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             relative_pos_in_block: 0,
             statement_buffer: ScopedBuffer::new_reserved(STMT_BUFFER_INIT_CAPACITY),
             expression_buffer: ScopedBuffer::new_reserved(EXPR_BUFFER_INIT_CAPACITY),
@@ -98,10 +94,8 @@ impl PassValidationLinking {
         self.in_while = None;
         self.cur_scope = None;
         self.expr_parent = ExpressionParent::None;
-        self.def_type = DefinitionType::None;
+        self.def_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
         self.relative_pos_in_block = 0;
-        self.statement_buffer.clear();
-        self.expression_buffer.clear();
     }
 }
 
@@ -123,8 +117,6 @@ impl Visitor2 for PassValidationLinking {
         // Visit statements in component body
         let body_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_id)?;
-
-        self.check_post_definition_state();
         Ok(())
     }
 
@@ -139,8 +131,6 @@ impl Visitor2 for PassValidationLinking {
         // Visit statements in function body
         let body_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_id)?;
-
-        self.check_post_definition_state();
         Ok(())
     }
 
@@ -238,15 +228,15 @@ impl Visitor2 for PassValidationLinking {
         let cur_sync_span = ctx.heap[id].span;
         if self.in_sync.is_some() {
             // Nested synchronous statement
-            let old_sync_span = &ctx.heap[self.in_sync.unwrap()].span;
+            let old_sync_span = ctx.heap[self.in_sync.unwrap()].span;
             return Err(ParseError::new_error_str_at_span(
                 &ctx.module.source, cur_sync_span, "Illegal nested synchronous statement"
             ).with_info_str_at_span(
-                &ctx.module.source, old_sync_span.position, "It is nested in this synchronous statement"
+                &ctx.module.source, old_sync_span, "It is nested in this synchronous statement"
             ));
         }
 
-        if self.def_type != DefinitionType::Primitive {
+        if !self.def_type.is_primitive() {
             return Err(ParseError::new_error_str_at_span(
                 &ctx.module.source, cur_sync_span,
                 "synchronous statements may only be used in primitive components"
@@ -264,7 +254,7 @@ impl Visitor2 for PassValidationLinking {
     fn visit_return_stmt(&mut self, ctx: &mut Ctx, id: ReturnStatementId) -> VisitorResult {
         // Check if "return" occurs within a function
         let stmt = &ctx.heap[id];
-        if self.def_type != DefinitionType::Function {
+        if !self.def_type.is_function() {
             return Err(ParseError::new_error_str_at_span(
                 &ctx.module.source, stmt.span,
                 "return statements may only appear in function bodies"
@@ -304,7 +294,7 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_new_stmt(&mut self, ctx: &mut Ctx, id: NewStatementId) -> VisitorResult {
         // Make sure the new statement occurs inside a composite component
-        if self.def_type != DefinitionType::Composite {
+        if !self.def_type.is_composite() {
             let new_stmt = &ctx.heap[id];
             return Err(ParseError::new_error_str_at_span(
                 &ctx.module.source, new_stmt.span,
@@ -649,7 +639,7 @@ impl Visitor2 for PassValidationLinking {
         let mut expected_wrapping_new_stmt = false;
         match &mut call_expr.method {
             Method::Get => {
-                if self.def_type != DefinitionType::Primitive {
+                if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'get' may only occur in primitive component definitions"
@@ -663,7 +653,7 @@ impl Visitor2 for PassValidationLinking {
                 }
             },
             Method::Put => {
-                if self.def_type != DefinitionType::Primitive {
+                if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'put' may only occur in primitive component definitions"
@@ -677,7 +667,7 @@ impl Visitor2 for PassValidationLinking {
                 }
             },
             Method::Fires => {
-                if self.def_type != DefinitionType::Primitive {
+                if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'fires' may only occur in primitive component definitions"
@@ -693,7 +683,7 @@ impl Visitor2 for PassValidationLinking {
             Method::Create => {},
             Method::Length => {},
             Method::Assert => {
-                if self.def_type == DefinitionType::Function {
+                if self.def_type.is_function() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "assert statement may only occur in components"

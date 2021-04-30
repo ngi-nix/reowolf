@@ -1,7 +1,7 @@
 use crate::protocol::ast::*;
-use crate::protocol::input_source2::ParseError;
+use crate::protocol::input_source::ParseError;
 use crate::protocol::parser::{type_table::*, Module};
-use crate::protocol::symbol_table2::{SymbolTable};
+use crate::protocol::symbol_table::{SymbolTable};
 
 type Unit = ();
 pub(crate) type VisitorResult = Result<Unit, ParseError>;
@@ -12,9 +12,6 @@ pub(crate) const STMT_BUFFER_INIT_CAPACITY: usize = 256;
 /// Globally configured vector capacity for expression buffers in visitor
 /// implementations
 pub(crate) const EXPR_BUFFER_INIT_CAPACITY: usize = 256;
-/// Globally configured vector capacity for parser type buffers in visitor
-/// implementations
-pub(crate) const TYPE_BUFFER_INIT_CAPACITY: usize = 128;
 
 /// General context structure that is used while traversing the AST.
 pub(crate) struct Ctx<'p> {
@@ -75,9 +72,9 @@ pub(crate) trait Visitor2 {
     }
 
     // --- enum variant handling
-    fn visit_enum_definition(&mut self, _ctx: &mut Ctx, _id: EnumId) -> VisitorResult { Ok(()) }
-    fn visit_union_definition(&mut self, _ctx: &mut Ctx, _id: UnionId) -> VisitorResult{ Ok(()) }
-    fn visit_struct_definition(&mut self, _ctx: &mut Ctx, _id: StructId) -> VisitorResult { Ok(()) }
+    fn visit_enum_definition(&mut self, _ctx: &mut Ctx, _id: EnumDefinitionId) -> VisitorResult { Ok(()) }
+    fn visit_union_definition(&mut self, _ctx: &mut Ctx, _id: UnionDefinitionId) -> VisitorResult{ Ok(()) }
+    fn visit_struct_definition(&mut self, _ctx: &mut Ctx, _id: StructDefinitionId) -> VisitorResult { Ok(()) }
     fn visit_component_definition(&mut self, _ctx: &mut Ctx, _id: ComponentDefinitionId) -> VisitorResult { Ok(()) }
     fn visit_function_definition(&mut self, _ctx: &mut Ctx, _id: FunctionDefinitionId) -> VisitorResult { Ok(()) }
 

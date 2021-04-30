@@ -1,5 +1,5 @@
-use crate::protocol::input_source2::{
-    InputPosition2 as InputPosition,
+use crate::protocol::input_source::{
+    InputPosition as InputPosition,
     InputSpan
 };
 
@@ -216,11 +216,11 @@ impl TokenBuffer {
     }
 
     pub(crate) fn start_pos(&self, range: &TokenRange) -> InputPosition {
-        self.tokens[range.start].pos
+        self.tokens[range.start as usize].pos
     }
 
     pub(crate) fn end_pos(&self, range: &TokenRange) -> InputPosition {
-        let last_token = &self.tokens[range.end - 1];
+        let last_token = &self.tokens[range.end as usize - 1];
         if last_token.kind == TokenKind::SpanEnd {
             return last_token.pos
         } else {
@@ -293,7 +293,7 @@ impl<'a> TokenIter<'a> {
         return if token.kind == TokenKind::SpanEnd {
             token.pos
         } else {
-            token.pos.with_offset(token.kind.num_characters());
+            token.pos.with_offset(token.kind.num_characters())
         };
     }
 

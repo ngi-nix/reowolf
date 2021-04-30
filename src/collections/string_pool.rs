@@ -1,9 +1,8 @@
 use std::ptr::null_mut;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-const SLAB_SIZE: usize = u16::max_value() as usize;
+const SLAB_SIZE: usize = u16::MAX as usize;
 
 #[derive(Clone)]
 pub struct StringRef<'a> {
@@ -39,18 +38,18 @@ impl<'a> StringRef<'a> {
     }
 }
 
-impl PartialEq for StringRef {
+impl PartialEq for StringRef<'_> {
     fn eq(&self, other: &StringRef) -> bool {
         self.as_str() == other.as_str()
     }
 }
 
-impl Eq for StringRef {}
+impl Eq for StringRef<'_> {}
 
-impl Hash for StringRef {
+impl Hash for StringRef<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe{
-            state.write(std::slice::from_raw_parts(self.data, self.length));
+            state.write(self.as_bytes());
         }
     }
 }

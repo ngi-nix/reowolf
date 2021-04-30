@@ -1,447 +1,324 @@
-// TODO: Maybe allow namespaced-aliased imports. It is currently not possible
-//  to express the following:
-//      import Module.Submodule as SubMod
-//      import SubMod::{Symbol}
-//  And it is especially not possible to express the following:
-//      import SubMod::{Symbol}
-//      import Module.Submodule as SubMod
-use crate::protocol::ast::*;
-use crate::protocol::inputsource::*;
-
-use std::collections::{HashMap, hash_map::Entry};
-use crate::protocol::parser::LexedModule;
-
-#[derive(PartialEq, Eq, Hash)]
-struct SymbolKey {
-    module_id: RootId,
-    symbol_name: Vec<u8>,
-}
-
-impl SymbolKey {
-    fn from_identifier(module_id: RootId, symbol: &Identifier) -> Self {
-        Self{ module_id, symbol_name: symbol.value.clone() }
-    }
-
-    fn from_namespaced_identifier(module_id: RootId, symbol: &NamespacedIdentifier) -> Self {
-        Self{ module_id, symbol_name: symbol.strip_poly_args() }
-    }
-}
-
-pub(crate) enum Symbol {
-    Namespace(RootId),
-    Definition((RootId, DefinitionId)),
-}
-
-pub(crate) struct SymbolValue {
-    // Position is the place where the symbol is introduced to a module (this
-    // position always corresponds to the module whose RootId is stored in the
-    // `SymbolKey` associated with this `SymbolValue`). For a definition this
-    // is the position where the symbol is defined, for an import this is the
-    // position of the import statement.
-    pub(crate) position: InputPosition,
-    pub(crate) symbol: Symbol,
-}
-
-impl SymbolValue {
-    pub(crate) fn is_namespace(&self) -> bool {
-        match &self.symbol {
-            Symbol::Namespace(_) => true,
-            _ => false
-        }
-    }
-    pub(crate) fn as_namespace(&self) -> Option<RootId> {
-        match &self.symbol {
-            Symbol::Namespace(root_id) => Some(*root_id),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_definition(&self) -> Option<(RootId, DefinitionId)> {
-        match &self.symbol {
-            Symbol::Definition((root_id, definition_id)) => Some((*root_id, *definition_id)),
-            _ => None,
-        }
-    }
-}
-/// `SymbolTable` is responsible for two parts of the parsing process: firstly
-/// it ensures that there are no clashing symbol definitions within each file,
-/// and secondly it will resolve all symbols within a module to their
-/// appropriate definitions (in case of enums, functions, etc.) and namespaces
-/// (currently only external modules can act as namespaces). If a symbol clashes
-/// or if a symbol cannot be resolved this will be an error.
+/// symbol_table.rs
 ///
-/// Within the compilation process the symbol table is responsible for resolving
-/// namespaced identifiers (e.g. Module::Enum::EnumVariant) to the appropriate
-/// definition (i.e. not namespaces; as the language has no way to use
-/// namespaces except for using them in namespaced identifiers).
-pub(crate) struct SymbolTable {
-    // Lookup from module name (not any aliases) to the root id
-    module_lookup: HashMap<Vec<u8>, RootId>,
-    // Lookup from within a module, to a particular imported (potentially
-    // aliased) or defined symbol. Basically speaking: if the source code of a
-    // module contains correctly imported/defined symbols, then this lookup
-    // will always return the corresponding definition
-    symbol_lookup: HashMap<SymbolKey, SymbolValue>,
+/// The datastructure used to lookup symbols within particular scopes. Scopes
+/// may be module-level or definition level, although imports and definitions
+/// within definitions are currently not allowed.
+///
+/// TODO: Once the compiler has matured, find out ways to optimize to prevent
+///     the repeated HashMap lookup.
+
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
+use crate::protocol::input_source::*;
+use crate::protocol::ast::*;
+use crate::collections::*;
+
+const RESERVED_SYMBOLS: usize = 32;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum SymbolScope {
+    Global,
+    Module(RootId),
+    Definition(DefinitionId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolClass {
+    Module,
+    Struct,
+    Enum,
+    Union,
+    Function,
+    Component
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefinitionClass {
+    Struct,
+    Enum,
+    Union,
+    Function,
+    Component,
+}
+
+impl DefinitionClass {
+    fn as_symbol_class(&self) -> SymbolClass {
+        match self {
+            DefinitionClass::Struct => SymbolClass::Struct,
+            DefinitionClass::Enum => SymbolClass::Enum,
+            DefinitionClass::Union => SymbolClass::Union,
+            DefinitionClass::Function => SymbolClass::Function,
+            DefinitionClass::Component => SymbolClass::Component,
+        }
+    }
+}
+
+struct ScopedSymbols {
+    scope: SymbolScope,
+    parent_scope: Option<SymbolScope>,
+    child_scopes: Vec<SymbolScope>,
+    symbols: Vec<Symbol>,
+}
+
+impl ScopedSymbols {
+    fn get_symbol<'a>(&'a self, name: &StringRef) -> Option<&'a Symbol> {
+        for symbol in self.symbols.iter() {
+            if symbol.name == *name {
+                return Some(symbol);
+            }
+        }
+
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolModule {
+    pub root_id: RootId,
+    pub introduced_at: ImportId,
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolDefinition {
+    // Definition location (not necessarily the place where the symbol
+    // is introduced, as it may be imported). Builtin symbols will have invalid
+    // spans and module IDs
+    pub defined_in_module: RootId,
+    pub defined_in_scope: SymbolScope,
+    pub definition_span: InputSpan, // full span of definition
+    pub identifier_span: InputSpan, // span of just the identifier
+    // Location where the symbol is introduced in its scope
+    pub imported_at: Option<ImportId>,
+    // Definition in the heap, with a utility enum to determine its
+    // class if the ID is not needed.
+    pub class: DefinitionClass,
+    pub definition_id: DefinitionId,
+}
+
+impl SymbolDefinition {
+    /// Clones the entire data structure, but replaces the `imported_at` field
+    /// with the supplied `ImportId`.
+    pub(crate) fn into_imported(mut self, imported_at: ImportId) -> Self {
+        self.imported_at = Some(imported_at);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SymbolVariant {
+    Module(SymbolModule),
+    Definition(SymbolDefinition),
+}
+
+impl SymbolVariant {
+    /// Returns the span at which the item was introduced. For an imported
+    /// item (all modules, and imported types) this returns the span of the
+    /// import. For a defined type this returns the span of the identifier
+    pub(crate) fn span_of_introduction(&self, heap: &Heap) -> InputSpan {
+        match self {
+            SymbolVariant::Module(v) => heap[v.introduced_at].span(),
+            SymbolVariant::Definition(v) => if let Some(import_id) = v.imported_at {
+                heap[import_id].span()
+            } else {
+                v.identifier_span
+            },
+        }
+    }
+
+    pub(crate) fn as_module(&self) -> &SymbolModule {
+        match self {
+            SymbolVariant::Module(v) => v,
+            SymbolVariant::Definition(_) => unreachable!("called 'as_module' on {:?}", self),
+        }
+    }
+
+    pub(crate) fn as_definition(&self) -> &SymbolDefinition {
+        match self {
+            SymbolVariant::Module(v) => unreachable!("called 'as_definition' on {:?}", self),
+            SymbolVariant::Definition(v) => v,
+        }
+    }
+
+    pub(crate) fn as_definition_mut(&mut self) -> &mut SymbolDefinition {
+        match self {
+            SymbolVariant::Module(v) => unreachable!("called 'as_definition_mut' on {:?}", self),
+            SymbolVariant::Definition(v) => v,
+        }
+    }
+}
+
+/// TODO: @Cleanup - remove clone everywhere
+#[derive(Clone)]
+pub struct Symbol {
+    pub name: StringRef<'static>,
+    pub variant: SymbolVariant,
+}
+
+impl Symbol {
+    pub(crate) fn class(&self) -> SymbolClass {
+        match &self.variant {
+            SymbolVariant::Module(_) => SymbolClass::Module,
+            SymbolVariant::Definition(data) => data.class.as_symbol_class(),
+        }
+    }
+}
+
+pub struct SymbolTable {
+    module_lookup: HashMap<StringRef<'static>, RootId>,
+    scope_lookup: HashMap<SymbolScope, ScopedSymbols>,
 }
 
 impl SymbolTable {
     pub(crate) fn new() -> Self {
-        Self{ module_lookup: HashMap::new(), symbol_lookup: HashMap::new() }
+        Self{
+            module_lookup: HashMap::new(),
+            scope_lookup: HashMap::new(),
+        }
+    }
+    /// Inserts a new module by its name. Upon module naming conflict the
+    /// previously associated `RootId` will be returned.
+    pub(crate) fn insert_module(&mut self, module_name: StringRef<'static>, root_id: RootId) -> Result<(), RootId> {
+        match self.module_lookup.entry(module_name) {
+            Entry::Occupied(v) => {
+                Err(*v.get())
+            },
+            Entry::Vacant(v) => {
+                v.insert(root_id);
+                Ok(())
+            }
+        }
     }
 
-    pub(crate) fn build(&mut self, heap: &Heap, modules: &[LexedModule]) -> Result<(), ParseError> {
-        // Sanity checks
-        debug_assert!(self.module_lookup.is_empty());
-        debug_assert!(self.symbol_lookup.is_empty());
-        if cfg!(debug_assertions) {
-            for (index, module) in modules.iter().enumerate() {
-                debug_assert_eq!(
-                    index, module.root_id.index as usize,
-                    "module RootId does not correspond to LexedModule index"
-                )
-            }
-        }
+    /// Retrieves module `RootId` by name
+    pub(crate) fn get_module_by_name(&mut self, name: &[u8]) -> Option<RootId> {
+        let string_ref = StringRef::new(name);
+        self.module_lookup.get(&string_ref).map(|v| *v)
+    }
 
-        // Preparation: create a lookup from module name to root id. This does
-        // not take aliasing into account.
-        self.module_lookup.reserve(modules.len());
-        for module in modules {
-            // TODO: Maybe put duplicate module name checking here?
-            // TODO: @string
-            self.module_lookup.insert(module.module_name.clone(), module.root_id);
-        }
-
-        // Preparation: determine total number of imports we will be inserting
-        // into the lookup table. We could just iterate over the arena, but then
-        // we don't know the source file the import belongs to.
-        let mut lookup_reserve_size = 0;
-        for module in modules {
-            let module_root = &heap[module.root_id];
-            for import_id in &module_root.imports {
-                match &heap[*import_id] {
-                    Import::Module(_) => lookup_reserve_size += 1,
-                    Import::Symbols(import) => {
-                        if import.symbols.is_empty() {
-                            // Add all symbols from the other module
-                            match self.module_lookup.get(&import.module) {
-                                Some(target_module_id) => {
-                                    lookup_reserve_size += heap[*target_module_id].definitions.len()
-                                },
-                                None => {
-                                    return Err(
-                                        ParseError::new_error(&module.source, import.position, "Cannot resolve module")
-                                    );
-                                }
-                            }
-                        } else {
-                            lookup_reserve_size += import.symbols.len();
-                        }
-                    }
-                }
-            }
-
-            lookup_reserve_size += module_root.definitions.len();
-        }
-
-        self.symbol_lookup.reserve(lookup_reserve_size);
-
-        // First pass: we go through all of the modules and add lookups to
-        // symbols that are defined within that module. Cross-module imports are
-        // not yet resolved
-        for module in modules {
-            let root = &heap[module.root_id];
-            for definition_id in &root.definitions {
-                let definition = &heap[*definition_id];
-                let identifier = definition.identifier();
-                if let Err(previous_position) = self.add_definition_symbol(
-                    identifier.position, SymbolKey::from_identifier(module.root_id, &identifier),
-                    module.root_id, *definition_id
-                ) {
-                    return Err(
-                        ParseError::new_error(&module.source, definition.position(), "Symbol is multiply defined")
-                            .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
-                    )
-                }
-            }
-        }
-
-        // Second pass: now that we can find symbols in modules, we can resolve
-        // all imports (if they're correct, that is)
-        for module in modules {
-            let root = &heap[module.root_id];
-            for import_id in &root.imports {
-                let import = &heap[*import_id];
-                match import {
-                    Import::Module(import) => {
-                        // Find the module using its name
-                        let target_root_id = self.resolve_module(&import.module);
-                        if target_root_id.is_none() {
-                            return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module"));
-                        }
-                        let target_root_id = target_root_id.unwrap();
-                        if target_root_id == module.root_id {
-                            return Err(ParseError::new_error(&module.source, import.position, "Illegal import of self"));
-                        }
-
-                        // Add the target module under its alias
-                        if let Err(previous_position) = self.add_namespace_symbol(
-                            import.position, SymbolKey::from_identifier(module.root_id, &import.alias),
-                            target_root_id
-                        ) {
-                            return Err(
-                                ParseError::new_error(&module.source, import.position, "Symbol is multiply defined")
-                                    .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
-                            );
-                        }
-                    },
-                    Import::Symbols(import) => {
-                        // Find the target module using its name
-                        let target_root_id = self.resolve_module(&import.module);
-                        if target_root_id.is_none() {
-                            return Err(ParseError::new_error(&module.source, import.position, "Could not resolve module of symbol imports"));
-                        }
-                        let target_root_id = target_root_id.unwrap();
-                        if target_root_id == module.root_id {
-                            return Err(ParseError::new_error(&module.source, import.position, "Illegal import of self"));
-                        }
-
-                        // Determine which symbols to import
-                        if import.symbols.is_empty() {
-                            // Import of all symbols, not using any aliases
-                            for definition_id in &heap[target_root_id].definitions {
-                                let definition = &heap[*definition_id];
-                                let identifier = definition.identifier();
-                                if let Err(previous_position) = self.add_definition_symbol(
-                                    import.position, SymbolKey::from_identifier(module.root_id, identifier),
-                                    target_root_id, *definition_id
-                                ) {
-                                    return Err(
-                                        ParseError::new_error(
-                                            &module.source, import.position,
-                                            &format!("Imported symbol '{}' is already defined", String::from_utf8_lossy(&identifier.value))
-                                        )
-                                        .with_postfixed_info(
-                                            &modules[target_root_id.index as usize].source,
-                                            definition.position(),
-                                            "The imported symbol is defined here"
-                                        )
-                                        .with_postfixed_info(
-                                            &module.source, previous_position, "And is previously defined here"
-                                        )
-                                    )
-                                }
-                            }
-                        } else {
-                            // Import of specific symbols, optionally using aliases
-                            for symbol in &import.symbols {
-                                // Because we have already added per-module definitions, we can use
-                                // the table to lookup this particular symbol. Note: within a single
-                                // module a namespace-import and a symbol-import may not collide.
-                                // Hence per-module symbols are unique.
-                                // However: if we import a symbol from another module, we don't want
-                                // to "import a module's imported symbol". And so if we do find
-                                // a symbol match, we need to make sure it is a definition from
-                                // within that module by checking `source_root_id == target_root_id`
-                                let key = SymbolKey::from_identifier(target_root_id, &symbol.name);
-                                let target_symbol = self.symbol_lookup.get(&key);
-                                let symbol_definition_id = match target_symbol {
-                                    Some(target_symbol) => {
-                                        match target_symbol.symbol {
-                                            Symbol::Definition((symbol_root_id, symbol_definition_id)) => {
-                                                if symbol_root_id == target_root_id {
-                                                    Some(symbol_definition_id)
-                                                } else {
-                                                    // This is imported within the target module, and not
-                                                    // defined within the target module
-                                                    None
-                                                }
-                                            },
-                                            Symbol::Namespace(_) => {
-                                                // We don't import a module's "module import"
-                                                None
-                                            }
-                                        }
-                                    },
-                                    None => None
-                                };
-
-                                if symbol_definition_id.is_none() {
-                                    return Err(
-                                        ParseError::new_error(&module.source, symbol.position, "Could not resolve symbol")
-                                    )
-                                }
-                                let symbol_definition_id = symbol_definition_id.unwrap();
-
-                                if let Err(previous_position) = self.add_definition_symbol(
-                                    symbol.position, SymbolKey::from_identifier(module.root_id, &symbol.alias),
-                                    target_root_id, symbol_definition_id
-                                ) {
-                                    return Err(
-                                        ParseError::new_error(&module.source, symbol.position, "Symbol is multiply defined")
-                                            .with_postfixed_info(&module.source, previous_position, "Previous definition was here")
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        fn find_name(heap: &Heap, root_id: RootId) -> String {
-            let root = &heap[root_id];
-            for pragma_id in &root.pragmas {
-                match &heap[*pragma_id] {
-                    Pragma::Module(module) => {
-                        return String::from_utf8_lossy(&module.value).to_string()
-                    },
-                    _ => {},
-                }
-            }
-
-            return String::from("Unknown")
-        }
-
-        debug_assert_eq!(
-            self.symbol_lookup.len(), lookup_reserve_size,
-            "miscalculated reserved size for symbol lookup table"
+    /// Inserts a new symbol scope. The parent must have been added to the
+    /// symbol table before.
+    pub(crate) fn insert_scope(&mut self, parent_scope: Option<SymbolScope>, new_scope: SymbolScope) {
+        debug_assert!(
+            parent_scope.is_none() || self.scope_lookup.contains_key(parent_scope.as_ref().unwrap()),
+            "inserting scope {:?} but parent {:?} does not exist", new_scope, parent_scope
         );
+        debug_assert!(!self.scope_lookup.contains_key(&new_scope), "inserting scope {:?}, but it already exists", new_scope);
+
+        if let Some(parent_scope) = parent_scope {
+            let parent = self.scope_lookup.get_mut(&parent_scope).unwrap();
+            parent.child_scopes.push(new_scope);
+        }
+
+        let scope = ScopedSymbols {
+            scope: new_scope,
+            parent_scope,
+            child_scopes: Vec::with_capacity(RESERVED_SYMBOLS),
+            symbols: Vec::with_capacity(RESERVED_SYMBOLS)
+        };
+        self.scope_lookup.insert(new_scope, scope);
+    }
+
+    /// Inserts a symbol into a particular scope. The symbol's name may not
+    /// exist in the scope or any of its parents. If it does collide then the
+    /// symbol will be returned, together with the symbol that has the same
+    /// name.
+    pub(crate) fn insert_symbol(&mut self, in_scope: SymbolScope, symbol: Symbol) -> Result<(), (Symbol, &Symbol)> {
+        debug_assert!(self.scope_lookup.contains_key(&in_scope), "inserting symbol {}, but scope {:?} does not exist", symbol.name.as_str(), in_scope);
+        let mut seek_scope = in_scope;
+        loop {
+            let scoped_symbols = self.scope_lookup.get(&seek_scope).unwrap();
+            for existing_symbol in scoped_symbols.symbols.iter() {
+                if symbol.name == existing_symbol.name {
+                    return Err((symbol, existing_symbol))
+                }
+            }
+
+            match scoped_symbols.parent_scope {
+                Some(parent_scope) => { seek_scope = parent_scope; },
+                None => { break; }
+            }
+        }
+
+        // If here, then there is no collision
+        let scoped_symbols = self.scope_lookup.get_mut(&in_scope).unwrap();
+        scoped_symbols.symbols.push(symbol);
         Ok(())
     }
 
-    /// Resolves a module by its defined name
-    pub(crate) fn resolve_module(&self, identifier: &Vec<u8>) -> Option<RootId> {
-        self.module_lookup.get(identifier).map(|v| *v)
+    /// Retrieves a symbol by name by searching in a particular scope and that scope's parents. The
+    /// returned symbol may both be imported as defined within any of the searched scopes.
+    pub(crate) fn get_symbol_by_name(
+        &self, mut in_scope: SymbolScope, name: &[u8]
+    ) -> Option<&Symbol> {
+        let string_ref = StringRef::new(name);
+        loop {
+            let scope = self.scope_lookup.get(&in_scope);
+            if scope.is_none() {
+                return None;
+            }
+            let scope = scope.unwrap();
+
+            if let Some(symbol) = scope.get_symbol(&string_ref) {
+                return Some(symbol);
+            } else {
+                // Could not find symbol in current scope, seek in the parent scope if it exists
+                match &scope.parent_scope {
+                    Some(parent_scope) => { in_scope = *parent_scope; },
+                    None => return None,
+                }
+            }
+        }
     }
 
-    pub(crate) fn resolve_symbol<'t>(
-        &'t self, root_module_id: RootId, identifier: &[u8]
-    ) -> Option<&'t SymbolValue> {
-        let lookup_key = SymbolKey{ module_id: root_module_id, symbol_name: Vec::from(identifier) };
-        self.symbol_lookup.get(&lookup_key)
-    }
-
-    pub(crate) fn resolve_identifier<'t>(
-        &'t self, root_module_id: RootId, identifier: &Identifier
-    ) -> Option<&'t SymbolValue> {
-        let lookup_key = SymbolKey::from_identifier(root_module_id, identifier);
-        self.symbol_lookup.get(&lookup_key)
-    }
-
-    /// Resolves a namespaced symbol. This method will go as far as possible in
-    /// going to the right symbol. It will halt the search when:
-    /// 1. Polymorphic arguments are encountered on the identifier.
-    /// 2. A non-namespace symbol is encountered.
-    /// 3. A part of the identifier couldn't be resolved to anything
-    /// The returned iterator will always point to the next symbol (even if 
-    /// nothing was found)
-    pub(crate) fn resolve_namespaced_identifier<'t, 'i>(
-        &'t self, root_module_id: RootId, identifier: &'i NamespacedIdentifier
-    ) -> (Option<&'t SymbolValue>, NamespacedIdentifierIter<'i>) {
-        let mut iter = identifier.iter();
-        let mut symbol: Option<&SymbolValue> = None;
-        let mut within_module_id = root_module_id;
-
-        while let Some((partial, poly_args)) = iter.next() {
-            // Lookup the symbol within the currently iterated upon module
-            let lookup_key = SymbolKey{ module_id: within_module_id, symbol_name: Vec::from(partial) };
-            let new_symbol = self.symbol_lookup.get(&lookup_key);
-            
-            match new_symbol {
-                None => {
-                    // Can't find anything
-                    symbol = None;
-                    break;
-                },
-                Some(new_symbol) => {
-                    // Found something, but if we already moved to another
-                    // module then we don't want to keep jumping across modules,
-                    // we're only interested in symbols defined within that
-                    // module.
-                    match &new_symbol.symbol {
-                        Symbol::Namespace(new_root_id) => {
-                            if root_module_id != within_module_id {
-                                // This new symbol is imported by a foreign
-                                // module, so this is an error
-                                debug_assert!(symbol.is_some());
-                                debug_assert!(symbol.unwrap().is_namespace());
-                                debug_assert!(iter.num_returned() > 1);
-                                symbol = None;
-                                break;
-                            }
-                            within_module_id = *new_root_id;
-                            symbol = Some(new_symbol);
-                        },
-                        Symbol::Definition((definition_root_id, _)) => {
-                            // Found a definition, but if we already jumped
-                            // modules, then this must be defined within that
-                            // module.
-                            if root_module_id != within_module_id && within_module_id != *definition_root_id {
-                                // This is an imported definition within the module
-                                // So keep the old 
-                                debug_assert!(symbol.is_some());
-                                debug_assert!(symbol.unwrap().is_namespace());
-                                debug_assert!(iter.num_returned() > 1);
-                                symbol = None;
-                                break;
-                            }
-                            symbol = Some(new_symbol);
-                            break;
+    /// Retrieves a symbol by name by searching in a particular scope and that scope's parents. The
+    /// returned symbol must be defined within any of the searched scopes and may not be imported.
+    /// In case such an imported symbol exists then this function still returns `None`.
+    pub(crate) fn get_symbol_by_name_defined_in_scope(
+        &self, in_scope: SymbolScope, name: &[u8]
+    ) -> Option<&Symbol> {
+        match self.get_symbol_by_name(in_scope, name) {
+            Some(symbol) => {
+                match &symbol.variant {
+                    SymbolVariant::Module(_) => {
+                        None // in-scope modules are always imported
+                    },
+                    SymbolVariant::Definition(variant) => {
+                        if variant.imported_at.is_some() || variant.defined_in_scope == SymbolScope::Global {
+                            // Symbol is imported or lives in the global scope.
+                            // Things in the global scope are defined by the
+                            // compiler.
+                            None
+                        } else {
+                            Some(symbol)
                         }
                     }
                 }
-            }
-
-            if poly_args.is_some() {
-                // Polymorphic argument specification should also be a fully 
-                // resolved result.
-                break;
-            }
-        }
-
-        match symbol {
-            None => (None, iter),
-            Some(symbol) => (Some(symbol), iter)
+            },
+            None => None,
         }
     }
 
-    /// Attempts to add a namespace symbol. Returns `Ok` if the symbol was
-    /// inserted. If the symbol already exists then `Err` will be returned
-    /// together with the previous definition's source position (in the origin
-    /// module's source file).
-    // Note: I would love to return a reference to the value, but Rust is
-    // preventing me from doing so... That, or I'm not smart enough...
-    fn add_namespace_symbol(
-        &mut self, origin_position: InputPosition, key: SymbolKey, target_module_id: RootId
-    ) -> Result<(), InputPosition> {
-        match self.symbol_lookup.entry(key) {
-            Entry::Occupied(o) => Err(o.get().position),
-            Entry::Vacant(v) => {
-                v.insert(SymbolValue{
-                    position: origin_position,
-                    symbol: Symbol::Namespace(target_module_id)
-                });
-                Ok(())
-            }
-        }
-    }
+    /// Retrieves all symbols that are defined within a particular scope. Imported symbols are
+    /// ignored. Returns `true` if the scope was found (which may contain 0 defined symbols) and
+    /// `false` if the scope was not found.
+    pub(crate) fn get_all_symbols_defined_in_scope(&self, in_scope: SymbolScope, target: &mut Vec<Symbol>) -> bool {
+        match self.scope_lookup.get(&in_scope) {
+            Some(scope) => {
+                for symbol in &scope.symbols {
+                    if let SymbolVariant::Definition(definition) = &symbol.variant {
+                        if definition.imported_at.is_some() {
+                            continue;
+                        }
 
-    /// Attempts to add a definition symbol. Returns `Ok` if the symbol was
-    /// inserted. If the symbol already exists then `Err` will be returned
-    /// together with the previous definition's source position (in the origin
-    /// module's source file).
-    fn add_definition_symbol(
-        &mut self, origin_position: InputPosition, key: SymbolKey,
-        target_module_id: RootId, target_definition_id: DefinitionId,
-    ) -> Result<(), InputPosition> {
-        match self.symbol_lookup.entry(key) {
-            Entry::Occupied(o) => Err(o.get().position),
-            Entry::Vacant(v) => {
-                v.insert(SymbolValue {
-                    position: origin_position,
-                    symbol: Symbol::Definition((target_module_id, target_definition_id))
-                });
-                Ok(())
-            }
+                        // Defined in scope, so push onto target
+                        target.push(symbol.clone());
+                    }
+                }
+
+                true
+            },
+            None => false,
         }
     }
 }

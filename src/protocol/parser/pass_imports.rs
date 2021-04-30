@@ -1,9 +1,9 @@
 use crate::protocol::ast::*;
-use super::symbol_table2::*;
+use super::symbol_table::*;
 use super::{Module, ModuleCompilationPhase, PassCtx};
 use super::tokens::*;
 use super::token_parsing::*;
-use crate::protocol::input_source2::{InputSource2 as InputSource, InputSpan, ParseError};
+use crate::protocol::input_source::{InputSource as InputSource, InputSpan, ParseError};
 use crate::collections::*;
 
 /// Parses all the imports in the module tokens. Is applied after the
@@ -117,12 +117,12 @@ impl PassImport {
                 // Consume symbol name and make sure it points to an existing definition
                 let symbol_identifier = consume_ident_interned(source, iter, ctx)?;
                 let target = ctx.symbols.get_symbol_by_name_defined_in_scope(
-                    SymbolScope::Module(module_root_id), symbol
+                    SymbolScope::Module(module_root_id), symbol_identifier.value.as_bytes()
                 );
 
                 if target.is_none() {
                     return Err(ParseError::new_error_at_span(
-                        source, symbol_span,
+                        source, symbol_identifier.span,
                         format!(
                             "could not find symbol '{}' within module '{}'",
                             symbol_identifier.value.as_str(), module_name.as_str()
@@ -154,7 +154,7 @@ impl PassImport {
 
             let next = iter.next();
 
-            if Some(TokenKind::Ident) = next {
+            if Some(TokenKind::Ident) == next {
                 // Importing a single symbol
                 iter.consume();
                 let (imported_symbol, symbol_definition) = consume_symbol_and_maybe_alias(
@@ -179,11 +179,11 @@ impl PassImport {
                         modules, module_idx, ctx, &new_symbol, old_symbol
                     ));
                 }
-            } else if Some(TokenKind::OpenCurly) = next {
+            } else if Some(TokenKind::OpenCurly) == next {
                 // Importing multiple symbols
                 let mut end_of_list = iter.last_valid_pos();
                 consume_comma_separated(
-                    TokenKind::OpenCurly, TokenKind::CloseCurly, source, &mut iter,
+                    TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, &mut iter,
                     |source, iter| consume_symbol_and_maybe_alias(
                         source, iter, ctx, &module_identifier.value, target_root_id
                     ),
@@ -218,7 +218,7 @@ impl PassImport {
                         return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, old_symbol));
                     }
                 }
-            } else if Some(TokenKind::Star) = next {
+            } else if Some(TokenKind::Star) == next {
                 // Import all symbols from the module
                 let star_span = iter.next_span();
 
@@ -273,7 +273,7 @@ impl PassImport {
         } else {
             // Assume implicit alias
             let module_name_str = module_identifier.value.clone();
-            let last_ident_start = module_name_str.rfind('.').map_or(0, |v| v + 1);
+            let last_ident_start = module_name_str.as_str().rfind('.').map_or(0, |v| v + 1);
             let alias_text = &module_name_str.as_bytes()[last_ident_start..];
             let alias = ctx.pool.intern(alias_text);
             let alias_span = InputSpan::from_positions(

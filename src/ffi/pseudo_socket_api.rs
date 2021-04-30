@@ -61,6 +61,9 @@ impl FdAllocator {
 }
 lazy_static::lazy_static! {
     static ref CC_MAP: RwLock<CcMap> = Default::default();
+    static ref TRIVIAL_PD: Arc<ProtocolDescription> = {
+        Arc::new(ProtocolDescription::parse(b"").unwrap())
+    };
 }
 impl ConnectorComplex {
     fn try_become_connected(&mut self) {
@@ -81,11 +84,12 @@ impl ConnectorComplex {
 pub extern "C" fn rw_socket(_domain: c_int, _type: c_int, _protocol: c_int) -> c_int {
     // get writer lock
     let mut w = if let Ok(w) = CC_MAP.write() { w } else { return RW_LOCK_POISONED };
+
     let fd = w.fd_allocator.alloc();
     let cc = ConnectorComplex {
         connector: Connector::new(
             Box::new(crate::DummyLogger),
-            crate::TRIVIAL_PD.clone(),
+            TRIVIAL_PD.clone(),
             Connector::random_id(),
         ),
         phased: ConnectorComplexPhased::Setup { local: None, peer: None },

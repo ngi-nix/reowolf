@@ -1,9 +1,9 @@
 use crate::protocol::ast::*;
-use super::symbol_table2::*;
+use super::symbol_table::*;
 use super::{Module, ModuleCompilationPhase, PassCtx};
 use super::tokens::*;
 use super::token_parsing::*;
-use crate::protocol::input_source2::{InputSource2 as InputSource, InputPosition2 as InputPosition, InputSpan, ParseError};
+use crate::protocol::input_source::{InputSource as InputSource, InputPosition as InputPosition, InputSpan, ParseError};
 use crate::collections::*;
 
 /// Parses all the tokenized definitions into actual AST nodes.
@@ -12,7 +12,6 @@ pub(crate) struct PassDefinitions {
     cur_definition: DefinitionId,
     // Temporary buffers of various kinds
     buffer: String,
-    identifiers: Vec<Identifier>,
     struct_fields: Vec<StructFieldDefinition>,
     enum_variants: Vec<EnumVariantDefinition>,
     union_variants: Vec<UnionVariantDefinition>,
@@ -23,6 +22,20 @@ pub(crate) struct PassDefinitions {
 }
 
 impl PassDefinitions {
+    pub(crate) fn new() -> Self {
+        Self{
+            cur_definition: DefinitionId::new_invalid(),
+            buffer: String::with_capacity(128),
+            struct_fields: Vec::with_capacity(128),
+            enum_variants: Vec::with_capacity(128),
+            union_variants: Vec::with_capacity(128),
+            parameters: ScopedBuffer::new_reserved(128),
+            expressions: ScopedBuffer::new_reserved(128),
+            statements: ScopedBuffer::new_reserved(128),
+            parser_types: Vec::with_capacity(128),
+        }
+    }
+
     pub(crate) fn parse(&mut self, modules: &mut [Module], module_idx: usize, ctx: &mut PassCtx) -> Result<(), ParseError> {
         let module = &modules[module_idx];
         let module_range = &module.tokens.ranges[0];
@@ -51,7 +64,7 @@ impl PassDefinitions {
             }
         }
 
-
+        modules[module_idx].phase = ModuleCompilationPhase::DefinitionsParsed;
 
         Ok(())
     }
@@ -99,10 +112,10 @@ impl PassDefinitions {
         let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse struct definition
-        consume_polymorphic_vars_spilled(source, iter)?;
+        consume_polymorphic_vars_spilled(&module.source, iter)?;
         debug_assert!(self.struct_fields.is_empty());
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, source, iter,
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
             |source, iter| {
                 let start_pos = iter.last_valid_pos();
                 let parser_type = consume_parser_type(
@@ -139,10 +152,10 @@ impl PassDefinitions {
         let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse enum definition
-        consume_polymorphic_vars_spilled(source, iter)?;
+        consume_polymorphic_vars_spilled(&module.source, iter)?;
         debug_assert!(self.enum_variants.is_empty());
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, source, iter,
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
             |source, iter| {
                 let identifier = consume_ident_interned(source, iter, ctx)?;
                 let value = if iter.next() == Some(TokenKind::Equal) {
@@ -178,10 +191,10 @@ impl PassDefinitions {
         let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse union definition
-        consume_polymorphic_vars_spilled(source, iter)?;
+        consume_polymorphic_vars_spilled(&module.source, iter)?;
         debug_assert!(self.union_variants.is_empty());
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, source, iter,
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
             |source, iter| {
                 let identifier = consume_ident_interned(source, iter, ctx)?;
                 let mut close_pos = identifier.span.end;
@@ -234,7 +247,7 @@ impl PassDefinitions {
         // Parse function's argument list
         let mut parameter_section = self.parameters.start_section();
         consume_parameter_list(
-            source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
+            &module.source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
         )?;
         let parameters = parameter_section.into_vec();
 
@@ -273,7 +286,7 @@ impl PassDefinitions {
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<(), ParseError> {
         let (_variant_text, _) = consume_any_ident(&module.source, iter)?;
-        debug_assert!(variant_text == KW_PRIMITIVE || variant_text == KW_COMPOSITE);
+        debug_assert!(_variant_text == KW_PRIMITIVE || _variant_text == KW_COMPOSITE);
         let (ident_text, _) = consume_ident(&module.source, iter)?;
 
         // Retrieve preallocated definition
@@ -285,7 +298,7 @@ impl PassDefinitions {
         // Parse component's argument list
         let mut parameter_section = self.parameters.start_section();
         consume_parameter_list(
-            source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
+            &module.source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
         )?;
         let parameters = parameter_section.into_vec();
 
@@ -319,7 +332,7 @@ impl PassDefinitions {
             debug_assert_eq!(statements.len(), 1);
             let statements = statements.into_vec();
 
-            ctx.heap.alloc_block_statement(|this| BlockStatement{
+            Ok(ctx.heap.alloc_block_statement(|this| BlockStatement{
                 this,
                 is_implicit: true,
                 span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
@@ -328,7 +341,7 @@ impl PassDefinitions {
                 relative_pos_in_parent: 0,
                 locals: Vec::new(),
                 labels: Vec::new()
-            })
+            }))
         }
     }
 
@@ -343,7 +356,7 @@ impl PassDefinitions {
             let id = self.consume_block_statement(module, iter, ctx)?;
             section.push(id.upcast());
         } else if next == TokenKind::Ident {
-            let (ident, _) = consume_any_ident(source, iter)?;
+            let (ident, _) = consume_any_ident(&module.source, iter)?;
             if ident == KW_STMT_IF {
                 // Consume if statement and place end-if statement directly
                 // after it.
@@ -418,7 +431,7 @@ impl PassDefinitions {
     fn consume_block_statement(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<BlockStatementId, ParseError> {
-        let open_span = consume_token(source, iter, TokenKind::OpenCurly)?;
+        let open_span = consume_token(&module.source, iter, TokenKind::OpenCurly)?;
         self.consume_block_statement_without_leading_curly(module, iter, ctx, open_span.begin)
     }
 
@@ -455,7 +468,7 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::CloseParen)?;
         let true_body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
 
-        let false_body = if has_ident(source, iter, KW_STMT_ELSE) {
+        let false_body = if has_ident(&module.source, iter, KW_STMT_ELSE) {
             iter.consume();
             let false_body = self.consume_block_or_wrapped_statement(module, iter, ctx)?;
             Some(false_body)
@@ -594,7 +607,7 @@ impl PassDefinitions {
         let expression = &ctx.heap[expression_id];
         let mut valid = false;
 
-        let mut call_id = CallExpressionId.new_invalid();
+        let mut call_id = CallExpressionId::new_invalid();
         if let Expression::Call(expression) = expression {
             // Allow both components and functions, as it makes more sense to
             // check their correct use in the validation and linking pass
@@ -606,8 +619,7 @@ impl PassDefinitions {
 
         if !valid {
             return Err(ParseError::new_error_str_at_span(
-                source, InputSpan::from_positions(start_pos, iter.last_valid_pos()),
-                "expected a call expression"
+                &module.source, InputSpan::from_positions(start_pos, iter.last_valid_pos()), "expected a call expression"
             ));
         }
         consume_token(&module.source, iter, TokenKind::SemiColon)?;
@@ -626,14 +638,16 @@ impl PassDefinitions {
     ) -> Result<ChannelStatementId, ParseError> {
         // Consume channel specification
         let channel_span = consume_exact_ident(&module.source, iter, KW_STMT_CHANNEL)?;
-        let channel_type = if Some(TokenKind::OpenAngle) = iter.next() {
+        let channel_type = if Some(TokenKind::OpenAngle) == iter.next() {
             // Retrieve the type of the channel, we're cheating a bit here by
             // consuming the first '<' and setting the initial angle depth to 1
             // such that our final '>' will be consumed as well.
             iter.consume();
+            let definition_id = self.cur_definition;
+            let poly_vars = ctx.heap[definition_id].poly_vars();
             consume_parser_type(
                 &module.source, iter, &ctx.symbols, &ctx.heap,
-                poly_vars, SymbolScope::Module(module.root_id), definition_id,
+                &poly_vars, SymbolScope::Module(module.root_id), definition_id,
                 true, 1
             )?
         } else {
@@ -690,7 +704,7 @@ impl PassDefinitions {
         let stmt_id = ctx.heap.alloc_labeled_statement(|this| LabeledStatement {
             this,
             label,
-            body: *inner_section[0],
+            body: inner_section[0],
             relative_pos_in_block: 0,
             in_sync: None,
         });
@@ -870,7 +884,7 @@ impl PassDefinitions {
 
             let test = result;
             let true_expression = self.consume_expression(module, iter, ctx)?;
-            consume_token(source, iter, TokenKind::Colon)?;
+            consume_token(&module.source, iter, TokenKind::Colon)?;
             let false_expression = self.consume_expression(module, iter, ctx)?;
             Ok(ctx.heap.alloc_conditional_expression(|this| ConditionalExpression{
                 this, span, test, true_expression, false_expression,
@@ -1019,7 +1033,7 @@ impl PassDefinitions {
     }
 
     fn consume_multiply_divide_or_modulus_expression(
-        &mut self, module: &Module, iter: &mut Tokeniter, ctx: &mut PassCtx
+        &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<ExpressionId, ParseError> {
         self.consume_generic_binary_expression(
             module, iter, ctx,
@@ -1036,7 +1050,7 @@ impl PassDefinitions {
     fn consume_prefix_expression(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<ExpressionId, ParseError> {
-        fn parse_prefix_token(token: Option<TokenKind>) -> Some(UnaryOperation) {
+        fn parse_prefix_token(token: Option<TokenKind>) -> Option<UnaryOperation> {
             use TokenKind as TK;
             use UnaryOperation as UO;
             match token {
@@ -1107,7 +1121,7 @@ impl PassDefinitions {
 
                 // Check if we have an indexing or slicing operation
                 next = iter.next();
-                if Some(TokenKind::DotDot) = next {
+                if Some(TokenKind::DotDot) == next {
                     iter.consume();
 
                     let to_index = self.consume_expression(module, iter, ctx)?;
@@ -1119,7 +1133,7 @@ impl PassDefinitions {
                         parent: ExpressionParent::None,
                         concrete_type: ConcreteType::default()
                     }).upcast();
-                } else if Some(TokenKind::CloseSquare) {
+                } else if Some(TokenKind::CloseSquare) == next {
                     let end_span = consume_token(&module.source, iter, TokenKind::CloseSquare)?;
                     span.end = end_span.end;
 
@@ -1143,7 +1157,7 @@ impl PassDefinitions {
                 } else {
                     let value = ctx.pool.intern(field_text);
                     let identifier = Identifier{ value, span: field_span };
-                    Field::Symbolic(FieldSymbolic{ identifier, definition: None, field_idx: 0 });
+                    Field::Symbolic(FieldSymbolic{ identifier, definition: None, field_idx: 0 })
                 };
 
                 result = ctx.heap.alloc_select_expression(|this| SelectExpression{
@@ -1396,12 +1410,16 @@ impl PassDefinitions {
                     ctx.heap.alloc_variable_expression(|this| VariableExpression {
                         this,
                         identifier,
-                        declaration: NJone,
+                        declaration: None,
                         parent: ExpressionParent::None,
                         concrete_type: ConcreteType::default()
                     }).upcast()
                 }
             }
+        } else {
+            return Err(ParseError::new_error_str_at_pos(
+                &module.source, iter.last_valid_pos(), "expected an expression"
+            ));
         };
 
         Ok(result)
@@ -1504,7 +1522,7 @@ fn consume_parser_type(
 
     // Start out with the first '<' consumed.
     iter.consume();
-    enum State { Ident, Open, Close, Comma };
+    enum State { Ident, Open, Close, Comma }
     let mut state = State::Open;
     let mut angle_depth = first_angle_depth + 1;
 

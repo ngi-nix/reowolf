@@ -2,6 +2,7 @@ use std::fmt::{Debug, Display, Write};
 use std::io::Write as IOWrite;
 
 use super::ast::*;
+use super::token_parsing::*;
 
 const INDENT: usize = 2;
 
@@ -48,14 +49,13 @@ const PREFIX_UNARY_EXPR_ID: &'static str = "EUna";
 const PREFIX_INDEXING_EXPR_ID: &'static str = "EIdx";
 const PREFIX_SLICING_EXPR_ID: &'static str = "ESli";
 const PREFIX_SELECT_EXPR_ID: &'static str = "ESel";
-const PREFIX_ARRAY_EXPR_ID: &'static str = "EArr";
-const PREFIX_CONST_EXPR_ID: &'static str = "ECns";
+const PREFIX_LITERAL_EXPR_ID: &'static str = "ELit";
 const PREFIX_CALL_EXPR_ID: &'static str = "ECll";
 const PREFIX_VARIABLE_EXPR_ID: &'static str = "EVar";
 
 struct KV<'a> {
     buffer: &'a mut String,
-    prefix: Option<(&'static str, u32)>,
+    prefix: Option<(&'static str, i32)>,
     indent: usize,
     temp_key: &'a mut String,
     temp_val: &'a mut String,
@@ -74,7 +74,7 @@ impl<'a> KV<'a> {
         }
     }
 
-    fn with_id(mut self, prefix: &'static str, id: u32) -> Self {
+    fn with_id(mut self, prefix: &'static str, id: i32) -> Self {
         self.prefix = Some((prefix, id));
         self
     }
@@ -104,8 +104,8 @@ impl<'a> KV<'a> {
         self
     }
 
-    fn with_ascii_val(self, val: &[u8]) -> Self {
-        self.temp_val.push_str(&*String::from_utf8_lossy(val));
+    fn with_identifier_val(self, val: &Identifier) -> Self {
+        self.temp_val.push_str(val.value.as_str());
         self
     }
 
@@ -117,11 +117,11 @@ impl<'a> KV<'a> {
         self
     }
 
-    fn with_opt_ascii_val(self, val: Option<&[u8]>) -> Self {
+    fn with_opt_identifier_val(self, val: Option<&Identifier>) -> Self {
         match val {
             Some(v) => {
                 self.temp_val.push_str("Some(");
-                self.temp_val.push_str(&*String::from_utf8_lossy(v));
+                self.temp_val.push_str(v.value.as_str());
                 self.temp_val.push(')');
             },
             None => {
@@ -224,7 +224,7 @@ impl ASTWriter {
             Pragma::Module(pragma) => {
                 self.kv(indent).with_id(PREFIX_PRAGMA_ID, pragma.this.index)
                     .with_s_key("PragmaModule")
-                    .with_ascii_val(&pragma.value);
+                    .with_identifier_val(&pragma.value);
             }
         }
     }
@@ -238,8 +238,8 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportModule");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module);
-                self.kv(indent2).with_s_key("Alias").with_ascii_val(&import.alias.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&import.module);
+                self.kv(indent2).with_s_key("Alias").with_identifier_val(&import.alias);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
             },
@@ -247,7 +247,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportSymbol");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&import.module);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&import.module);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
 
@@ -257,8 +257,8 @@ impl ASTWriter {
                 let indent4 = indent3 + 1;
                 for symbol in &import.symbols {
                     self.kv(indent3).with_s_key("AliasedSymbol");
-                    self.kv(indent4).with_s_key("Name").with_ascii_val(&symbol.name.value);
-                    self.kv(indent4).with_s_key("Alias").with_ascii_val(&symbol.alias.value);
+                    self.kv(indent4).with_s_key("Name").with_identifier_val(&symbol.name);
+                    self.kv(indent4).with_s_key("Alias").with_opt_identifier_val(symbol.alias.as_ref());
                     self.kv(indent4).with_s_key("Definition")
                         .with_opt_disp_val(symbol.definition_id.as_ref().map(|v| &v.index));
                 }
@@ -281,34 +281,34 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_STRUCT_ID, def.this.0.index)
                     .with_s_key("DefinitionStruct");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&def.identifier);
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_identifier_val(&poly_var_id);
                 }
 
                 self.kv(indent2).with_s_key("Fields");
                 for field in &def.fields {
                     self.kv(indent3).with_s_key("Field");
                     self.kv(indent4).with_s_key("Name")
-                        .with_ascii_val(&field.field.value);
+                        .with_identifier_val(&field.field);
                     self.kv(indent4).with_s_key("Type")
-                        .with_custom_val(|s| write_parser_type(s, heap, &heap[field.parser_type]));
+                        .with_custom_val(|s| write_parser_type(s, heap, &field.parser_type));
                 }
             },
             Definition::Enum(def) => {
                 self.kv(indent).with_id(PREFIX_ENUM_ID, def.this.0.index)
                     .with_s_key("DefinitionEnum");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&def.identifier);
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_identifier_val(&poly_var_id);
                 }
 
                 self.kv(indent2).with_s_key("Variants");
                 for variant in &def.variants {
                     self.kv(indent3).with_s_key("Variant");
                     self.kv(indent4).with_s_key("Name")
-                        .with_ascii_val(&variant.identifier.value);
+                        .with_identifier_val(&variant.identifier);
                     let variant_value = self.kv(indent4).with_s_key("Value");
                     match &variant.value {
                         EnumVariantValue::None => variant_value.with_s_val("None"),
@@ -320,16 +320,16 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_UNION_ID, def.this.0.index)
                     .with_s_key("DefinitionUnion");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&def.identifier);
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_identifier_val(&poly_var_id);
                 }
 
                 self.kv(indent2).with_s_key("Variants");
                 for variant in &def.variants {
                     self.kv(indent3).with_s_key("Variant");
                     self.kv(indent4).with_s_key("Name")
-                        .with_ascii_val(&variant.identifier.value);
+                        .with_identifier_val(&variant.identifier);
                         
                     match &variant.value {
                         UnionVariantValue::None => {
@@ -339,7 +339,7 @@ impl ASTWriter {
                             self.kv(indent4).with_s_key("Values");
                             for embedded in embedded {
                                 self.kv(indent4+1).with_s_key("Value")
-                                    .with_custom_val(|v| write_parser_type(v, heap, &heap[*embedded]));
+                                    .with_custom_val(|v| write_parser_type(v, heap, embedded));
                             }
                         }
                     }
@@ -349,12 +349,16 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_FUNCTION_ID, def.this.0.index)
                     .with_s_key("DefinitionFunction");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&def.identifier);
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_identifier_val(&poly_var_id);
                 }
 
-                self.kv(indent2).with_s_key("ReturnParserType").with_custom_val(|s| write_parser_type(s, heap, &heap[def.return_type]));
+                self.kv(indent2).with_s_key("ReturnParserTypes");
+                for return_type in &def.return_types {
+                    self.kv(indent3).with_s_key("ReturnParserType")
+                        .with_custom_val(|s| write_parser_type(s, heap, return_type));
+                }
 
                 self.kv(indent2).with_s_key("Parameters");
                 for param_id in &def.parameters {
@@ -362,18 +366,18 @@ impl ASTWriter {
                 }
 
                 self.kv(indent2).with_s_key("Body");
-                self.write_stmt(heap, def.body, indent3);
+                self.write_stmt(heap, def.body.upcast(), indent3);
             },
             Definition::Component(def) => {
                 self.kv(indent).with_id(PREFIX_COMPONENT_ID,def.this.0.index)
                     .with_s_key("DefinitionComponent");
 
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&def.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&def.identifier);
                 self.kv(indent2).with_s_key("Variant").with_debug_val(&def.variant);
 
                 self.kv(indent2).with_s_key("PolymorphicVariables");
                 for poly_var_id in &def.poly_vars {
-                    self.kv(indent3).with_s_key("PolyVar").with_ascii_val(&poly_var_id.value);
+                    self.kv(indent3).with_s_key("PolyVar").with_identifier_val(&poly_var_id);
                 }
 
                 self.kv(indent2).with_s_key("Parameters");
@@ -382,7 +386,7 @@ impl ASTWriter {
                 }
 
                 self.kv(indent2).with_s_key("Body");
-                self.write_stmt(heap, def.body, indent3);
+                self.write_stmt(heap, def.body.upcast(), indent3);
             }
         }
     }
@@ -393,21 +397,8 @@ impl ASTWriter {
 
         self.kv(indent).with_id(PREFIX_PARAMETER_ID, param_id.0.index)
             .with_s_key("Parameter");
-        self.kv(indent2).with_s_key("Name").with_ascii_val(&param.identifier.value);
-        self.kv(indent2).with_s_key("ParserType").with_custom_val(|w| write_parser_type(w, heap, &heap[param.parser_type]));
-    }
-
-    fn write_poly_args(&mut self, heap: &Heap, poly_args: &[ParserTypeId], indent: usize) {
-        if poly_args.is_empty() {
-            return
-        }
-
-        let indent2 = indent + 1;
-        self.kv(indent).with_s_key("PolymorphicArguments");
-        for poly_arg in poly_args {
-            self.kv(indent2).with_s_key("Argument")
-                .with_custom_val(|v| write_parser_type(v, heap, &heap[*poly_arg]));
-        }
+        self.kv(indent2).with_s_key("Name").with_identifier_val(&param.identifier);
+        self.kv(indent2).with_s_key("ParserType").with_custom_val(|w| write_parser_type(w, heap, &param.parser_type));
     }
 
     fn write_stmt(&mut self, heap: &Heap, stmt_id: StatementId, indent: usize) {
@@ -448,17 +439,11 @@ impl ASTWriter {
                     }
                 }
             },
-            Statement::Skip(stmt) => {
-                self.kv(indent).with_id(PREFIX_SKIP_STMT_ID, stmt.this.0.index)
-                    .with_s_key("Skip");
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
-            },
             Statement::Labeled(stmt) => {
                 self.kv(indent).with_id(PREFIX_LABELED_STMT_ID, stmt.this.0.index)
                     .with_s_key("Labeled");
 
-                self.kv(indent2).with_s_key("Label").with_ascii_val(&stmt.label.value);
+                self.kv(indent2).with_s_key("Label").with_identifier_val(&stmt.label);
                 self.kv(indent2).with_s_key("Statement");
                 self.write_stmt(heap, stmt.body, indent3);
             },
@@ -473,10 +458,12 @@ impl ASTWriter {
                 self.write_expr(heap, stmt.test, indent3);
 
                 self.kv(indent2).with_s_key("TrueBody");
-                self.write_stmt(heap, stmt.true_body, indent3);
+                self.write_stmt(heap, stmt.true_body.upcast(), indent3);
 
-                self.kv(indent2).with_s_key("FalseBody");
-                self.write_stmt(heap, stmt.false_body, indent3);
+                if let Some(false_body) = stmt.false_body {
+                    self.kv(indent2).with_s_key("FalseBody");
+                    self.write_stmt(heap, false_body.upcast(), indent3);
+                }
             },
             Statement::EndIf(stmt) => {
                 self.kv(indent).with_id(PREFIX_ENDIF_STMT_ID, stmt.this.0.index)
@@ -496,7 +483,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, stmt.test, indent3);
                 self.kv(indent2).with_s_key("Body");
-                self.write_stmt(heap, stmt.body, indent3);
+                self.write_stmt(heap, stmt.body.upcast(), indent3);
             },
             Statement::EndWhile(stmt) => {
                 self.kv(indent).with_id(PREFIX_ENDWHILE_STMT_ID, stmt.this.0.index)
@@ -509,7 +496,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_BREAK_STMT_ID, stmt.this.0.index)
                     .with_s_key("Break");
                 self.kv(indent2).with_s_key("Label")
-                    .with_opt_ascii_val(stmt.label.as_ref().map(|v| v.value.as_slice()));
+                    .with_opt_identifier_val(stmt.label.as_ref());
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
@@ -517,7 +504,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_CONTINUE_STMT_ID, stmt.this.0.index)
                     .with_s_key("Continue");
                 self.kv(indent2).with_s_key("Label")
-                    .with_opt_ascii_val(stmt.label.as_ref().map(|v| v.value.as_slice()));
+                    .with_opt_identifier_val(stmt.label.as_ref());
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
@@ -527,7 +514,7 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("EndSync")
                     .with_opt_disp_val(stmt.end_sync.as_ref().map(|v| &v.0.index));
                 self.kv(indent2).with_s_key("Body");
-                self.write_stmt(heap, stmt.body, indent3);
+                self.write_stmt(heap, stmt.body.upcast(), indent3);
             },
             Statement::EndSynchronous(stmt) => {
                 self.kv(indent).with_id(PREFIX_ENDSYNC_STMT_ID, stmt.this.0.index)
@@ -542,18 +529,10 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Expression");
                 self.write_expr(heap, stmt.expression, indent3);
             },
-            Statement::Assert(stmt) => {
-                self.kv(indent).with_id(PREFIX_ASSERT_STMT_ID, stmt.this.0.index)
-                    .with_s_key("Assert");
-                self.kv(indent2).with_s_key("Expression");
-                self.write_expr(heap, stmt.expression, indent3);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
-            },
             Statement::Goto(stmt) => {
                 self.kv(indent).with_id(PREFIX_GOTO_STMT_ID, stmt.this.0.index)
                     .with_s_key("Goto");
-                self.kv(indent2).with_s_key("Label").with_ascii_val(&stmt.label.value);
+                self.kv(indent2).with_s_key("Label").with_identifier_val(&stmt.label);
                 self.kv(indent2).with_s_key("Target")
                     .with_opt_disp_val(stmt.target.as_ref().map(|v| &v.0.index));
             },
@@ -682,7 +661,7 @@ impl ASTWriter {
                         self.kv(indent2).with_s_key("Field").with_s_val("length");
                     },
                     Field::Symbolic(field) => {
-                        self.kv(indent2).with_s_key("Field").with_ascii_val(&field.identifier.value);
+                        self.kv(indent2).with_s_key("Field").with_identifier_val(&field.identifier);
                         self.kv(indent3).with_s_key("Definition").with_opt_disp_val(field.definition.as_ref().map(|v| &v.index));
                         self.kv(indent3).with_s_key("Index").with_disp_val(&field.field_idx);
                     }
@@ -692,42 +671,31 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("ConcreteType")
                     .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
-            Expression::Array(expr) => {
-                self.kv(indent).with_id(PREFIX_ARRAY_EXPR_ID, expr.this.0.index)
-                    .with_s_key("ArrayExpr");
-                self.kv(indent2).with_s_key("Elements");
-                for expr_id in &expr.elements {
-                    self.write_expr(heap, *expr_id, indent3);
-                }
-
-                self.kv(indent2).with_s_key("Parent")
-                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
-            },
             Expression::Literal(expr) => {
-                self.kv(indent).with_id(PREFIX_CONST_EXPR_ID, expr.this.0.index)
-                    .with_s_key("ConstantExpr");
+                self.kv(indent).with_id(PREFIX_LITERAL_EXPR_ID, expr.this.0.index)
+                    .with_s_key("LiteralExpr");
 
                 let val = self.kv(indent2).with_s_key("Value");
                 match &expr.value {
                     Literal::Null => { val.with_s_val("null"); },
                     Literal::True => { val.with_s_val("true"); },
                     Literal::False => { val.with_s_val("false"); },
-                    Literal::Character(data) => { val.with_ascii_val(data); },
-                    Literal::Integer(data) => { val.with_disp_val(data); },
+                    Literal::Character(data) => { val.with_disp_val(data); },
+                    Literal::String(data) => { val.with_disp_val(data.as_str()); },
+                    Literal::Integer(data) => { val.with_debug_val(data); },
                     Literal::Struct(data) => {
                         val.with_s_val("Struct");
                         let indent4 = indent3 + 1;
 
-                        self.write_poly_args(heap, &data.poly_args2, indent3);
+                        self.kv(indent3).with_s_key("ParserType")
+                            .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
                         self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
                             write_option(s, data.definition.as_ref().map(|v| &v.index));
                         });
 
                         for field in &data.fields {
                             self.kv(indent3).with_s_key("Field");
-                            self.kv(indent4).with_s_key("Name").with_ascii_val(&field.identifier.value);
+                            self.kv(indent4).with_s_key("Name").with_identifier_val(&field.identifier);
                             self.kv(indent4).with_s_key("Index").with_disp_val(&field.field_idx);
                             self.kv(indent4).with_s_key("ParserType");
                             self.write_expr(heap, field.value, indent4 + 1);
@@ -736,7 +704,8 @@ impl ASTWriter {
                     Literal::Enum(data) => {
                         val.with_s_val("Enum");
 
-                        self.write_poly_args(heap, &data.poly_args2, indent3);
+                        self.kv(indent3).with_s_key("ParserType")
+                            .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
                         self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
                             write_option(s, data.definition.as_ref().map(|v| &v.index))
                         });
@@ -745,7 +714,9 @@ impl ASTWriter {
                     Literal::Union(data) => {
                         val.with_s_val("Union");
                         let indent4 = indent3 + 1;
-                        self.write_poly_args(heap, &data.poly_args2, indent3);
+
+                        self.kv(indent3).with_s_key("ParserType")
+                            .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
                         self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
                             write_option(s, data.definition.as_ref().map(|v| &v.index));
                         });
@@ -754,6 +725,15 @@ impl ASTWriter {
                         for value in &data.values {
                             self.kv(indent3).with_s_key("Value");
                             self.write_expr(heap, *value, indent4);
+                        }
+                    }
+                    Literal::Array(data) => {
+                        val.with_s_val("Array");
+                        let indent4 = indent3 + 1;
+
+                        self.kv(indent3).with_s_key("Elements");
+                        for expr_id in data {
+                            self.write_expr(heap, *expr_id, indent4);
                         }
                     }
                 }
@@ -767,22 +747,21 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
                     .with_s_key("CallExpr");
 
-                // Method
-                let method = self.kv(indent2).with_s_key("Method");
-                match &expr.method {
-                    Method::Get => { method.with_s_val("get"); },
-                    Method::Put => { method.with_s_val("put"); },
-                    Method::Fires => { method.with_s_val("fires"); },
-                    Method::Create => { method.with_s_val("create"); },
-                    Method::Symbolic(symbolic) => {
-                        method.with_s_val("symbolic");
-                        self.kv(indent3).with_s_key("Name").with_ascii_val(&symbolic.identifier.value);
-                        self.kv(indent3).with_s_key("Definition")
-                            .with_opt_disp_val(symbolic.definition.as_ref().map(|v| &v.index));
-                    }
+                let definition = &heap[expr.definition];
+                match definition {
+                    Definition::Component(definition) => {
+                        self.kv(indent2).with_s_key("BuiltIn").with_disp_val(&false);
+                        self.kv(indent2).with_s_key("Variant").with_debug_val(&definition.variant);
+                    },
+                    Definition::Function(definition) => {
+                        self.kv(indent2).with_s_key("BuiltIn").with_disp_val(&definition.builtin);
+                        self.kv(indent2).with_s_key("Variant").with_s_val("Function");
+                    },
+                    _ => unreachable!()
                 }
-
-                self.write_poly_args(heap, &expr.poly_args, indent2);
+                self.kv(indent2).with_s_key("MethodName").with_identifier_val(definition.identifier());
+                self.kv(indent2).with_s_key("ParserType")
+                    .with_custom_val(|t| write_parser_type(t, heap, &expr.parser_type));
 
                 // Arguments
                 self.kv(indent2).with_s_key("Arguments");
@@ -799,7 +778,7 @@ impl ASTWriter {
             Expression::Variable(expr) => {
                 self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.index)
                     .with_s_key("VariableExpr");
-                self.kv(indent2).with_s_key("Name").with_ascii_val(&expr.identifier.value);
+                self.kv(indent2).with_s_key("Name").with_identifier_val(&expr.identifier);
                 self.kv(indent2).with_s_key("Definition")
                     .with_opt_disp_val(expr.declaration.as_ref().map(|v| &v.index));
                 self.kv(indent2).with_s_key("Parent")
@@ -817,9 +796,9 @@ impl ASTWriter {
         self.kv(indent).with_id(PREFIX_LOCAL_ID, local_id.0.index)
             .with_s_key("Local");
 
-        self.kv(indent2).with_s_key("Name").with_ascii_val(&local.identifier.value);
+        self.kv(indent2).with_s_key("Name").with_identifier_val(&local.identifier);
         self.kv(indent2).with_s_key("ParserType")
-            .with_custom_val(|w| write_parser_type(w, heap, &heap[local.parser_type]));
+            .with_custom_val(|w| write_parser_type(w, heap, &local.parser_type));
     }
 
     //--------------------------------------------------------------------------
@@ -847,45 +826,71 @@ fn write_option<V: Display>(target: &mut String, value: Option<V>) {
 fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
     use ParserTypeVariant as PTV;
 
-    let mut embedded = Vec::new();
-    match &t.variant {
-        PTV::Input(id) => { target.push_str("in"); embedded.push(*id); }
-        PTV::Output(id) => { target.push_str("out"); embedded.push(*id) }
-        PTV::Array(id) => { target.push_str("array"); embedded.push(*id) }
-        PTV::Message => { target.push_str("msg"); }
-        PTV::Bool => { target.push_str("bool"); }
-        PTV::Byte => { target.push_str("byte"); }
-        PTV::Short => { target.push_str("short"); }
-        PTV::Int => { target.push_str("int"); }
-        PTV::Long => { target.push_str("long"); }
-        PTV::String => { target.push_str("str"); }
-        PTV::IntegerLiteral => { target.push_str("int_lit"); }
-        PTV::Inferred => { target.push_str("auto"); }
-        PTV::Symbolic(symbolic) => {
-            target.push_str(&String::from_utf8_lossy(&symbolic.identifier.value));
-            match symbolic.variant {
-                Some(SymbolicParserTypeVariant::PolyArg(def_id, idx)) => {
-                    target.push_str(&format!("{{def: {}, idx: {}}}", def_id.index, idx));
-                },
-                Some(SymbolicParserTypeVariant::Definition(def_id)) => {
-                    target.push_str(&format!("{{def: {}}}", def_id.index));
-                },
-                None => {
-                    target.push_str("{None}");
+    fn push_bytes(target: &mut String, msg: &[u8]) {
+        target.push_str(&String::from_utf8_lossy(msg));
+    }
+
+    fn write_element(target: &mut String, heap: &Heap, t: &ParserType, mut element_idx: usize) -> usize {
+        let element = &t.elements[element_idx];
+        match &element.variant {
+            PTV::Message => { push_bytes(target, KW_TYPE_MESSAGE); },
+            PTV::Bool => { push_bytes(target, KW_TYPE_BOOL); },
+            PTV::UInt8 => { push_bytes(target, KW_TYPE_UINT8); },
+            PTV::UInt16 => { push_bytes(target, KW_TYPE_UINT16); },
+            PTV::UInt32 => { push_bytes(target, KW_TYPE_UINT32); },
+            PTV::UInt64 => { push_bytes(target, KW_TYPE_UINT64); },
+            PTV::SInt8 => { push_bytes(target, KW_TYPE_SINT8); },
+            PTV::SInt16 => { push_bytes(target, KW_TYPE_SINT16); },
+            PTV::SInt32 => { push_bytes(target, KW_TYPE_SINT32); },
+            PTV::SInt64 => { push_bytes(target, KW_TYPE_SINT64); },
+            PTV::Character => { push_bytes(target, KW_TYPE_CHAR); },
+            PTV::String => { push_bytes(target, KW_TYPE_STRING); },
+            PTV::IntegerLiteral => { target.push_str("int_literal"); },
+            PTV::Inferred => { push_bytes(target, KW_TYPE_INFERRED); },
+            PTV::Array => {
+                element_idx = write_element(target, heap, t, element_idx + 1);
+                target.push_str("[]");
+            },
+            PTV::Input => {
+                push_bytes(target, KW_TYPE_IN_PORT);
+                target.push('<');
+                element_idx = write_element(target, heap, t, element_idx + 1);
+                target.push('>');
+            },
+            PTV::Output => {
+                push_bytes(target, KW_TYPE_OUT_PORT);
+                target.push('<');
+                element_idx = write_element(target, heap, t, element_idx + 1);
+                target.push('>');
+            },
+            PTV::PolymorphicArgument(definition_id, arg_idx) => {
+                let definition = &heap[*definition_id];
+                let poly_var = &definition.poly_vars()[*arg_idx].value;
+                target.write_str(poly_var.as_str());
+            },
+            PTV::Definition(definition_id, num_embedded) => {
+                let definition = &heap[*definition_id];
+                let definition_ident = definition.identifier().value.as_str();
+                target.write_str(definition_ident);
+
+                let num_embedded = *num_embedded;
+                if num_embedded != 0 {
+                    target.push('<');
+                    for embedded_idx in 0..num_embedded {
+                        if embedded_idx != 0 {
+                            target.push(',');
+                        }
+                        element_idx = write_element(target, heap, t, element_idx + 1);
+                    }
+                    target.push('>');
                 }
             }
-            embedded.extend(&symbolic.poly_args2);
         }
-    };
 
-    if !embedded.is_empty() {
-        target.push_str("<");
-        for (idx, embedded_id) in embedded.into_iter().enumerate() {
-            if idx != 0 { target.push_str(", "); }
-            write_parser_type(target, heap, &heap[embedded_id]);
-        }
-        target.push_str(">");
+        element_idx
     }
+
+    write_element(target, heap, t, 0);
 }
 
 fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t: &ConcreteType) {
@@ -900,12 +905,8 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
             CTP::Marker(marker) => {
                 // Marker points to polymorphic variable index
                 let definition = &heap[def_id];
-                let poly_var_ident = match definition {
-                    Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => unreachable!(),
-                    Definition::Function(definition) => &definition.poly_vars[*marker].value,
-                    Definition::Component(definition) => &definition.poly_vars[*marker].value,
-                };
-                target.push_str(&String::from_utf8_lossy(&poly_var_ident));
+                let poly_var_ident = &definition.poly_vars()[*marker];
+                target.push_str(poly_var_ident.value.as_str());
                 idx = write_concrete_part(target, heap, def_id, t, idx + 1);
             },
             CTP::Void => target.push_str("void"),
@@ -936,7 +937,7 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
             },
             CTP::Instance(definition_id, num_embedded) => {
                 let identifier = heap[*definition_id].identifier();
-                target.push_str(&String::from_utf8_lossy(&identifier.value));
+                target.push_str(identifier.value.as_str());
                 target.push('<');
                 for idx_embedded in 0..*num_embedded {
                     if idx_embedded != 0 {

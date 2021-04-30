@@ -3,33 +3,33 @@ use std::cell::{Ref, RefCell};
 use std::fmt::Write;
 
 #[derive(Debug, Clone, Copy)]
-pub struct InputPosition2 {
+pub struct InputPosition {
     pub line: u32,
     pub offset: u32,
 }
 
-impl InputPosition2 {
+impl InputPosition {
     pub(crate) fn with_offset(&self, offset: u32) -> Self {
-        InputPosition2{ line: self.line, offset: self.offset + offset }
+        InputPosition { line: self.line, offset: self.offset + offset }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct InputSpan {
-    pub begin: InputPosition2,
-    pub end: InputPosition2,
+    pub begin: InputPosition,
+    pub end: InputPosition,
 }
 
 impl InputSpan {
     #[inline]
-    pub fn from_positions(begin: InputPosition2, end: InputPosition2) -> Self {
+    pub fn from_positions(begin: InputPosition, end: InputPosition) -> Self {
         Self { begin, end }
     }
 }
 
 /// Wrapper around source file with optional filename. Ensures that the file is
 /// only scanned once.
-pub struct InputSource2 {
+pub struct InputSource {
     pub(crate) filename: String,
     pub(crate) input: Vec<u8>,
     // Iteration
@@ -43,7 +43,7 @@ pub struct InputSource2 {
     offset_lookup: RefCell<Vec<u32>>,
 }
 
-impl InputSource2 {
+impl InputSource {
     pub fn new(filename: String, input: Vec<u8>) -> Self {
         Self{
             filename,
@@ -62,8 +62,8 @@ impl InputSource2 {
     }
 
     #[inline]
-    pub fn pos(&self) -> InputPosition2 {
-        InputPosition2{ line: self.line, offset: self.offset as u32 }
+    pub fn pos(&self) -> InputPosition {
+        InputPosition { line: self.line, offset: self.offset as u32 }
     }
 
     pub fn next(&self) -> Option<u8> {
@@ -84,7 +84,7 @@ impl InputSource2 {
     }
 
     #[inline]
-    pub fn section_at_pos(&self, start: InputPosition2, end: InputPosition2) -> &[u8] {
+    pub fn section_at_pos(&self, start: InputPosition, end: InputPosition) -> &[u8] {
         &self.input[start.offset as usize..end.offset as usize]
     }
 
@@ -125,7 +125,7 @@ impl InputSource2 {
 
     fn set_error(&mut self, msg: &str) {
         if self.had_error.is_none() {
-            self.had_error = Some(ParseError::new_error(self, self.pos(), msg));
+            self.had_error = Some(ParseError::new_error_str_at_pos(self, self.pos(), msg));
         }
     }
 
@@ -211,7 +211,7 @@ pub struct ParseErrorStatement {
 }
 
 impl ParseErrorStatement {
-    fn from_source_at_pos(statement_kind: StatementKind, source: &InputSource2, position: InputPosition2, message: String) -> Self {
+    fn from_source_at_pos(statement_kind: StatementKind, source: &InputSource, position: InputPosition, message: String) -> Self {
         // Seek line start and end
         let line_start = source.lookup_line_start_offset(position.line);
         let line_end = source.lookup_line_end_offset(position.line);
@@ -232,7 +232,7 @@ impl ParseErrorStatement {
         }
     }
 
-    fn from_source_at_span(statement_kind: StatementKind, source: &InputSource2, span: InputSpan, message: String) -> Self {
+    fn from_source_at_span(statement_kind: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
         debug_assert!(span.end.line >= span.begin.line);
         debug_assert!(span.end.offset >= span.begin.offset);
 
@@ -264,7 +264,7 @@ impl ParseErrorStatement {
     }
 
     /// Produces context from source
-    fn create_context(source: &InputSource2, start: usize, end: usize) -> String {
+    fn create_context(source: &InputSource, start: usize, end: usize) -> String {
         let context_raw = &source.input[start..end];
         String::from_utf8_lossy(context_raw).to_string()
     }
@@ -336,8 +336,8 @@ impl fmt::Display for ParseErrorStatement {
                 f.write_str(&context)?;
 
                 annotation.push_str(" | ");
-                extend_annotation(1, self.start_column, &self.source, &mut annotation, ' ');
-                extend_annotation(self.start_column, self.end_column, &self.source, &mut annotation, '~');
+                extend_annotation(1, self.start_column, &self.context, &mut annotation, ' ');
+                extend_annotation(self.start_column, self.end_column, &self.context, &mut annotation, '~');
                 annotation.push('\n');
 
                 f.write_str(&annotation)?;
@@ -348,14 +348,14 @@ impl fmt::Display for ParseErrorStatement {
                 let mut lines = self.context.lines();
                 let first_line = lines.next().unwrap();
                 transform_context(first_line, &mut context);
-                writeln!(" |- {}", &context)?;
+                writeln!(f, " |- {}", &context)?;
 
                 // - remaining lines
                 let mut last_line = first_line;
                 while let Some(cur_line) = lines.next() {
                     context.clear();
                     transform_context(cur_line, &mut context);
-                    writeln!(" |  {}", &context);
+                    writeln!(f, " |  {}", &context);
                     last_line = cur_line;
                 }
 
@@ -397,53 +397,53 @@ impl ParseError {
         Self{ statements: Vec::new() }
     }
 
-    pub fn new_error_at_pos(source: &InputSource2, position: InputPosition2, message: String) -> Self {
+    pub fn new_error_at_pos(source: &InputSource, position: InputPosition, message: String) -> Self {
         Self{ statements: vec!(ParseErrorStatement::from_source_at_pos(
             StatementKind::Error, source, position, message
         )) }
     }
 
-    pub fn new_error_str_at_pos(source: &InputSource2, position: InputPosition2, message: &str) -> Self {
+    pub fn new_error_str_at_pos(source: &InputSource, position: InputPosition, message: &str) -> Self {
         Self{ statements: vec!(ParseErrorStatement::from_source_at_pos(
             StatementKind::Error, source, position, message.to_string()
         )) }
     }
 
-    pub fn new_error_at_span(source: &InputSource2, span: InputSpan, message: String) -> Self {
+    pub fn new_error_at_span(source: &InputSource, span: InputSpan, message: String) -> Self {
         Self{ statements: vec!(ParseErrorStatement::from_source_at_span(
             StatementKind::Error, source, span, message
         )) }
     }
 
-    pub fn new_error_str_at_span(source: &InputSource2, span: InputSpan, message: &str) -> Self {
+    pub fn new_error_str_at_span(source: &InputSource, span: InputSpan, message: &str) -> Self {
         Self{ statements: vec!(ParseErrorStatement::from_source_at_span(
             StatementKind::Error, source, span, message.to_string()
         )) }
     }
 
-    pub fn with_at_pos(mut self, error_type: StatementKind, source: &InputSource2, position: InputPosition2, message: String) -> Self {
+    pub fn with_at_pos(mut self, error_type: StatementKind, source: &InputSource, position: InputPosition, message: String) -> Self {
         self.statements.push(ParseErrorStatement::from_source_at_pos(error_type, source, position, message));
         self
     }
 
-    pub fn with_at_span(mut self, error_type: StatementKind, source: &InputSource2, span: InputSpan, message: String) -> Self {
+    pub fn with_at_span(mut self, error_type: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
         self.statements.push(ParseErrorStatement::from_source_at_span(error_type, source, span, message.to_string()));
         self
     }
 
-    pub fn with_info_at_pos(self, source: &InputSource2, position: InputPosition2, msg: String) -> Self {
+    pub fn with_info_at_pos(self, source: &InputSource, position: InputPosition, msg: String) -> Self {
         self.with_at_pos(StatementKind::Info, source, position, msg)
     }
 
-    pub fn with_info_str_at_pos(self, source: &InputSource2, position: InputPosition2, msg: &str) -> Self {
+    pub fn with_info_str_at_pos(self, source: &InputSource, position: InputPosition, msg: &str) -> Self {
         self.with_at_pos(StatementKind::Info, source, position, msg.to_string())
     }
 
-    pub fn with_info_at_span(self, source: &InputSource2, span: InputSpan, msg: String) -> Self {
+    pub fn with_info_at_span(self, source: &InputSource, span: InputSpan, msg: String) -> Self {
         self.with_at_span(StatementKind::Info, source, span, msg)
     }
 
-    pub fn with_info_str_at_span(self, source: &InputSource2, span: InputSpan, msg: &str) -> Self {
+    pub fn with_info_str_at_span(self, source: &InputSource, span: InputSpan, msg: &str) -> Self {
         self.with_at_span(StatementKind::Info, source, span, msg.to_string())
     }
 }

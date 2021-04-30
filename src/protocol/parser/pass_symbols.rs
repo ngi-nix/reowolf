@@ -1,6 +1,6 @@
 use crate::protocol::ast::*;
-use super::symbol_table2::*;
-use crate::protocol::input_source2::{ParseError, InputSpan};
+use super::symbol_table::*;
+use crate::protocol::input_source::{ParseError, InputSpan};
 use super::tokens::*;
 use super::token_parsing::*;
 use super::{Module, ModuleCompilationPhase, PassCtx};
@@ -105,19 +105,19 @@ impl PassSymbols {
         let mut iter = module.tokens.iter_range(range);
 
         // Consume pragma name
-        let (pragma_section, pragma_start, _) = consume_pragma(&self.source, &mut iter)?;
+        let (pragma_section, pragma_start, _) = consume_pragma(&module.source, &mut iter)?;
 
         // Consume pragma values
-        if pragma_section == "#module" {
+        if pragma_section == b"#module" {
             // Check if name is defined twice within the same file
             if self.has_pragma_module {
-                return Err(ParseError::new_error(&module.source, pragma_start, "module name is defined twice"));
+                return Err(ParseError::new_error_str_at_pos(&module.source, pragma_start, "module name is defined twice"));
             }
 
             // Consume the domain-name
             let (module_name, module_span) = consume_domain_ident(&module.source, &mut iter)?;
             if iter.next().is_some() {
-                return Err(ParseError::new_error(&module.source, iter.last_valid_pos(), "expected end of #module pragma after module name"));
+                return Err(ParseError::new_error_str_at_pos(&module.source, iter.last_valid_pos(), "expected end of #module pragma after module name"));
             }
 
             // Add to heap and symbol table
@@ -143,10 +143,10 @@ impl PassSymbols {
                 ));
             }
             self.has_pragma_module = true;
-        } else if pragma_section == "#version" {
+        } else if pragma_section == b"#version" {
             // Check if version is defined twice within the same file
             if self.has_pragma_version {
-                return Err(ParseError::new_error(&module.source, pragma_start, "module version is defined twice"));
+                return Err(ParseError::new_error_str_at_pos(&module.source, pragma_start, "module version is defined twice"));
             }
 
             // Consume the version pragma
@@ -161,7 +161,7 @@ impl PassSymbols {
         } else {
             // Custom pragma, maybe we support this in the future, but for now
             // we don't.
-            return Err(ParseError::new_error(&module.source, pragma_start, "illegal pragma name"));
+            return Err(ParseError::new_error_str_at_pos(&module.source, pragma_start, "illegal pragma name"));
         }
 
         Ok(())
@@ -188,6 +188,7 @@ impl PassSymbols {
             &mut poly_vars, "a polymorphic variable", None
         )?;
         let ident_text = identifier.value.clone(); // because we need it later
+        let ident_span = identifier.span.clone();
 
         // Reserve space in AST for definition and add it to the symbol table
         let definition_class;
@@ -195,28 +196,28 @@ impl PassSymbols {
         match kw_text {
             KW_STRUCT => {
                 let struct_def_id = ctx.heap.alloc_struct_definition(|this| {
-                    StructDefinition::new_empty(this, definition_span, identifier, poly_vars)
+                    StructDefinition::new_empty(this, module.root_id, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Struct;
                 ast_definition_id = struct_def_id.upcast();
             },
             KW_ENUM => {
                 let enum_def_id = ctx.heap.alloc_enum_definition(|this| {
-                    EnumDefinition::new_empty(this, definition_span, identifier, poly_vars)
+                    EnumDefinition::new_empty(this, module.root_id, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Enum;
                 ast_definition_id = enum_def_id.upcast();
             },
             KW_UNION => {
                 let union_def_id = ctx.heap.alloc_union_definition(|this| {
-                    UnionDefinition::new_empty(this, definition_span, identifier, poly_vars)
+                    UnionDefinition::new_empty(this, module.root_id, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Union;
                 ast_definition_id = union_def_id.upcast()
             },
             KW_FUNCTION => {
                 let func_def_id = ctx.heap.alloc_function_definition(|this| {
-                    FunctionDefinition::new_empty(this, definition_span, identifier, poly_vars)
+                    FunctionDefinition::new_empty(this, module.root_id, definition_span, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Function;
                 ast_definition_id = func_def_id.upcast();
@@ -228,7 +229,7 @@ impl PassSymbols {
                     ComponentVariant::Composite
                 };
                 let comp_def_id = ctx.heap.alloc_component_definition(|this| {
-                    ComponentDefinition::new_empty(this, definition_span, component_variant, identifier, poly_vars)
+                    ComponentDefinition::new_empty(this, module.root_id, definition_span, component_variant, identifier, poly_vars)
                 });
                 definition_class = DefinitionClass::Component;
                 ast_definition_id = comp_def_id.upcast();
@@ -242,7 +243,7 @@ impl PassSymbols {
                 defined_in_module: module.root_id,
                 defined_in_scope: SymbolScope::Module(module.root_id),
                 definition_span,
-                identifier_span,
+                identifier_span: ident_span,
                 imported_at: None,
                 class: definition_class,
                 definition_id: ast_definition_id,

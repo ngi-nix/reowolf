@@ -1,13 +1,13 @@
 use crate::collections::{StringRef, ScopedSection};
 use crate::protocol::ast::*;
-use crate::protocol::input_source2::{
-    InputSource2 as InputSource,
-    InputPosition2 as InputPosition,
+use crate::protocol::input_source::{
+    InputSource as InputSource,
+    InputPosition as InputPosition,
     InputSpan,
     ParseError,
 };
 use super::tokens::*;
-use super::symbol_table2::*;
+use super::symbol_table::*;
 use super::{Module, ModuleCompilationPhase, PassCtx};
 
 // Keywords
@@ -70,7 +70,6 @@ pub(crate) const KW_TYPE_INFERRED: &'static [u8] = b"auto";
 pub(crate) trait Extendable {
     type Value;
 
-    #[inline]
     fn push(&mut self, v: Self::Value);
 }
 
@@ -79,7 +78,7 @@ impl<T> Extendable for Vec<T> {
 
     #[inline]
     fn push(&mut self, v: Self::Value) {
-        (self as Vec<T>).push(v);
+        (self as &mut Vec<T>).push(v);
     }
 }
 
@@ -88,7 +87,7 @@ impl<T: Sized + Copy> Extendable for ScopedSection<T> {
 
     #[inline]
     fn push(&mut self, v: Self::Value) {
-        (self as ScopedSection<T>).push(v);
+        (self as &mut ScopedSection<T>).push(v);
     }
 }
 
@@ -145,6 +144,7 @@ pub(crate) fn consume_comma_separated_until<T, F, E>(
           E: Extendable<Value=T>
 {
     let mut had_comma = true;
+    let mut next;
     loop {
         next = iter.next();
         if Some(close_delim) == next {
@@ -240,7 +240,7 @@ pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut Tok
 /// characters to be present. The returned array may still be empty
 pub(crate) fn consume_comma_separated<T, F, E>(
     open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
-    consumer_fn: F, target: &mut Vec<T>, item_name_and_article: &'static str,
+    consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
     list_name_and_article: &'static str, close_pos: Option<&mut InputPosition>
 ) -> Result<(), ParseError>
     where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
@@ -344,7 +344,7 @@ pub(crate) fn consume_character_literal(
         },
         2 => {
             if char_text[0] == b'\\' {
-                let result = parse_escaped_character(char_text[1])?;
+                let result = parse_escaped_character(source, iter.last_valid_pos(), char_text[1])?;
                 return Ok((result, span))
             }
         },
@@ -379,7 +379,7 @@ pub(crate) fn consume_string_literal(
         let cur = text[idx];
         if cur != b'\\' {
             if was_escape {
-                let to_push = parse_escaped_character(cur)?;
+                let to_push = parse_escaped_character(source, iter.last_valid_pos(), cur)?;
                 buffer.push(to_push);
             } else {
                 buffer.push(cur as char);
@@ -395,7 +395,7 @@ pub(crate) fn consume_string_literal(
     Ok(span)
 }
 
-fn parse_escaped_character(v: u8) -> Result<char, ParseError> {
+fn parse_escaped_character(source: &InputSource, pos: InputPosition, v: u8) -> Result<char, ParseError> {
     let result = match v {
         b'r' => '\r',
         b'n' => '\n',
@@ -404,8 +404,8 @@ fn parse_escaped_character(v: u8) -> Result<char, ParseError> {
         b'\\' => '\\',
         b'\'' => '\'',
         b'"' => '"',
-        v => return Err(ParseError::new_error_at_span(
-            source, span, format!("unexpected escaped character '{}'", v)
+        v => return Err(ParseError::new_error_at_pos(
+            source, pos, format!("unexpected escaped character '{}'", v)
         )),
     };
     Ok(result)

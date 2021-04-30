@@ -101,7 +101,7 @@ impl<T: Sized + Copy> std::ops::Index<usize> for ScopedSection<T> {
 }
 
 #[cfg(debug_assertions)]
-impl<T: Sized + Copy> Drop for ScopedBuffer<T> {
+impl<T: Sized + Copy> Drop for ScopedSection<T> {
     fn drop(&mut self) {
         // Make sure that the data was actually taken out of the scoped section
         let vec = unsafe{&*self.inner};

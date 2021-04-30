@@ -1,4 +1,4 @@
-/// type_resolver.rs
+/// pass_typing
 ///
 /// Performs type inference and type checking. Type inference is implemented by
 /// applying constraints on (sub)trees of types. During this process the
@@ -54,10 +54,11 @@ macro_rules! debug_log {
     };
 }
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use crate::protocol::ast::*;
-use crate::protocol::input_source2::{InputSource2 as InputSource, ParseError};
+use crate::protocol::input_source::ParseError;
+use crate::protocol::parser::ModuleCompilationPhase;
 use crate::protocol::parser::type_table::*;
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
@@ -68,7 +69,7 @@ use super::visitor::{
 };
 use std::collections::hash_map::Entry;
 
-const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::Byte ];
+const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
 const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
 const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
@@ -833,7 +834,7 @@ pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
 
 /// This particular visitor will recurse depth-first into the AST and ensures
 /// that all expressions have the appropriate types.
-pub(crate) struct TypeResolvingVisitor {
+pub(crate) struct PassTyping {
     // Current definition we're typechecking.
     definition_type: DefinitionType,
     poly_vars: Vec<ConcreteType>,
@@ -880,9 +881,9 @@ impl VarData {
     }
 }
 
-impl TypeResolvingVisitor {
+impl PassTyping {
     pub(crate) fn new() -> Self {
-        TypeResolvingVisitor{
+        PassTyping {
             definition_type: DefinitionType::None,
             poly_vars: Vec::new(),
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
@@ -897,6 +898,7 @@ impl TypeResolvingVisitor {
     // TODO: @cleanup Unsure about this, maybe a pattern will arise after
     //  a while.
     pub(crate) fn queue_module_definitions(ctx: &Ctx, queue: &mut ResolveQueue) {
+        debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::ValidatedAndLinked);
         let root_id = ctx.module.root_id;
         let root = &ctx.heap.protocol_descriptions[root_id];
         for definition_id in &root.definitions {
@@ -952,7 +954,7 @@ impl TypeResolvingVisitor {
     }
 }
 
-impl Visitor2 for TypeResolvingVisitor {
+impl Visitor2 for PassTyping {
     // Definitions
 
     fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentDefinitionId) -> VisitorResult {
@@ -1309,7 +1311,7 @@ macro_rules! debug_assert_ptrs_distinct {
     };
 }
 
-impl TypeResolvingVisitor {
+impl PassTyping {
     fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError> {
         // Keep inferring until we can no longer make any progress
         while let Some(next_expr_id) = self.expr_queued.iter().next() {
@@ -3031,9 +3033,9 @@ impl TypeResolvingVisitor {
         debug_assert_eq!(variant_definition.embedded.len(), literal.values.len());
 
         let mut embedded = Vec::with_capacity(variant_definition.embedded.len());
-        for embedded_id in &variant_definition.embedded {
+        for embedded_parser_type in &variant_definition.embedded {
             let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, *embedded_id, false
+                ctx, embedded_parser_type, false
             );
             embedded.push(inference_type);
         }
@@ -3163,7 +3165,7 @@ impl TypeResolvingVisitor {
 
                         infer_type.push(ITP::MarkerDefinition(poly_arg_idx as usize));
                         for concrete_part in &self.poly_vars[poly_arg_idx].parts {
-                            infer_types.push(ITP::from(*concrete_part));
+                            infer_type.push(ITP::from(*concrete_part));
                         }
                     } else {
                         // Polymorphic argument has to be inferred
@@ -3289,62 +3291,21 @@ impl TypeResolvingVisitor {
         }
 
         // Helpers function to retrieve polyvar name and definition name
-        fn get_poly_var_and_func_name(ctx: &Ctx, poly_var_idx: usize, expr: &CallExpression) -> (String, String) {
-            match &expr.method {
-                Method::Create => unreachable!(),
-                Method::Fires => (String::from('T'), String::from("fires")),
-                Method::Get => (String::from('T'), String::from("get")),
-                Method::Put => (String::from('T'), String::from("put")),
-                Method::Symbolic(symbolic) => {
-                    let definition = &ctx.heap[symbolic.definition.unwrap()];
-                    let poly_var = match definition {
-                        Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => unreachable!(),
-                        Definition::Function(definition) => {
-                            String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string()
-                        },
-                        Definition::Component(definition) => {
-                            String::from_utf8_lossy(&definition.poly_vars[poly_var_idx].value).to_string()
-                        }
-                    };
-                    let func_name = String::from_utf8_lossy(&symbolic.identifier.value).to_string();
-                    (poly_var, func_name)
-                }
-            }
-        }
-
-        fn get_poly_var_and_type_name(ctx: &Ctx, poly_var_idx: usize, definition_id: DefinitionId) -> (String, String) {
+        fn get_poly_var_and_definition_name<'a>(ctx: &'a Ctx, poly_var_idx: usize, definition_id: DefinitionId) -> (&'a str, &'a str) {
             let definition = &ctx.heap[definition_id];
-            let (poly_var_name, type_name) = match definition {
-                Definition::Function(_) | Definition::Component(_) =>
-                    unreachable!("get_poly_var_and_type_name called on unsupported type"),
-                Definition::Enum(definition) => (
-                    &definition.poly_vars[poly_var_idx].value,
-                    &definition.identifier.value
-                ),
-                Definition::Struct(definition) => (
-                    &definition.poly_vars[poly_var_idx].value,
-                    &definition.identifier.value
-                ),
-                Definition::Union(definition) => (
-                    &definition.poly_vars[poly_var_idx].value,
-                    &definition.identifier.value
-                ),
-            };
+            let poly_var = definition.poly_vars()[poly_var_idx].value.as_str();
+            let func_name = definition.identifier().value.as_str();
 
-            (
-                String::from_utf8_lossy(poly_var_name).to_string(),
-                String::from_utf8_lossy(type_name).to_string()
-            )
+            (poly_var, func_name)
         }
 
         // Helper function to construct initial error
         fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &Expression) -> ParseError {
             match expr {
                 Expression::Call(expr) => {
-                    let (poly_var, func_name) = get_poly_var_and_func_name(ctx, poly_var_idx, expr);
-                    return ParseError::new_error(
-                        &ctx.module.source, expr.position(),
-                        &format!(
+                    let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, expr.definition);
+                    return ParseError::new_error_at_span(
+                        &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' of '{}'",
                             poly_var, func_name
                         )
@@ -3358,27 +3319,25 @@ impl TypeResolvingVisitor {
                         _ => unreachable!(),
                     };
 
-                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, definition_id);
-                    return ParseError::new_error(
-                        &ctx.module.source, expr.position(),
-                        &format!(
+                    let (poly_var, type_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, definition_id);
+                    return ParseError::new_error_at_span(
+                        &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' of instantiation of '{}'",
-                            poly_var, struct_name
+                            poly_var, type_name
                         )
-                    )
+                    );
                 },
                 Expression::Select(expr) => {
                     let field = expr.field.as_symbolic();
-                    let (poly_var, struct_name) = get_poly_var_and_type_name(ctx, poly_var_idx, field.definition.unwrap());
-                    return ParseError::new_error(
-                        &ctx.module.source, expr.position(),
-                        &format!(
+                    let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, field.definition.unwrap());
+                    return ParseError::new_error_at_span(
+                        &ctx.module.source, expr.position(), format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
-                            poly_var, &String::from_utf8_lossy(&field.identifier.value), struct_name
+                            poly_var, field.identifier.value.as_str(), struct_name
                         )
                     )
                 }
-                _ => unreachable!("called construct_poly_arg_error without a call/literal expression")
+                _ => unreachable!("called construct_poly_arg_error without an expected expression, got: {:?}", expr)
             }
         }
 
@@ -3417,15 +3376,14 @@ impl TypeResolvingVisitor {
             &poly_data.returned, &poly_data.returned
         ) {
             return construct_main_error(ctx, poly_idx, expr)
-                .with_postfixed_info(
-                    &ctx.module.source, expr.position(),
-                    &format!(
+                .with_info_at_span(
+                    &ctx.module.source, expr.span(), format!(
                         "The {} inferred the conflicting types '{}' and '{}'",
                         expr_return_name,
                         InferenceType::partial_display_name(&ctx.heap, section_a),
                         InferenceType::partial_display_name(&ctx.heap, section_b)
                     )
-                )
+                );
         }
 
         // - check arguments with each other argument and with return type
@@ -3440,26 +3398,23 @@ impl TypeResolvingVisitor {
                     if arg_a_idx == arg_b_idx {
                         // Same argument
                         let arg = &ctx.heap[expr_args[arg_a_idx]];
-                        return error.with_postfixed_info(
-                            &ctx.module.source, arg.position(),
-                            &format!(
+                        return error.with_info_at_span(
+                            &ctx.module.source, arg.span(), format!(
                                 "This argument inferred the conflicting types '{}' and '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a),
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
-                        )
+                        );
                     } else {
                         let arg_a = &ctx.heap[expr_args[arg_a_idx]];
                         let arg_b = &ctx.heap[expr_args[arg_b_idx]];
-                        return error.with_postfixed_info(
-                            &ctx.module.source, arg_a.position(),
-                            &format!(
+                        return error.with_info_at_span(
+                            &ctx.module.source, arg_a.span(), format!(
                                 "This argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a)
                             )
-                        ).with_postfixed_info(
-                            &ctx.module.source, arg_b.position(),
-                            &format!(
+                        ).with_info_at_span(
+                            &ctx.module.source, arg_b.span(), format!(
                                 "While this argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
@@ -3472,21 +3427,19 @@ impl TypeResolvingVisitor {
             if let Some((poly_idx, section_arg, section_ret)) = has_poly_mismatch(arg_a, &poly_data.returned) {
                 let arg = &ctx.heap[expr_args[arg_a_idx]];
                 return construct_main_error(ctx, poly_idx, expr)
-                    .with_postfixed_info(
-                        &ctx.module.source, arg.position(),
-                        &format!(
+                    .with_info_at_span(
+                        &ctx.module.source, arg.span(), format!(
                             "This argument inferred it to '{}'",
                             InferenceType::partial_display_name(&ctx.heap, section_arg)
                         )
                     )
                     .with_postfixed_info(
-                        &ctx.module.source, expr.position(),
-                        &format!(
+                        &ctx.module.source, expr.span(), format!(
                             "While the {} inferred it to '{}'",
                             expr_return_name,
                             InferenceType::partial_display_name(&ctx.heap, section_ret)
                         )
-                    )
+                    );
             }
         }
 

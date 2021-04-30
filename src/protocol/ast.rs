@@ -7,8 +7,7 @@ use std::ops::{Index, IndexMut};
 
 use super::arena::{Arena, Id};
 use crate::collections::StringRef;
-use crate::protocol::inputsource::*;
-use crate::protocol::input_source2::{InputPosition2, InputSpan};
+use crate::protocol::input_source::InputSpan;
 
 /// Helper macro that defines a type alias for a AST element ID. In this case 
 /// only used to alias the `Id<T>` types.
@@ -60,7 +59,7 @@ macro_rules! define_new_ast_id {
         pub struct $name (pub(crate) $parent);
 
         impl $name {
-            pub(crate) fn new_invalid() -> Self     { Self($parent::new_invalid()) }
+            pub(crate) fn new_invalid() -> Self     { Self(<$parent>::new_invalid()) }
             pub(crate) fn is_invalid(&self) -> bool { self.0.is_invalid() }
             pub fn upcast(self) -> $parent          { self.0 }
         }
@@ -357,7 +356,7 @@ impl Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum ParserTypeVariant {
     // Basic builtin
     Message,
@@ -429,11 +428,9 @@ pub enum ConcreteTypePart {
     // Builtin types without nested types
     Message,
     Bool,
-    Byte,
-    Short,
-    Int,
-    Long,
-    String,
+    UInt8, UInt16, UInt32, UInt64,
+    SInt8, SInt16, SInt32, SInt64,
+    Character, String,
     // Builtin types with one nested type
     Array,
     Slice,
@@ -1016,12 +1013,6 @@ impl Statement {
     pub fn as_channel(&self) -> &ChannelStatement {
         self.as_local().as_channel()
     }
-    pub fn as_skip(&self) -> &SkipStatement {
-        match self {
-            Statement::Skip(result) => result,
-            _ => panic!("Unable to cast `Statement` to `SkipStatement`"),
-        }
-    }
     pub fn as_labeled(&self) -> &LabeledStatement {
         match self {
             Statement::Labeled(result) => result,
@@ -1495,18 +1486,6 @@ impl Expression {
             _ => panic!("Unable to cast `Expression` to `SelectExpression`"),
         }
     }
-    pub fn as_array(&self) -> &ArrayExpression {
-        match self {
-            Expression::Array(result) => result,
-            _ => panic!("Unable to cast `Expression` to `ArrayExpression`"),
-        }
-    }
-    pub fn as_constant(&self) -> &LiteralExpression {
-        match self {
-            Expression::Literal(result) => result,
-            _ => panic!("Unable to cast `Expression` to `ConstantExpression`"),
-        }
-    }
     pub fn as_call(&self) -> &CallExpression {
         match self {
             Expression::Call(result) => result,
@@ -1793,7 +1772,7 @@ pub struct CallExpression {
     pub concrete_type: ConcreteType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method {
     // Builtin
     Get,
@@ -1875,7 +1854,7 @@ impl Literal {
 #[derive(Debug, Clone)]
 pub struct LiteralInteger {
     pub(crate) unsigned_value: u64,
-    pub(crate) negated: bool, // for constant expression evaluation, TODO
+    pub(crate) negated: bool, // for constant expression evaluation, TODO: @Int
 }
 
 #[derive(Debug, Clone)]

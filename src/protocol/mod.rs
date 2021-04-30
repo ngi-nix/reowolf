@@ -1,29 +1,16 @@
 mod arena;
-// mod ast;
 mod eval;
-pub(crate) mod inputsource;
-pub(crate) mod input_source2;
-// mod lexer;
+pub(crate) mod input_source;
 mod parser;
 #[cfg(test)] mod tests;
 
-// TODO: Remove when not benchmarking
 pub(crate) mod ast;
 pub(crate) mod ast_printer;
-pub(crate) mod lexer;
-
-lazy_static::lazy_static! {
-    /// Conveniently-provided protocol description initialized with a zero-length PDL string.
-    /// Exposed to minimize repeated initializations of this common protocol description.
-    pub static ref TRIVIAL_PD: std::sync::Arc<ProtocolDescription> = {
-        std::sync::Arc::new(ProtocolDescription::parse(b"").unwrap())
-    };
-}
 
 use crate::common::*;
 use crate::protocol::ast::*;
 use crate::protocol::eval::*;
-use crate::protocol::inputsource::*;
+use crate::protocol::input_source::*;
 use crate::protocol::parser::*;
 
 /// Description of a protocol object, used to configure new connectors.
@@ -54,9 +41,9 @@ impl ProtocolDescription {
     pub fn parse(buffer: &[u8]) -> Result<Self, String> {
         // TODO: @fixme, keep code compilable, but needs support for multiple
         //  input files.
-        let source = InputSource::from_buffer(buffer).unwrap();
+        let source = InputSource::new(String::new(), Vec::from(buffer));
         let mut parser = Parser::new();
-        parser.feed(source).expect("failed to lex source");
+        parser.feed(source).expect("failed to feed source");
         
         if let Err(err) = parser.parse() {
             println!("ERROR:\n{}", err);
@@ -64,8 +51,10 @@ impl ProtocolDescription {
         }
 
         debug_assert_eq!(parser.modules.len(), 1, "only supporting one module here for now");
-        let root = parser.modules[0].root_id;
-        return Ok(ProtocolDescription { heap: parser.heap, source: parser.modules[0].source.clone(), root });
+        let module = parser.modules.remove(0);
+        let root = module.root_id;
+        let source = module.source;
+        return Ok(ProtocolDescription { heap: parser.heap, source, root });
     }
     pub(crate) fn component_polarities(
         &self,
@@ -84,10 +73,10 @@ impl ProtocolDescription {
         }
         for &param in def.parameters().iter() {
             let param = &h[param];
-            let parser_type = &h[param.parser_type];
+            let first_element = &param.parser_type.elements[0];
 
-            match parser_type.variant {
-                ParserTypeVariant::Input(_) | ParserTypeVariant::Output(_) => continue,
+            match first_element.variant {
+                ParserTypeVariant::Input | ParserTypeVariant::Output => continue,
                 _ => {
                     return Err(NonPortTypeParameters);
                 }
@@ -96,11 +85,11 @@ impl ProtocolDescription {
         let mut result = Vec::new();
         for &param in def.parameters().iter() {
             let param = &h[param];
-            let parser_type = &h[param.parser_type];
+            let first_element = &param.parser_type.elements[0];
 
-            if let ParserTypeVariant::Input(_) = parser_type.variant {
+            if first_element.variant == ParserTypeVariant::Input {
                 result.push(Polarity::Getter)
-            } else if let ParserTypeVariant::Output(_) = parser_type.variant {
+            } else if first_element.variant == ParserTypeVariant::Output {
                 result.push(Polarity::Putter)
             } else {
                 unreachable!()

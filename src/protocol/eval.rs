@@ -75,21 +75,25 @@ impl Value {
             Literal::False => Value::Boolean(BooleanValue(false)),
             Literal::Integer(val) => {
                 // Convert raw ASCII data to UTF-8 string
-                let val = *val;
-                if val >= BYTE_MIN && val <= BYTE_MAX {
-                    Value::Byte(ByteValue(val as i8))
-                } else if val >= SHORT_MIN && val <= SHORT_MAX {
-                    Value::Short(ShortValue(val as i16))
-                } else if val >= INT_MIN && val <= INT_MAX {
-                    Value::Int(IntValue(val as i32))
+                let mut integer_value = val.unsigned_value as i64; // TODO: @Int
+                if val.negated { integer_value = -integer_value; };
+
+                if integer_value >= BYTE_MIN && integer_value <= BYTE_MAX {
+                    Value::Byte(ByteValue(integer_value as i8))
+                } else if integer_value >= SHORT_MIN && integer_value <= SHORT_MAX {
+                    Value::Short(ShortValue(integer_value as i16))
+                } else if integer_value >= INT_MIN && integer_value <= INT_MAX {
+                    Value::Int(IntValue(integer_value as i32))
                 } else {
-                    Value::Long(LongValue(val))
+                    Value::Long(LongValue(integer_value))
                 }
             }
             Literal::Character(_data) => unimplemented!(),
+            Literal::String(_data) => unimplemented!(),
             Literal::Struct(_data) => unimplemented!(),
             Literal::Enum(_data) => unimplemented!(),
             Literal::Union(_data) => unimplemented!(),
+            Literal::Array(expressions) => unimplemented!(),
         }
     }
     fn set(&mut self, index: &Value, value: &Value) -> Option<Value> {
@@ -913,7 +917,7 @@ impl ValueImpl for InputValue {
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
         match &t.variant {
-            Input(_) | Inferred | Symbolic(_) => true,
+            Input | Inferred | Definition(_, _) => true,
             _ => false,
         }
     }
@@ -934,8 +938,8 @@ impl ValueImpl for OutputValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match &t.variant {
-            Output(_) | Inferred | Symbolic(_) => true,
+        match &t.elements[0].variant {
+            Output | Inferred | Definition(_, _) => true,
             _ => false,
         }
     }
@@ -966,8 +970,8 @@ impl ValueImpl for MessageValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match &t.variant {
-            Message | Inferred | Symbolic(_) => true,
+        match &t.elements[0].variant {
+            Message | Inferred | Definition(_, _) => true,
             _ => false,
         }
     }
@@ -988,8 +992,10 @@ impl ValueImpl for BooleanValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match t.variant {
-            Symbolic(_) | Inferred | Bool | Byte | Short | Int | Long => true,
+        match t.elements[0].variant {
+            Definition(_, _) | Inferred | Bool |
+            UInt8 | UInt16 | UInt32 | UInt64 |
+            SInt8 | SInt16 | SInt32 | SInt64 => true,
             _ => false
         }
     }
@@ -1010,8 +1016,10 @@ impl ValueImpl for ByteValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match t.variant {
-            Symbolic(_) | Inferred | Byte | Short | Int | Long => true,
+        match t.elements[0].variant {
+            Definition(_, _) | Inferred |
+            UInt8 | UInt16 | UInt32 | UInt64 |
+            SInt8 | SInt16 | SInt32 | SInt64 => true,
             _ => false
         }
     }
@@ -1032,8 +1040,10 @@ impl ValueImpl for ShortValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match t.variant {
-            Symbolic(_) | Inferred | Short | Int | Long => true,
+        match t.elements[0].variant {
+            Definition(_, _) | Inferred |
+            UInt16 | UInt32 | UInt64 |
+            SInt16 | SInt32 | SInt64=> true,
             _ => false
         }
     }
@@ -1054,8 +1064,10 @@ impl ValueImpl for IntValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match t.variant {
-            Symbolic(_) | Inferred | Int | Long => true,
+        match t.elements[0].variant {
+            Definition(_, _) | Inferred |
+            UInt32 | UInt64 |
+            SInt32 | SInt64 => true,
             _ => false
         }
     }
@@ -1076,17 +1088,18 @@ impl ValueImpl for LongValue {
     }
     fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
         use ParserTypeVariant::*;
-        match &t.variant {
-            Long | Inferred | Symbolic(_) => true,
+        match &t.elements[0].variant {
+            UInt64 | SInt64 | Inferred | Definition(_, _) => true,
             _ => false,
         }
     }
 }
 
-fn get_array_inner(t: &ParserType) -> Option<ParserTypeId> {
-    match t.variant {
-        ParserTypeVariant::Array(inner) => Some(inner),
-        _ => None
+fn get_array_inner(t: &ParserType) -> Option<ParserTypeVariant> {
+    if t.elements[0].variant == ParserTypeVariant::Array {
+        return Some(t.elements[1].variant.clone())
+    } else {
+        return None;
     }
 }
 
@@ -1333,10 +1346,10 @@ impl Store {
     fn initialize(&mut self, h: &Heap, var: VariableId, value: Value) {
         // Ensure value is compatible with type of variable
         let parser_type = match &h[var] {
-            Variable::Local(v) => v.parser_type,
-            Variable::Parameter(v) => v.parser_type,
+            Variable::Local(v) => &v.parser_type,
+            Variable::Parameter(v) => &v.parser_type,
         };
-        assert!(value.is_type_compatible(h, &h[parser_type]));
+        assert!(value.is_type_compatible(h, parser_type));
         // Overwrite mapping
         self.map.insert(var, value.clone());
     }
@@ -1351,11 +1364,10 @@ impl Store {
             Expression::Variable(var) => {
                 let var = var.declaration.unwrap();
                 // Ensure value is compatible with type of variable
-                let parser_type_id = match &h[var] {
-                    Variable::Local(v) => v.parser_type,
-                    Variable::Parameter(v) => v.parser_type
+                let parser_type = match &h[var] {
+                    Variable::Local(v) => &v.parser_type,
+                    Variable::Parameter(v) => &v.parser_type
                 };
-                let parser_type = &h[parser_type_id];
                 assert!(value.is_type_compatible(h, parser_type));
                 // Overwrite mapping
                 self.map.insert(var, value.clone());
@@ -1388,7 +1400,7 @@ impl Store {
                 let value = self
                     .map
                     .get(&var_id)
-                    .expect(&format!("Uninitialized variable {:?}", String::from_utf8_lossy(&var.identifier.value)));
+                    .expect(&format!("Uninitialized variable {:?}", var.identifier.value.as_str()));
                 Ok(value.clone())
             }
             Expression::Indexing(indexing) => {
@@ -1516,13 +1528,6 @@ impl Store {
             Expression::Indexing(expr) => self.get(h, ctx, expr.this.upcast()),
             Expression::Slicing(_expr) => unimplemented!(),
             Expression::Select(expr) => self.get(h, ctx, expr.this.upcast()),
-            Expression::Array(expr) => {
-                let mut elements = Vec::new();
-                for &elem in expr.elements.iter() {
-                    elements.push(self.eval(h, ctx, elem)?);
-                }
-                todo!()
-            }
             Expression::Literal(expr) => Ok(Value::from_constant(&expr.value)),
             Expression::Call(expr) => match &expr.method {
                 Method::Get => {
@@ -1587,7 +1592,7 @@ pub(crate) struct Prompt {
 impl Prompt {
     pub fn new(h: &Heap, def: DefinitionId, args: &Vec<Value>) -> Self {
         let mut prompt =
-            Prompt { definition: def, store: Store::new(), position: Some((&h[def]).body()) };
+            Prompt { definition: def, store: Store::new(), position: Some((&h[def]).body().upcast()) };
         prompt.set_arguments(h, args);
         prompt
     }
@@ -1597,8 +1602,7 @@ impl Prompt {
         assert_eq!(params.len(), args.len());
         for (param, value) in params.iter().zip(args.iter()) {
             let hparam = &h[*param];
-            let parser_type = &h[hparam.parser_type];
-            assert!(value.is_type_compatible(h, parser_type));
+            assert!(value.is_type_compatible(h, &hparam.parser_type));
             self.store.initialize(h, param.upcast(), value.clone());
         }
     }
@@ -1646,9 +1650,12 @@ impl Prompt {
                 let value = self.store.eval(h, ctx, stmt.test)?;
                 // Continue with either branch
                 if value.as_boolean().0 {
-                    self.position = Some(stmt.true_body);
+                    self.position = Some(stmt.true_body.upcast());
+                } else if let Some(false_body) = stmt.false_body {
+                    self.position = Some(false_body.upcast());
                 } else {
-                    self.position = Some(stmt.false_body);
+                    // No false body
+                    self.position = Some(stmt.end_if.unwrap().upcast());
                 }
                 Err(EvalContinuation::Stepping)
             }
@@ -1662,7 +1669,7 @@ impl Prompt {
                 let value = self.store.eval(h, ctx, stmt.test)?;
                 // Either continue with body, or go to next
                 if value.as_boolean().0 {
-                    self.position = Some(stmt.body);
+                    self.position = Some(stmt.body.upcast());
                 } else {
                     self.position = stmt.end_while.map(|x| x.upcast());
                 }
@@ -1675,7 +1682,7 @@ impl Prompt {
             }
             Statement::Synchronous(stmt) => {
                 // Continue to next statement, and signal upward
-                self.position = Some(stmt.body);
+                self.position = Some(stmt.body.upcast());
                 Err(EvalContinuation::SyncBlockStart)
             }
             Statement::EndSynchronous(stmt) => {
