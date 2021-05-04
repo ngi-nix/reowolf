@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 /// scoped_buffer.rs
 ///
 /// Solves the common pattern where we are performing some kind of recursive
@@ -8,37 +10,35 @@
 /// It is unsafe because we're using pointers to circumvent borrowing rules in
 /// the name of code cleanliness. The correctness of use is checked in debug
 /// mode.
-
-/// The buffer itself. This struct should be the shared buffer. The type `T` is
-/// intentionally `Copy` such that it can be copied out and the underlying
-/// container can be truncated.
-pub(crate) struct ScopedBuffer<T: Sized + Copy> {
+pub(crate) struct ScopedBuffer<T: Sized> {
     pub inner: Vec<T>,
 }
 
 /// A section of the buffer. Keeps track of where we started the section. When
 /// done with the section one must call `into_vec` or `forget` to remove the
 /// section from the underlying buffer.
-pub(crate) struct ScopedSection<T: Sized + Copy> {
+pub(crate) struct ScopedSection<T: Sized> {
     inner: *mut Vec<T>,
     start_size: u32,
     #[cfg(debug_assertions)] cur_size: u32,
 }
 
-impl<T: Sized + Copy> ScopedBuffer<T> {
+impl<T: Sized> ScopedBuffer<T> {
     pub(crate) fn new_reserved(capacity: usize) -> Self {
-        Self{ inner: Vec::with_capacity(capacity) }
+        Self { inner: Vec::with_capacity(capacity) }
     }
 
     pub(crate) fn start_section(&mut self) -> ScopedSection<T> {
         let start_size = self.inner.len() as u32;
-        ScopedSection{
+        ScopedSection {
             inner: &mut self.inner,
             start_size,
             cur_size: start_size
         }
     }
+}
 
+impl<T: Clone> ScopedBuffer<T> {
     pub(crate) fn start_section_initialized(&mut self, initialize_with: &[T]) -> ScopedSection<T> {
         let start_size = self.inner.len() as u32;
         let data_size = initialize_with.len() as u32;
@@ -52,14 +52,14 @@ impl<T: Sized + Copy> ScopedBuffer<T> {
 }
 
 #[cfg(debug_assertions)]
-impl<T: Sized + Copy> Drop for ScopedBuffer<T> {
+impl<T: Sized> Drop for ScopedBuffer<T> {
     fn drop(&mut self) {
         // Make sure that everyone cleaned up the buffer neatly
         debug_assert!(self.inner.is_empty(), "dropped non-empty scoped buffer");
     }
 }
 
-impl<T: Sized + Copy> ScopedSection<T> {
+impl<T: Sized> ScopedSection<T> {
     #[inline]
     pub(crate) fn push(&mut self, value: T) {
         let vec = unsafe{&mut *self.inner};
@@ -71,7 +71,7 @@ impl<T: Sized + Copy> ScopedSection<T> {
     pub(crate) fn len(&self) -> usize {
         let vec = unsafe{&mut *self.inner};
         debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to get section length, but size is larger than expected");
-        return vec.len() - self.start_size;
+        return vec.len() - self.start_size as usize;
     }
 
     #[inline]
@@ -85,23 +85,22 @@ impl<T: Sized + Copy> ScopedSection<T> {
     pub(crate) fn into_vec(self) -> Vec<T> {
         let vec = unsafe{&mut *self.inner};
         debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to turn section into vec, but size is larger than expected");
-        let section = Vec::from(&vec[self.start_size as usize..]);
-        vec.truncate(self.start_size as usize);
+        let section = Vec::from_iter(vec.drain(self.start_size as usize..));
         section
     }
 }
 
-impl<T: Sized + Copy> std::ops::Index<usize> for ScopedSection<T> {
+impl<T: Sized> std::ops::Index<usize> for ScopedSection<T> {
     type Output = T;
 
     fn index(&self, idx: usize) -> &Self::Output {
         let vec = unsafe{&*self.inner};
-        return vec[self.start_size as usize + idx]
+        return &vec[self.start_size as usize + idx]
     }
 }
 
 #[cfg(debug_assertions)]
-impl<T: Sized + Copy> Drop for ScopedSection<T> {
+impl<T: Sized> Drop for ScopedSection<T> {
     fn drop(&mut self) {
         // Make sure that the data was actually taken out of the scoped section
         let vec = unsafe{&*self.inner};

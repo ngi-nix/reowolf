@@ -29,14 +29,6 @@ impl TypeClass {
             TypeClass::Component => "component",
         }
     }
-
-    pub(crate) fn is_data_type(&self) -> bool {
-        *self == TypeClass::Enum || *self == TypeClass::Union || *self == TypeClass::Struct
-    }
-
-    pub(crate) fn is_proc_type(&self) -> bool {
-        *self == TypeClass::Function || *self == TypeClass::Component
-    }
 }
 
 impl std::fmt::Display for TypeClass {
@@ -58,7 +50,6 @@ pub struct DefinedType {
     pub(crate) definition: DefinedTypeVariant,
     pub(crate) poly_vars: Vec<PolymorphicVariable>,
     pub(crate) is_polymorph: bool,
-    pub(crate) is_pointerlike: bool,
     // TODO: @optimize
     pub(crate) monomorphs: Vec<Vec<ConcreteType>>,
 }
@@ -124,7 +115,7 @@ impl DefinedTypeVariant {
     }
 }
 
-struct PolymorphicVariable {
+pub struct PolymorphicVariable {
     identifier: Identifier,
     is_in_use: bool, // a polymorphic argument may be defined, but not used by the type definition
 }
@@ -411,7 +402,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph: false,
-            is_pointerlike: false,
             monomorphs: Vec::new()
         });
 
@@ -490,7 +480,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            is_pointerlike: false, // TODO: @cyclic_types
             monomorphs: Vec::new()
         });
 
@@ -545,7 +534,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            is_pointerlike: false, // TODO: @cyclic
             monomorphs: Vec::new(),
         });
 
@@ -611,7 +599,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            is_pointerlike: false, // TODO: @cyclic
             monomorphs: Vec::new(),
         });
 
@@ -671,7 +658,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            is_pointerlike: false, // TODO: @cyclic
             monomorphs: Vec::new(),
         });
 

@@ -62,20 +62,25 @@ impl PassSymbols {
         });
         module.root_id = root_id;
 
-        // Visit token ranges to detect definitions and pragmas
+        // Retrieve first range index, then make immutable borrow
         let mut range_idx = module_range.first_child_idx;
+        let module = &modules[module_idx];
+
+        // Visit token ranges to detect definitions and pragmas
         loop {
             let range_idx_usize = range_idx as usize;
             let cur_range = &module.tokens.ranges[range_idx_usize];
+            let next_sibling_idx = cur_range.next_sibling_idx;
+            let range_kind = cur_range.range_kind;
 
             // Parse if it is a definition or a pragma
-            if cur_range.range_kind == TokenRangeKind::Definition {
+            if range_kind == TokenRangeKind::Definition {
                 self.visit_definition_range(modules, module_idx, ctx, range_idx_usize)?;
-            } else if cur_range.range_kind == TokenRangeKind::Pragma {
+            } else if range_kind == TokenRangeKind::Pragma {
                 self.visit_pragma_range(modules, module_idx, ctx, range_idx_usize)?;
             }
 
-            match cur_range.next_sibling_idx {
+            match next_sibling_idx {
                 Some(idx) => { range_idx = idx; },
                 None => { break; },
             }
@@ -86,7 +91,7 @@ impl PassSymbols {
         ctx.symbols.insert_scope(None, module_scope);
         for symbol in self.symbols.drain(..) {
             if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(module_scope, symbol) {
-                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, old_symbol))
+                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol))
             }
         }
 
@@ -94,6 +99,8 @@ impl PassSymbols {
         let root = &mut ctx.heap[root_id];
         root.pragmas.extend(self.pragmas.drain(..));
         root.definitions.extend(self.definitions.drain(..));
+
+        let module = &mut modules[module_idx];
         module.phase = ModuleCompilationPhase::SymbolsScanned;
 
         Ok(())
@@ -134,7 +141,7 @@ impl PassSymbols {
                 // Naming conflict
                 let this_module = &modules[module_idx];
                 let other_module = seek_module(modules, other_module_root_id).unwrap();
-                let (other_module_pragma_id, _) = other_module.name.unwrap();
+                let other_module_pragma_id = other_module.name.as_ref().map(|v| (*v).0).unwrap();
                 let other_pragma = ctx.heap[other_module_pragma_id].as_module();
                 return Err(ParseError::new_error_str_at_span(
                     &this_module.source, pragma_span, "conflict in module name"
@@ -183,8 +190,8 @@ impl PassSymbols {
         let identifier = consume_ident_interned(&module.source, &mut iter, ctx)?;
         let mut poly_vars = Vec::new();
         maybe_consume_comma_separated(
-            TokenKind::OpenAngle, TokenKind::CloseAngle, &module.source, &mut iter,
-            |source, iter| consume_ident_interned(source, iter, ctx),
+            TokenKind::OpenAngle, TokenKind::CloseAngle, &module.source, &mut iter, ctx,
+            |source, iter, ctx| consume_ident_interned(source, iter, ctx),
             &mut poly_vars, "a polymorphic variable", None
         )?;
         let ident_text = identifier.value.clone(); // because we need it later

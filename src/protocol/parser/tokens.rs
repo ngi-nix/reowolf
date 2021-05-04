@@ -7,7 +7,7 @@ use crate::protocol::input_source::{
 /// variable-character tokens. Such a token is always followed by a
 /// `TokenKind::SpanEnd` token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum TokenKind {
+pub enum TokenKind {
     // Variable-character tokens, followed by a SpanEnd token
     Ident,          // regular identifier
     Pragma,         // identifier with prefixed `#`, range includes `#`
@@ -32,8 +32,6 @@ pub(crate) enum TokenKind {
     Comma,          // ,
     Dot,            // .
     SemiColon,      // ;
-    Quote,          // '
-    DoubleQuote,    // "
     // Operator-like (single character)
     At,             // @
     Plus,           // +
@@ -117,8 +115,6 @@ impl TokenKind {
             TK::Comma => ",",
             TK::Dot => ".",
             TK::SemiColon => ";",
-            TK::Quote => "'",
-            TK::DoubleQuote => "\"",
             TK::At => "@",
             TK::Plus => "+",
             TK::Minus => "-",
@@ -161,7 +157,7 @@ impl TokenKind {
 }
 
 /// Represents a single token at a particular position.
-pub(crate) struct Token {
+pub struct Token {
     pub kind: TokenKind,
     pub pos: InputPosition,
 }
@@ -173,8 +169,8 @@ impl Token {
 }
 
 /// The kind of token ranges that are specially parsed by the tokenizer.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum TokenRangeKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenRangeKind {
     Module,
     Pragma,
     Import,
@@ -185,7 +181,7 @@ pub(crate) enum TokenRangeKind {
 /// A range of tokens with a specific meaning. Such a range is part of a tree
 /// where each parent tree envelops all of its children.
 #[derive(Debug)]
-pub(crate) struct TokenRange {
+pub struct TokenRange {
     // Index of parent in `TokenBuffer.ranges`, does not have a parent if the
     // range kind is Module, in that case the parent index points to itself.
     pub parent_idx: usize,
@@ -201,7 +197,7 @@ pub(crate) struct TokenRange {
     pub next_sibling_idx: Option<u32>,
 }
 
-pub(crate) struct TokenBuffer {
+pub struct TokenBuffer {
     pub tokens: Vec<Token>,
     pub ranges: Vec<TokenRange>,
 }

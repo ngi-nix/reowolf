@@ -1,5 +1,5 @@
 use std::fmt;
-use std::cell::{Ref, RefCell};
+use std::sync::{RwLock, RwLockReadGuard};
 use std::fmt::Write;
 
 #[derive(Debug, Clone, Copy)]
@@ -38,9 +38,9 @@ pub struct InputSource {
     // State tracking
     pub(crate) had_error: Option<ParseError>,
     // The offset_lookup is built on-demand upon attempting to report an error.
-    // As the compiler is currently not multithreaded, we simply put it in a 
-    // RefCell to allow interior mutability.
-    offset_lookup: RefCell<Vec<u32>>,
+    // Only one procedure will actually create the lookup, afterwards only read
+    // locks will be held.
+    offset_lookup: RwLock<Vec<u32>>,
 }
 
 impl InputSource {
@@ -51,7 +51,7 @@ impl InputSource {
             line: 1,
             offset: 0,
             had_error: None,
-            offset_lookup: RefCell::new(Vec::new()),
+            offset_lookup: RwLock::new(Vec::new()),
         }
     }
 
@@ -129,18 +129,28 @@ impl InputSource {
         }
     }
 
-    fn get_lookup(&self) -> Ref<Vec<u32>> {
+    fn get_lookup(&self) -> RwLockReadGuard<Vec<u32>> {
         // Once constructed the lookup always contains one element. We use this
         // to see if it is constructed already.
-        let lookup = self.offset_lookup.borrow();
+        {
+            let lookup = self.offset_lookup.read().unwrap();
+            if !lookup.is_empty() {
+                return lookup;
+            }
+        }
+
+        // Lookup was not constructed yet
+        let mut lookup = self.offset_lookup.write().unwrap();
         if !lookup.is_empty() {
+            // Somebody created it before we had the chance
+            drop(lookup);
+            let lookup = self.offset_lookup.read().unwrap();
             return lookup;
         }
 
         // Build the line number (!) to offset lookup, so offset by 1. We 
         // assume the entire source file is scanned (most common case) for
         // preallocation.
-        let mut lookup = self.offset_lookup.borrow_mut();
         lookup.reserve(self.line as usize + 2);
         lookup.push(0); // line 0: never used
         lookup.push(0); // first line: first character
@@ -155,7 +165,8 @@ impl InputSource {
         debug_assert_eq!(self.line as usize + 2, lookup.len(), "remove me: i am a testing assert and sometimes invalid");
 
         // Return created lookup
-        let lookup = self.offset_lookup.borrow();
+        drop(lookup);
+        let lookup = self.offset_lookup.read().unwrap();
         return lookup;
     }
 
@@ -355,7 +366,7 @@ impl fmt::Display for ParseErrorStatement {
                 while let Some(cur_line) = lines.next() {
                     context.clear();
                     transform_context(cur_line, &mut context);
-                    writeln!(f, " |  {}", &context);
+                    writeln!(f, " |  {}", &context)?;
                     last_line = cur_line;
                 }
 
@@ -393,10 +404,6 @@ impl fmt::Display for ParseError {
 }
 
 impl ParseError {
-    pub fn empty() -> Self {
-        Self{ statements: Vec::new() }
-    }
-
     pub fn new_error_at_pos(source: &InputSource, position: InputPosition, message: String) -> Self {
         Self{ statements: vec!(ParseErrorStatement::from_source_at_pos(
             StatementKind::Error, source, position, message

@@ -15,7 +15,7 @@ use crate::protocol::{
 struct TestCtx<'a> {
     test_name: &'a str,
     heap: &'a Heap,
-    modules: &'a Vec<LexedModule>,
+    modules: &'a Vec<Module>,
     types: &'a TypeTable,
     symbols: &'a SymbolTable,
 }
@@ -63,10 +63,9 @@ impl Tester {
 
     pub(crate) fn compile(self) -> AstTesterResult {
         let mut parser = Parser::new();
-        for (source_idx, source) in self.sources.into_iter().enumerate() {
+        for source in self.sources.into_iter() {
             let source = source.into_bytes();
-            let input_source = InputSource::new(String::from(""), source)
-                .expect(&format!("parsing source {}", source_idx + 1));
+            let input_source = InputSource::new(String::from(""), source);
 
             if let Err(err) = parser.feed(input_source) {
                 return AstTesterResult::Err(AstErrTester::new(self.test_name, err))
@@ -120,7 +119,7 @@ impl AstTesterResult {
 
 pub(crate) struct AstOkTester {
     test_name: String,
-    modules: Vec<LexedModule>,
+    modules: Vec<Module>,
     heap: Heap,
     symbols: SymbolTable,
     types: TypeTable,
@@ -489,7 +488,7 @@ impl<'a> FunctionTester<'a> {
             &|expr| {
                 if let Expression::Assignment(assign_expr) = expr {
                     if let Expression::Variable(variable_expr) = &self.ctx.heap[assign_expr.left] {
-                        if variable_expr.position.offset == local.identifier.position.offset {
+                        if variable_expr.identifier.span.begin.offset == local.identifier.span.begin.offset {
                             return true;
                         }
                     }
@@ -533,7 +532,7 @@ impl<'a> FunctionTester<'a> {
 
         // Find the first occurrence of the expression after the definition of
         // the function, we'll check that it is included in the body later.
-        let mut outer_match_idx = self.def.position.offset;
+        let mut outer_match_idx = self.def.span.begin.offset as usize;
         while outer_match_idx < module.source.input.len() {
             if module.source.input[outer_match_idx..].starts_with(outer_match.as_bytes()) {
                 break;
@@ -551,7 +550,7 @@ impl<'a> FunctionTester<'a> {
         // Use the inner match index to find the expression
         let expr_id = seek_expr_in_stmt(
             &self.ctx.heap, self.def.body.upcast(),
-            &|expr| expr.position().offset == inner_match_idx
+            &|expr| expr.span().begin.offset as usize == inner_match_idx
         );
         assert!(
             expr_id.is_some(),
@@ -748,7 +747,7 @@ impl<'a> ErrorTester<'a> {
             self.test_name, pattern, self.assert_postfix()
         );
         let pos = pos.unwrap();
-        let col = self.error.statements[idx].position.column;
+        let col = self.error.statements[idx].start_column as usize;
         assert_eq!(
             pos + 1, col,
             "[{}] Expected error to occur at column {}, but found it at {} for {}",
@@ -955,7 +954,7 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
     serialize_recursive(buffer, heap, poly_vars, concrete, 0);
 }
 
-fn seek_def_in_modules<'a>(heap: &Heap, modules: &'a [LexedModule], def_id: DefinitionId) -> Option<&'a LexedModule> {
+fn seek_def_in_modules<'a>(heap: &Heap, modules: &'a [Module], def_id: DefinitionId) -> Option<&'a Module> {
     for module in modules {
         let root = &heap.protocol_descriptions[module.root_id];
         for definition in &root.definitions {
@@ -1069,7 +1068,7 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
             }
             None
         },
-        Expression::Variable(expr) => {
+        Expression::Variable(_expr) => {
             None
         }
     }
@@ -1109,10 +1108,12 @@ fn seek_expr_in_stmt<F: Fn(&Expression) -> bool>(heap: &Heap, start: StatementId
             seek_expr_in_stmt(heap, stmt.body.upcast(), f)
         },
         Statement::Return(stmt) => {
-            seek_expr_in_expr(heap, stmt.expression, f)
-        },
-        Statement::Assert(stmt) => {
-            seek_expr_in_expr(heap, stmt.expression, f)
+            for expr_id in &stmt.expressions {
+                if let Some(id) = seek_expr_in_expr(heap, *expr_id, f) {
+                    return Some(id);
+                }
+            }
+            None
         },
         Statement::New(stmt) => {
             seek_expr_in_expr(heap, stmt.expression.upcast(), f)

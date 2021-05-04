@@ -24,10 +24,10 @@ const ONE: Value = Value::Byte(ByteValue(1));
 // TODO: All goes one day anyway, so dirty typechecking hack
 trait ValueImpl {
     fn exact_type(&self) -> Type;
-    fn is_type_compatible(&self, h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible(&self, h: &Heap, t: &[ParserTypeElement]) -> bool {
         Self::is_type_compatible_hack(h, t)
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool;
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool;
 }
 
 #[derive(Debug, Clone)]
@@ -93,7 +93,7 @@ impl Value {
             Literal::Struct(_data) => unimplemented!(),
             Literal::Enum(_data) => unimplemented!(),
             Literal::Union(_data) => unimplemented!(),
-            Literal::Array(expressions) => unimplemented!(),
+            Literal::Array(_expressions) => unimplemented!(),
         }
     }
     fn set(&mut self, index: &Value, value: &Value) -> Option<Value> {
@@ -851,7 +851,7 @@ impl ValueImpl for Value {
             Value::LongArray(val) => val.exact_type(),
         }
     }
-    fn is_type_compatible(&self, h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible(&self, h: &Heap, t: &[ParserTypeElement]) -> bool {
         match self {
             Value::Unassigned => true,
             Value::Input(_) => InputValue::is_type_compatible_hack(h, t),
@@ -872,7 +872,7 @@ impl ValueImpl for Value {
             Value::LongArray(_) => LongArrayValue::is_type_compatible_hack(h, t),
         }
     }
-    fn is_type_compatible_hack(_h: &Heap, _t: &ParserType) -> bool { false }
+    fn is_type_compatible_hack(_h: &Heap, _t: &[ParserTypeElement]) -> bool { false }
 }
 
 impl Display for Value {
@@ -914,9 +914,9 @@ impl ValueImpl for InputValue {
     fn exact_type(&self) -> Type {
         Type::INPUT
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match &t.variant {
+        match &t[0].variant {
             Input | Inferred | Definition(_, _) => true,
             _ => false,
         }
@@ -936,9 +936,9 @@ impl ValueImpl for OutputValue {
     fn exact_type(&self) -> Type {
         Type::OUTPUT
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match &t.elements[0].variant {
+        match &t[0].variant {
             Output | Inferred | Definition(_, _) => true,
             _ => false,
         }
@@ -968,9 +968,9 @@ impl ValueImpl for MessageValue {
     fn exact_type(&self) -> Type {
         Type::MESSAGE
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match &t.elements[0].variant {
+        match &t[0].variant {
             Message | Inferred | Definition(_, _) => true,
             _ => false,
         }
@@ -990,9 +990,9 @@ impl ValueImpl for BooleanValue {
     fn exact_type(&self) -> Type {
         Type::BOOLEAN
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match t.elements[0].variant {
+        match &t[0].variant {
             Definition(_, _) | Inferred | Bool |
             UInt8 | UInt16 | UInt32 | UInt64 |
             SInt8 | SInt16 | SInt32 | SInt64 => true,
@@ -1014,9 +1014,9 @@ impl ValueImpl for ByteValue {
     fn exact_type(&self) -> Type {
         Type::BYTE
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match t.elements[0].variant {
+        match &t[0].variant {
             Definition(_, _) | Inferred |
             UInt8 | UInt16 | UInt32 | UInt64 |
             SInt8 | SInt16 | SInt32 | SInt64 => true,
@@ -1038,9 +1038,9 @@ impl ValueImpl for ShortValue {
     fn exact_type(&self) -> Type {
         Type::SHORT
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match t.elements[0].variant {
+        match &t[0].variant {
             Definition(_, _) | Inferred |
             UInt16 | UInt32 | UInt64 |
             SInt16 | SInt32 | SInt64=> true,
@@ -1062,9 +1062,9 @@ impl ValueImpl for IntValue {
     fn exact_type(&self) -> Type {
         Type::INT
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match t.elements[0].variant {
+        match t[0].variant {
             Definition(_, _) | Inferred |
             UInt32 | UInt64 |
             SInt32 | SInt64 => true,
@@ -1086,18 +1086,18 @@ impl ValueImpl for LongValue {
     fn exact_type(&self) -> Type {
         Type::LONG
     }
-    fn is_type_compatible_hack(_h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(_h: &Heap, t: &[ParserTypeElement]) -> bool {
         use ParserTypeVariant::*;
-        match &t.elements[0].variant {
+        match &t[0].variant {
             UInt64 | SInt64 | Inferred | Definition(_, _) => true,
             _ => false,
         }
     }
 }
 
-fn get_array_inner(t: &ParserType) -> Option<ParserTypeVariant> {
-    if t.elements[0].variant == ParserTypeVariant::Array {
-        return Some(t.elements[1].variant.clone())
+fn get_array_inner(t: &[ParserTypeElement]) -> Option<&[ParserTypeElement]> {
+    if t[0].variant == ParserTypeVariant::Array {
+        return Some(&t[1..])
     } else {
         return None;
     }
@@ -1125,9 +1125,9 @@ impl ValueImpl for InputArrayValue {
     fn exact_type(&self) -> Type {
         Type::INPUT_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| InputValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| InputValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1154,9 +1154,9 @@ impl ValueImpl for OutputArrayValue {
     fn exact_type(&self) -> Type {
         Type::OUTPUT_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| OutputValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| OutputValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1183,9 +1183,9 @@ impl ValueImpl for MessageArrayValue {
     fn exact_type(&self) -> Type {
         Type::MESSAGE_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| MessageValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| MessageValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1212,9 +1212,9 @@ impl ValueImpl for BooleanArrayValue {
     fn exact_type(&self) -> Type {
         Type::BOOLEAN_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| BooleanValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| BooleanValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1241,9 +1241,9 @@ impl ValueImpl for ByteArrayValue {
     fn exact_type(&self) -> Type {
         Type::BYTE_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| ByteValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| ByteValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1270,9 +1270,9 @@ impl ValueImpl for ShortArrayValue {
     fn exact_type(&self) -> Type {
         Type::SHORT_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| ShortValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| ShortValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1299,9 +1299,9 @@ impl ValueImpl for IntArrayValue {
     fn exact_type(&self) -> Type {
         Type::INT_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| IntValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| IntValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1328,9 +1328,9 @@ impl ValueImpl for LongArrayValue {
     fn exact_type(&self) -> Type {
         Type::LONG_ARRAY
     }
-    fn is_type_compatible_hack(h: &Heap, t: &ParserType) -> bool {
+    fn is_type_compatible_hack(h: &Heap, t: &[ParserTypeElement]) -> bool {
         get_array_inner(t)
-            .map(|v| LongValue::is_type_compatible_hack(h, &h[v]))
+            .map(|v| LongValue::is_type_compatible_hack(h, v))
             .unwrap_or(false)
     }
 }
@@ -1349,7 +1349,7 @@ impl Store {
             Variable::Local(v) => &v.parser_type,
             Variable::Parameter(v) => &v.parser_type,
         };
-        assert!(value.is_type_compatible(h, parser_type));
+        assert!(value.is_type_compatible(h, &parser_type.elements));
         // Overwrite mapping
         self.map.insert(var, value.clone());
     }
@@ -1368,7 +1368,7 @@ impl Store {
                     Variable::Local(v) => &v.parser_type,
                     Variable::Parameter(v) => &v.parser_type
                 };
-                assert!(value.is_type_compatible(h, parser_type));
+                assert!(value.is_type_compatible(h, &parser_type.elements));
                 // Overwrite mapping
                 self.map.insert(var, value.clone());
                 Ok(value)
@@ -1458,7 +1458,7 @@ impl Store {
                 }
                 Ok(value)
             }
-            Expression::Binding(expr) => {
+            Expression::Binding(_expr) => {
                 unimplemented!("eval binding expression");
             }
             Expression::Conditional(expr) => {
@@ -1561,8 +1561,22 @@ impl Store {
                     assert_eq!(1, expr.arguments.len());
                     let length = self.eval(h, ctx, expr.arguments[0])?;
                     Ok(Value::create_message(length))
-                }
-                Method::Symbolic(_symbol) => unimplemented!(),
+                },
+                Method::Length => {
+                    todo!("implement")
+                },
+                Method::Assert => {
+                    let value = self.eval(h, ctx, expr.arguments[0])?;
+                    if value.as_boolean().0 {
+                        // Return bogus
+                        Ok(Value::Unassigned)
+                    } else {
+                        // Failed assertion
+                        Err(EvalContinuation::Inconsistent)
+                    }
+                },
+                Method::UserFunction => unimplemented!(),
+                Method::UserComponent => unreachable!(),
             },
             Expression::Variable(expr) => self.get(h, ctx, expr.this.upcast()),
         }
@@ -1602,7 +1616,7 @@ impl Prompt {
         assert_eq!(params.len(), args.len());
         for (param, value) in params.iter().zip(args.iter()) {
             let hparam = &h[*param];
-            assert!(value.is_type_compatible(h, &hparam.parser_type));
+            assert!(value.is_type_compatible(h, &hparam.parser_type.elements));
             self.store.initialize(h, param.upcast(), value.clone());
         }
     }
@@ -1633,11 +1647,6 @@ impl Prompt {
                 }
                 // Continue to next statement
                 self.position = stmt.next();
-                Err(EvalContinuation::Stepping)
-            }
-            Statement::Skip(stmt) => {
-                // Continue to next statement
-                self.position = stmt.next;
                 Err(EvalContinuation::Stepping)
             }
             Statement::Labeled(stmt) => {
@@ -1700,21 +1709,10 @@ impl Prompt {
                 self.position = stmt.target.map(WhileStatementId::upcast);
                 Err(EvalContinuation::Stepping)
             }
-            Statement::Assert(stmt) => {
-                // Evaluate expression
-                let value = self.store.eval(h, ctx, stmt.expression)?;
-                if value.as_boolean().0 {
-                    // Continue to next statement
-                    self.position = stmt.next;
-                    Err(EvalContinuation::Stepping)
-                } else {
-                    // Assertion failed: inconsistent
-                    Err(EvalContinuation::Inconsistent)
-                }
-            }
             Statement::Return(stmt) => {
                 // Evaluate expression
-                let value = self.store.eval(h, ctx, stmt.expression)?;
+                debug_assert_eq!(stmt.expressions.len(), 1);
+                let value = self.store.eval(h, ctx, stmt.expressions[0])?;
                 // Done with evaluation
                 Ok(value)
             }
@@ -1732,8 +1730,8 @@ impl Prompt {
                 }
                 self.position = stmt.next;
                 match &expr.method {
-                    Method::Symbolic(symbolic) => {
-                         Err(EvalContinuation::NewComponent(symbolic.definition.unwrap(), args))
+                    Method::UserComponent => {
+                         Err(EvalContinuation::NewComponent(expr.definition, args))
                     },
                     _ => unreachable!("not a symbolic call expression")
                 }

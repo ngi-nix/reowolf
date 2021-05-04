@@ -55,7 +55,7 @@ impl PassImport {
     }
 
     pub(crate) fn visit_import_range(
-        &mut self, modules: &mut [Module], module_idx: usize, ctx: &mut PassCtx, range_idx: usize
+        &mut self, modules: &[Module], module_idx: usize, ctx: &mut PassCtx, range_idx: usize
     ) -> Result<(), ParseError> {
         let module = &modules[module_idx];
         let import_range = &module.tokens.ranges[range_idx];
@@ -116,6 +116,16 @@ impl PassImport {
             ) -> Result<(AliasedSymbol, SymbolDefinition), ParseError> {
                 // Consume symbol name and make sure it points to an existing definition
                 let symbol_identifier = consume_ident_interned(source, iter, ctx)?;
+
+                // Consume alias text if specified
+                let alias_identifier = if peek_ident(source, iter) == Some(b"as") {
+                    // Consume alias
+                    iter.consume();
+                    Some(consume_ident_interned(source, iter, ctx)?)
+                } else {
+                    None
+                };
+
                 let target = ctx.symbols.get_symbol_by_name_defined_in_scope(
                     SymbolScope::Module(module_root_id), symbol_identifier.value.as_bytes()
                 );
@@ -132,15 +142,6 @@ impl PassImport {
                 let target = target.unwrap();
                 debug_assert_ne!(target.class(), SymbolClass::Module);
                 let target_definition = target.variant.as_definition();
-
-                // Consume alias text if specified
-                let alias_identifier = if peek_ident(source, iter) == b"as" {
-                    // Consume alias
-                    iter.consume();
-                    Some(consume_ident_interned(source, iter, ctx)?)
-                } else {
-                    None
-                };
 
                 Ok((
                     AliasedSymbol{
@@ -160,7 +161,12 @@ impl PassImport {
                 let (imported_symbol, symbol_definition) = consume_symbol_and_maybe_alias(
                     &module.source, &mut iter, ctx, &module_identifier.value, target_root_id
                 )?;
-                let alias_identifier = imported_symbol.alias.unwrap_or_else(|| { imported_symbol.name.clone() });
+
+                let alias_identifier = match imported_symbol.alias.as_ref() {
+                    Some(alias) => alias.clone(),
+                    None => imported_symbol.name.clone(),
+                };
+
                 import_id = ctx.heap.alloc_import(|this| Import::Symbols(ImportSymbols{
                     this,
                     span: InputSpan::from_positions(import_span.begin, alias_identifier.span.end),
@@ -176,15 +182,15 @@ impl PassImport {
                     }
                 ) {
                     return Err(construct_symbol_conflict_error(
-                        modules, module_idx, ctx, &new_symbol, old_symbol
+                        modules, module_idx, ctx, &new_symbol, &old_symbol
                     ));
                 }
             } else if Some(TokenKind::OpenCurly) == next {
                 // Importing multiple symbols
                 let mut end_of_list = iter.last_valid_pos();
                 consume_comma_separated(
-                    TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, &mut iter,
-                    |source, iter| consume_symbol_and_maybe_alias(
+                    TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, &mut iter, ctx,
+                    |source, iter, ctx| consume_symbol_and_maybe_alias(
                         source, iter, ctx, &module_identifier.value, target_root_id
                     ),
                     &mut self.found_symbols, "a symbol", "a list of symbols to import", Some(&mut end_of_list)
@@ -204,10 +210,11 @@ impl PassImport {
                 let import = ctx.heap[import_id].as_symbols_mut();
 
                 for (imported_symbol, symbol_definition) in self.found_symbols.drain(..) {
-                    let import_name = imported_symbol.alias.map_or_else(
-                        || imported_symbol.name.value.clone(),
-                        |v| v.value.clone()
-                    );
+                    let import_name = match imported_symbol.alias.as_ref() {
+                        Some(import) => import.value.clone(),
+                        None => imported_symbol.name.value.clone()
+                    };
+
                     import.symbols.push(imported_symbol);
                     if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(
                         SymbolScope::Module(module.root_id), Symbol{
@@ -215,7 +222,7 @@ impl PassImport {
                             variant: SymbolVariant::Definition(symbol_definition.into_imported(import_id))
                         }
                     ) {
-                        return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, old_symbol));
+                        return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol));
                     }
                 }
             } else if Some(TokenKind::Star) == next {
@@ -247,7 +254,7 @@ impl PassImport {
                     match symbol.variant {
                         SymbolVariant::Definition(symbol_definition) => {
                             import.symbols.push(AliasedSymbol{
-                                name: Identifier{ span: star_span, value: symbol.name.clone() },
+                                name: Identifier{ span: star_span, value: symbol_name.clone() },
                                 alias: None,
                                 definition_id: symbol_definition.definition_id,
                             });
@@ -259,7 +266,7 @@ impl PassImport {
                                     variant: SymbolVariant::Definition(symbol_definition.into_imported(import_id))
                                 }
                             ) {
-                                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, old_symbol));
+                                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol));
                             }
                         },
                         _ => unreachable!(),
@@ -289,13 +296,15 @@ impl PassImport {
                 alias: alias_identifier,
                 module_id: target_root_id,
             }));
-            ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
+            if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
                 name: alias,
                 variant: SymbolVariant::Module(SymbolModule{
                     root_id: target_root_id,
                     introduced_at: import_id
                 })
-            });
+            }) {
+                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol));
+            }
         }
 
         // By now the `import_id` is set, just need to make sure that the import

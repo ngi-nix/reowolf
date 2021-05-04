@@ -58,6 +58,7 @@ macro_rules! define_new_ast_id {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name (pub(crate) $parent);
 
+        #[allow(dead_code)]
         impl $name {
             pub(crate) fn new_invalid() -> Self     { Self(<$parent>::new_invalid()) }
             pub(crate) fn is_invalid(&self) -> bool { self.0.is_invalid() }
@@ -356,7 +357,7 @@ impl Display for Identifier {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParserTypeVariant {
     // Basic builtin
     Message,
@@ -379,16 +380,23 @@ pub enum ParserTypeVariant {
 
 impl ParserTypeVariant {
     pub(crate) fn num_embedded(&self) -> usize {
+        use ParserTypeVariant::*;
+
         match self {
-            x if *x <= ParserTypeVariant::Inferred => 0,
-            x if *x <= ParserTypeVariant::Output => 1,
-            ParserTypeVariant::PolymorphicArgument(_, _) => 0,
-            ParserTypeVariant::Definition(_, num) => num,
-            _ => { debug_assert!(false); 0 },
+            Message | Bool |
+            UInt8 | UInt16 | UInt32 | UInt64 |
+            SInt8 | SInt16 | SInt32 | SInt64 |
+            Character | String | IntegerLiteral |
+            Inferred | PolymorphicArgument(_, _) =>
+                0,
+            Array | Input | Output =>
+                1,
+            Definition(_, num) => *num,
         }
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ParserTypeElement {
     // TODO: @cleanup, do we ever need the span of a user-defined type after
     //  constructing it?
@@ -403,6 +411,61 @@ pub struct ParserTypeElement {
 #[derive(Debug, Clone)]
 pub struct ParserType {
     pub elements: Vec<ParserTypeElement>
+}
+
+impl ParserType {
+    pub(crate) fn iter_embedded(&self, parent_idx: usize) -> ParserTypeIter {
+        ParserTypeIter::new(&self.elements, parent_idx)
+    }
+}
+
+/// Iterator over the embedded elements of a specific element.
+pub struct ParserTypeIter<'a> {
+    pub elements: &'a [ParserTypeElement],
+    pub cur_embedded_idx: usize,
+}
+
+impl<'a> ParserTypeIter<'a> {
+    fn new(elements: &'a [ParserTypeElement], parent_idx: usize) -> Self {
+        debug_assert!(parent_idx < elements.len(), "parent index exceeds number of elements in ParserType");
+        if elements[0].variant.num_embedded() == 0 {
+            // Parent element does not have any embedded types, place
+            // `cur_embedded_idx` at end so we will always return `None`
+            Self{ elements, cur_embedded_idx: elements.len() }
+        } else {
+            // Parent element has an embedded type
+            Self{ elements, cur_embedded_idx: parent_idx + 1 }
+        }
+    }
+}
+
+impl<'a> Iterator for ParserTypeIter<'a> {
+    type Item = &'a [ParserTypeElement];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let elements_len = self.elements.len();
+        if self.cur_embedded_idx >= elements_len {
+            return None;
+        }
+
+        // Seek to the end of the subtree
+        let mut depth = 1;
+        let start_element = self.cur_embedded_idx;
+        while self.cur_embedded_idx < elements_len {
+            let cur_element = &self.elements[self.cur_embedded_idx];
+            let depth_change = cur_element.variant.num_embedded() as i32 - 1;
+            depth += depth_change;
+            debug_assert!(depth >= 0, "illegally constructed ParserType: {:?}", self.elements);
+
+            self.cur_embedded_idx += 1;
+            if depth == 0 {
+                break;
+            }
+        }
+
+        debug_assert!(depth == 0, "illegally constructed ParserType: {:?}", self.elements);
+        return Some(&self.elements[start_element..self.cur_embedded_idx]);
+    }
 }
 
 /// Specifies whether the symbolic type points to an actual user-defined type,
@@ -776,19 +839,17 @@ impl Definition {
         }
     }
     pub fn parameters(&self) -> &Vec<ParameterId> {
-        // TODO: Fix this
-        static EMPTY_VEC: Vec<ParameterId> = Vec::new();
         match self {
             Definition::Component(com) => &com.parameters,
             Definition::Function(fun) => &fun.parameters,
-            _ => &EMPTY_VEC,
+            _ => panic!("cannot retrieve parameters for {:?}", self),
         }
     }
     pub fn body(&self) -> BlockStatementId {
         match self {
             Definition::Component(com) => com.body,
             Definition::Function(fun) => fun.body,
-            _ => panic!("cannot retrieve body (for EnumDefinition/UnionDefinition or StructDefinition)")
+            _ => panic!("cannot retrieve body for {:?}", self),
         }
     }
     pub fn poly_vars(&self) -> &Vec<Identifier> {
@@ -1209,7 +1270,7 @@ impl BlockStatement {
                 // nested synchronous statements are flagged illegal,
                 // and that happens before resolving variables that
                 // creates the parent_scope references in the first place.
-                Some(h[parent].parent_scope(h).unwrap().to_block())
+                Some(h[parent].parent_scope.unwrap().to_block())
             }
             Scope::Regular(parent) => {
                 // A variable scope is either a definition, sync, or block.
@@ -1426,6 +1487,15 @@ pub enum ExpressionParent {
     New(NewStatementId),
     ExpressionStmt(ExpressionStatementId),
     Expression(ExpressionId, u32) // index within expression (e.g LHS or RHS of expression)
+}
+
+impl ExpressionParent {
+    pub fn is_new(&self) -> bool {
+        match self {
+            ExpressionParent::New(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1762,14 +1832,14 @@ pub struct CallExpression {
     pub this: CallExpressionId,
     // Phase 1: parser
     pub span: InputSpan,
-    pub parser_type: ParserType, // of the function call
+    pub parser_type: ParserType, // of the function call, not the return type
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
     pub definition: DefinitionId,
     // Phase 2: linker
     pub parent: ExpressionParent,
     // Phase 3: type checking
-    pub concrete_type: ConcreteType,
+    pub concrete_type: ConcreteType, // of the return type
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

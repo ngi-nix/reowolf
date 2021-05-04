@@ -126,23 +126,9 @@ impl SymbolVariant {
         }
     }
 
-    pub(crate) fn as_module(&self) -> &SymbolModule {
-        match self {
-            SymbolVariant::Module(v) => v,
-            SymbolVariant::Definition(_) => unreachable!("called 'as_module' on {:?}", self),
-        }
-    }
-
     pub(crate) fn as_definition(&self) -> &SymbolDefinition {
         match self {
-            SymbolVariant::Module(v) => unreachable!("called 'as_definition' on {:?}", self),
-            SymbolVariant::Definition(v) => v,
-        }
-    }
-
-    pub(crate) fn as_definition_mut(&mut self) -> &mut SymbolDefinition {
-        match self {
-            SymbolVariant::Module(v) => unreachable!("called 'as_definition_mut' on {:?}", self),
+            SymbolVariant::Module(_) => unreachable!("called 'as_definition' on {:?}", self),
             SymbolVariant::Definition(v) => v,
         }
     }
@@ -223,14 +209,15 @@ impl SymbolTable {
     /// exist in the scope or any of its parents. If it does collide then the
     /// symbol will be returned, together with the symbol that has the same
     /// name.
-    pub(crate) fn insert_symbol(&mut self, in_scope: SymbolScope, symbol: Symbol) -> Result<(), (Symbol, &Symbol)> {
+    // Note: we do not return a reference because Rust doesn't like it.
+    pub(crate) fn insert_symbol(&mut self, in_scope: SymbolScope, symbol: Symbol) -> Result<(), (Symbol, Symbol)> {
         debug_assert!(self.scope_lookup.contains_key(&in_scope), "inserting symbol {}, but scope {:?} does not exist", symbol.name.as_str(), in_scope);
         let mut seek_scope = in_scope;
         loop {
             let scoped_symbols = self.scope_lookup.get(&seek_scope).unwrap();
             for existing_symbol in scoped_symbols.symbols.iter() {
                 if symbol.name == existing_symbol.name {
-                    return Err((symbol, existing_symbol))
+                    return Err((symbol, existing_symbol.clone()))
                 }
             }
 

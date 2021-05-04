@@ -2,7 +2,6 @@ use crate::protocol::input_source::{
     InputSource as InputSource,
     ParseError,
     InputPosition as InputPosition,
-    InputSpan
 };
 
 use super::tokens::*;
@@ -157,7 +156,7 @@ impl PassTokenizer {
                     assert_ne!(cur_range.last_child_idx, parent_idx as u32);
 
                     let mut child_counter = 0u32;
-                    let mut last_child_idx = cur_range.first_child_idx;
+                    let last_child_idx = cur_range.first_child_idx;
                     let mut child_idx = Some(cur_range.first_child_idx);
                     while let Some(cur_child_idx) = child_idx {
                         let child_range = &target.ranges[cur_child_idx as usize];
@@ -372,7 +371,10 @@ impl PassTokenizer {
             }
         } else if first_char == b'}' {
             source.consume();
-            token_kind = TokenKind::CloseCurly
+            token_kind = TokenKind::CloseCurly;
+        } else if first_char == b'~' {
+            source.consume();
+            token_kind = TokenKind::Tilde;
         } else {
             self.check_ascii(source)?;
             return Ok(None);
@@ -626,6 +628,7 @@ impl PassTokenizer {
 
     /// Pushes a new token range onto the stack in the buffers.
     fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: u32) {
+        let new_range_idx = target.ranges.len() as u32;
         let cur_range = &mut target.ranges[self.stack_idx];
 
         // If we have just popped a range and then push a new range, then the
@@ -635,14 +638,13 @@ impl PassTokenizer {
         // intermediate "code" range.
         if cur_range.end != first_token {
             let code_start = cur_range.end;
-            let code_range_idx = target.ranges.len() as u32;
 
             if cur_range.first_child_idx == self.stack_idx as u32 {
                 // The parent of the new "code" range we're going to push does
                 // not have any registered children yet.
-                cur_range.first_child_idx = code_range_idx;
+                cur_range.first_child_idx = new_range_idx;
             }
-            cur_range.last_child_idx = code_range_idx + 1;
+            cur_range.last_child_idx = new_range_idx + 1;
 
             cur_range.end = first_token;
             cur_range.num_child_ranges += 1;
@@ -653,15 +655,14 @@ impl PassTokenizer {
                 start: code_start,
                 end: first_token,
                 num_child_ranges: 0,
-                first_child_idx: code_range_idx,
-                last_child_idx: code_range_idx,
-                next_sibling_idx: Some(code_range_idx + 1), // we're going to push this thing next
+                first_child_idx: new_range_idx,
+                last_child_idx: new_range_idx,
+                next_sibling_idx: Some(new_range_idx + 1), // we're going to push this thing next
             });
         } else {
             // We're going to push the range in the code below, but while we
             // have the `cur_range` borrowed mutably, we fix up its children
             // indices.
-            let new_range_idx = target.ranges.len() as u32;
             if cur_range.first_child_idx == self.stack_idx as u32 {
                 cur_range.first_child_idx = new_range_idx;
             }

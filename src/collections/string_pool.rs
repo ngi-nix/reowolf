@@ -1,6 +1,8 @@
 use std::ptr::null_mut;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use std::fmt::{Debug, Display, Result as FmtResult};
+use crate::common::Formatter;
 
 const SLAB_SIZE: usize = u16::MAX as usize;
 
@@ -10,6 +12,10 @@ pub struct StringRef<'a> {
     length: usize,
     _phantom: PhantomData<&'a [u8]>,
 }
+
+// As the StringRef is an immutable thing:
+unsafe impl Sync for StringRef<'_> {}
+unsafe impl Send for StringRef<'_> {}
 
 impl<'a> StringRef<'a> {
     /// `new` constructs a new StringRef whose data is not owned by the
@@ -38,6 +44,20 @@ impl<'a> StringRef<'a> {
     }
 }
 
+impl<'a> Debug for StringRef<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str("StringRef{ value: ")?;
+        f.write_str(self.as_str())?;
+        f.write_str(" }")
+    }
+}
+
+impl<'a> Display for StringRef<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.write_str(self.as_str())
+    }
+}
+
 impl PartialEq for StringRef<'_> {
     fn eq(&self, other: &StringRef) -> bool {
         self.as_str() == other.as_str()
@@ -48,9 +68,7 @@ impl Eq for StringRef<'_> {}
 
 impl Hash for StringRef<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        unsafe{
-            state.write(self.as_bytes());
-        }
+        state.write(self.as_bytes());
     }
 }
 

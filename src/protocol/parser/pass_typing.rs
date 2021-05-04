@@ -60,6 +60,7 @@ use crate::protocol::ast::*;
 use crate::protocol::input_source::ParseError;
 use crate::protocol::parser::ModuleCompilationPhase;
 use crate::protocol::parser::type_table::*;
+use crate::protocol::parser::token_parsing::*;
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
@@ -147,15 +148,16 @@ impl InferenceTypePart {
         // TODO: @float
         use InferenceTypePart as ITP;
         match self {
-            ITP::Byte | ITP::Short | ITP::Int | ITP::Long => true,
+            ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
+            ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 => true,
             _ => false,
         }
     }
 
     fn is_concrete_integer(&self) -> bool {
         use InferenceTypePart as ITP;
-        match self {
-            ITP::Byte | ITP::Short | ITP::Int | ITP::Long => true,
+        match self {ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
+        ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 => true,
             _ => false,
         }
     }
@@ -196,8 +198,9 @@ impl InferenceTypePart {
         match &self {
             ITP::Unknown | ITP::NumberLike | ITP::IntegerLike |
             ITP::Void | ITP::Bool |
-            ITP::Byte | ITP::Short | ITP::Int | ITP::Long | 
-            ITP::String => {
+            ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
+            ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 |
+            ITP::Character | ITP::String => {
                 -1
             },
             ITP::MarkerDefinition(_) | ITP::MarkerBody(_) |
@@ -225,10 +228,15 @@ impl From<ConcreteTypePart> for InferenceTypePart {
             CTP::Void => ITP::Void,
             CTP::Message => ITP::Message,
             CTP::Bool => ITP::Bool,
-            CTP::Byte => ITP::Byte,
-            CTP::Short => ITP::Short,
-            CTP::Int => ITP::Int,
-            CTP::Long => ITP::Long,
+            CTP::UInt8 => ITP::UInt8,
+            CTP::UInt16 => ITP::UInt16,
+            CTP::UInt32 => ITP::UInt32,
+            CTP::UInt64 => ITP::UInt64,
+            CTP::SInt8 => ITP::SInt8,
+            CTP::SInt16 => ITP::SInt16,
+            CTP::SInt32 => ITP::SInt32,
+            CTP::SInt64 => ITP::SInt64,
+            CTP::Character => ITP::Character,
             CTP::String => ITP::String,
             CTP::Array => ITP::Array,
             CTP::Slice => ITP::Slice,
@@ -635,10 +643,15 @@ impl InferenceType {
                 ITP::Void => CTP::Void,
                 ITP::Message => CTP::Message,
                 ITP::Bool => CTP::Bool,
-                ITP::Byte => CTP::Byte,
-                ITP::Short => CTP::Short,
-                ITP::Int => CTP::Int,
-                ITP::Long => CTP::Long,
+                ITP::UInt8 => CTP::UInt8,
+                ITP::UInt16 => CTP::UInt16,
+                ITP::UInt32 => CTP::UInt32,
+                ITP::UInt64 => CTP::UInt64,
+                ITP::SInt8 => CTP::SInt8,
+                ITP::SInt16 => CTP::SInt16,
+                ITP::SInt32 => CTP::SInt32,
+                ITP::SInt64 => CTP::SInt64,
+                ITP::Character => CTP::Character,
                 ITP::String => CTP::String,
                 ITP::Array => CTP::Array,
                 ITP::Slice => CTP::Slice,
@@ -669,26 +682,32 @@ impl InferenceType {
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
             },
             ITP::Unknown => buffer.push_str("?"),
-            ITP::NumberLike => buffer.push_str("num?"),
-            ITP::IntegerLike => buffer.push_str("int?"),
+            ITP::NumberLike => buffer.push_str("numberlike"),
+            ITP::IntegerLike => buffer.push_str("integerlike"),
             ITP::ArrayLike => {
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
                 buffer.push_str("[?]");
             },
             ITP::PortLike => {
-                buffer.push_str("port?<");
+                buffer.push_str("portlike<");
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
                 buffer.push('>');
             }
             ITP::Void => buffer.push_str("void"),
-            ITP::Bool => buffer.push_str("bool"),
-            ITP::Byte => buffer.push_str("byte"),
-            ITP::Short => buffer.push_str("short"),
-            ITP::Int => buffer.push_str("int"),
-            ITP::Long => buffer.push_str("long"),
-            ITP::String => buffer.push_str("str"),
+            ITP::Bool => buffer.push_str(KW_TYPE_BOOL_STR),
+            ITP::UInt8 => buffer.push_str(KW_TYPE_UINT8_STR),
+            ITP::UInt16 => buffer.push_str(KW_TYPE_UINT16_STR),
+            ITP::UInt32 => buffer.push_str(KW_TYPE_UINT32_STR),
+            ITP::UInt64 => buffer.push_str(KW_TYPE_UINT64_STR),
+            ITP::SInt8 => buffer.push_str(KW_TYPE_SINT8_STR),
+            ITP::SInt16 => buffer.push_str(KW_TYPE_SINT16_STR),
+            ITP::SInt32 => buffer.push_str(KW_TYPE_SINT32_STR),
+            ITP::SInt64 => buffer.push_str(KW_TYPE_SINT64_STR),
+            ITP::Character => buffer.push_str(KW_TYPE_CHAR_STR),
+            ITP::String => buffer.push_str(KW_TYPE_STRING_STR),
             ITP::Message => {
-                buffer.push_str("msg<");
+                buffer.push_str(KW_TYPE_MESSAGE_STR);
+                buffer.push('<');
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
                 buffer.push('>');
             },
@@ -701,12 +720,14 @@ impl InferenceType {
                 buffer.push_str("[..]");
             },
             ITP::Input => {
-                buffer.push_str("in<");
+                buffer.push_str(KW_TYPE_IN_PORT_STR);
+                buffer.push('<');
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
                 buffer.push('>');
             },
             ITP::Output => {
-                buffer.push_str("out<");
+                buffer.push_str(KW_TYPE_OUT_PORT_STR);
+                buffer.push('<');
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
                 buffer.push('>');
             },
@@ -884,7 +905,7 @@ impl VarData {
 impl PassTyping {
     pub(crate) fn new() -> Self {
         PassTyping {
-            definition_type: DefinitionType::None,
+            definition_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             poly_vars: Vec::new(),
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expr_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
@@ -943,7 +964,7 @@ impl PassTyping {
     }
 
     fn reset(&mut self) {
-        self.definition_type = DefinitionType::None;
+        self.definition_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
         self.poly_vars.clear();
         self.stmt_buffer.clear();
         self.expr_buffer.clear();
@@ -964,12 +985,12 @@ impl Visitor2 for PassTyping {
         debug_assert_eq!(comp_def.poly_vars.len(), self.poly_vars.len(), "component polyvars do not match imposed polyvars");
 
         debug_log!("{}", "-".repeat(50));
-        debug_log!("Visiting component '{}': {}", &String::from_utf8_lossy(&comp_def.identifier.value), id.0.index);
+        debug_log!("Visiting component '{}': {}", comp_def.identifier.value.as_str(), id.0.index);
         debug_log!("{}", "-".repeat(50));
 
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let var_type = self.determine_inference_type_from_parser_type(ctx, &param.parser_type, true);
+            let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
             debug_assert!(var_type.is_done, "expected component arguments to be concrete types");
             self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
         }
@@ -985,12 +1006,12 @@ impl Visitor2 for PassTyping {
         debug_assert_eq!(func_def.poly_vars.len(), self.poly_vars.len(), "function polyvars do not match imposed polyvars");
 
         debug_log!("{}", "-".repeat(50));
-        debug_log!("Visiting function '{}': {}", &String::from_utf8_lossy(&func_def.identifier.value), id.0.index);
+        debug_log!("Visiting function '{}': {}", func_def.identifier.value.as_str(), id.0.index);
         debug_log!("{}", "-".repeat(50));
 
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
-            let var_type = self.determine_inference_type_from_parser_type(ctx, &param.parser_type, true);
+            let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
             debug_assert!(var_type.is_done, "expected function arguments to be concrete types");
             self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
         }
@@ -1016,7 +1037,7 @@ impl Visitor2 for PassTyping {
         let memory_stmt = &ctx.heap[id];
 
         let local = &ctx.heap[memory_stmt.variable];
-        let var_type = self.determine_inference_type_from_parser_type(ctx, &local.parser_type, true);
+        let var_type = self.determine_inference_type_from_parser_type_elements(&local.parser_type.elements, true);
         self.var_types.insert(memory_stmt.variable.upcast(), VarData::new_local(var_type));
 
         Ok(())
@@ -1026,11 +1047,11 @@ impl Visitor2 for PassTyping {
         let channel_stmt = &ctx.heap[id];
 
         let from_local = &ctx.heap[channel_stmt.from];
-        let from_var_type = self.determine_inference_type_from_parser_type(ctx, &from_local.parser_type, true);
+        let from_var_type = self.determine_inference_type_from_parser_type_elements(&from_local.parser_type.elements, true);
         self.var_types.insert(from_local.this.upcast(), VarData::new_channel(from_var_type, channel_stmt.to.upcast()));
 
         let to_local = &ctx.heap[channel_stmt.to];
-        let to_var_type = self.determine_inference_type_from_parser_type(ctx, &to_local.parser_type, true);
+        let to_var_type = self.determine_inference_type_from_parser_type_elements(&to_local.parser_type.elements, true);
         self.var_types.insert(to_local.this.upcast(), VarData::new_channel(to_var_type, channel_stmt.from.upcast()));
 
         Ok(())
@@ -1079,7 +1100,8 @@ impl Visitor2 for PassTyping {
 
     fn visit_return_stmt(&mut self, ctx: &mut Ctx, id: ReturnStatementId) -> VisitorResult {
         let return_stmt = &ctx.heap[id];
-        let expr_id = return_stmt.expression;
+        debug_assert_eq!(return_stmt.expressions.len(), 1);
+        let expr_id = return_stmt.expressions[0];
 
         self.visit_expr(ctx, expr_id)
     }
@@ -1328,7 +1350,6 @@ impl PassTyping {
         let definition_id = match &self.definition_type {
             DefinitionType::Component(id) => id.upcast(),
             DefinitionType::Function(id) => id.upcast(),
-            _ => unreachable!(),
         };
 
         let already_checked = ctx.types.get_base_definition(&definition_id).unwrap().has_any_monomorph();
@@ -1336,7 +1357,7 @@ impl PassTyping {
             if !expr_type.is_done {
                 // Auto-infer numberlike/integerlike types to a regular int
                 if expr_type.parts.len() == 1 && expr_type.parts[0] == InferenceTypePart::IntegerLike {
-                    expr_type.parts[0] = InferenceTypePart::Int;
+                    expr_type.parts[0] = InferenceTypePart::SInt32;
                 } else {
                     let expr = &ctx.heap[*expr_id];
                     return Err(ParseError::new_error_at_span(
@@ -1404,8 +1425,8 @@ impl PassTyping {
                 match &ctx.heap[*expr_id] {
                     Expression::Call(call_expr) => {
                         // Add to type table if not yet typechecked
-                        if let Method::Symbolic(symbolic) = &call_expr.method {
-                            let definition_id = symbolic.definition.unwrap();
+                        if call_expr.method == Method::UserFunction {
+                            let definition_id = call_expr.definition;
                             if !ctx.types.has_monomorph(&definition_id, &monomorph_types) {
                                 let root_id = ctx.types
                                     .get_base_definition(&definition_id)
@@ -1428,9 +1449,9 @@ impl PassTyping {
                     },
                     Expression::Literal(lit_expr) => {
                         let definition_id = match &lit_expr.value {
-                            Literal::Struct(literal) => literal.definition.as_ref().unwrap(),
-                            Literal::Enum(literal) => literal.definition.as_ref().unwrap(),
-                            Literal::Union(literal) => literal.definition.as_ref().unwrap(),
+                            Literal::Struct(literal) => &literal.definition,
+                            Literal::Enum(literal) => &literal.definition,
+                            Literal::Union(literal) => &literal.definition,
                             _ => unreachable!("post-inference monomorph for non-struct, non-enum literal")
                         };
                         if !ctx.types.has_monomorph(definition_id, &monomorph_types) {
@@ -1451,7 +1472,7 @@ impl PassTyping {
                 let id = expr.this;
                 self.progress_assignment_expr(ctx, id)
             },
-            Expression::Binding(expr) => {
+            Expression::Binding(_expr) => {
                 unimplemented!("progress binding expression");
             },
             Expression::Conditional(expr) => {
@@ -1955,12 +1976,12 @@ impl PassTyping {
                 self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?
             },
             Literal::Character(_) => {
+                self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?;
                 todo!("check character literal type inference");
-                self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?
             },
             Literal::String(_) => {
+                self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?;
                 todo!("check string literal type inference");
-                self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?
             },
             Literal::Struct(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
@@ -2230,13 +2251,7 @@ impl PassTyping {
         let expr = &ctx.heap[id];
         let extra = self.extra_data.get_mut(&upcast_id).unwrap();
 
-        debug_log!("Call expr '{}': {}", match &expr.method {
-            Method::Create => String::from("create"),
-            Method::Fires => String::from("fires"),
-            Method::Get => String::from("get"),
-            Method::Put => String::from("put"),
-            Method::Symbolic(method) => String::from_utf8_lossy(&method.identifier.value).to_string()
-        },upcast_id.index);
+        debug_log!("Call expr '{}': {}", ctx.heap[expr.definition].identifier().value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
         debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
         debug_log!(" * During (inferring types from arguments and return type):");
@@ -2343,7 +2358,7 @@ impl PassTyping {
         let var_expr = &ctx.heap[id];
         let var_id = var_expr.declaration.unwrap();
 
-        debug_log!("Variable expr '{}': {}", &String::from_utf8_lossy(&ctx.heap[var_id].identifier().value), upcast_id.index);
+        debug_log!("Variable expr '{}': {}", ctx.heap[var_id].identifier().value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
         debug_log!("   - Var  type: {}", self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
         debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
@@ -2765,8 +2780,9 @@ impl PassTyping {
             EP::Return(_) =>
                 // Must match the return type of the function
                 if let DefinitionType::Function(func_id) = self.definition_type {
-                    let return_parser_type_id = ctx.heap[func_id].return_type;
-                    self.determine_inference_type_from_parser_type(ctx, return_parser_type_id, true)
+                    debug_assert_eq!(ctx.heap[func_id].return_types.len(), 1);
+                    let returned = &ctx.heap[func_id].return_types[0];
+                    self.determine_inference_type_from_parser_type_elements(&returned.elements, true)
                 } else {
                     // Cannot happen: definition always set upon body traversal
                     // and "return" calls in components are illegal.
@@ -2803,8 +2819,6 @@ impl PassTyping {
     fn insert_initial_call_polymorph_data(
         &mut self, ctx: &mut Ctx, call_id: CallExpressionId
     ) {
-        use InferenceTypePart as ITP;
-
         // Note: the polymorph variables may be partially specified and may
         // contain references to the wrapping definition's (i.e. the proctype
         // we are currently visiting) polymorphic arguments.
@@ -2816,84 +2830,50 @@ impl PassTyping {
         // we are calling.
         let call = &ctx.heap[call_id];
 
-        // Handle the polymorphic variables themselves
-        let mut poly_vars = Vec::with_capacity(call.poly_args.len());
-        for poly_arg_type_id in call.poly_args.clone() { // TODO: @performance
-            poly_vars.push(self.determine_inference_type_from_parser_type(ctx, poly_arg_type_id, true));
+        // Handle the polymorphic arguments (if there are any)
+        let num_poly_args = call.parser_type.elements[0].variant.num_embedded();
+        let mut poly_args = Vec::with_capacity(num_poly_args);
+        for embedded_elements in call.parser_type.iter_embedded(0) {
+            poly_args.push(self.determine_inference_type_from_parser_type_elements(embedded_elements, true));
         }
 
-        // Handle the arguments
-        // TODO: @cleanup: Maybe factor this out for reuse in the validator/linker, should also
-        //  make the code slightly more robust.
-        let (embedded_types, return_type) = match &call.method {
-            Method::Create => {
-                // Not polymorphic
-                (
-                    vec![InferenceType::new(false, true, vec![ITP::Int])],
-                    InferenceType::new(false, true, vec![ITP::Message, ITP::Byte])
-                )
+        // Handle the arguments and return types
+        let definition = &ctx.heap[call.definition];
+        let (parameters, returned) = match definition {
+            Definition::Component(definition) => {
+                debug_assert_eq!(poly_args.len(), definition.poly_vars.len());
+                (&definition.parameters, None)
             },
-            Method::Fires => {
-                // bool fires<T>(PortLike<T> arg)
-                (
-                    vec![InferenceType::new(true, false, vec![ITP::PortLike, ITP::MarkerBody(0), ITP::Unknown])],
-                    InferenceType::new(false, true, vec![ITP::Bool])
-                )
+            Definition::Function(definition) => {
+                debug_assert_eq!(poly_args.len(), definition.poly_vars.len());
+                (&definition.parameters, Some(&definition.return_types))
             },
-            Method::Get => {
-                // T get<T>(input<T> arg)
-                (
-                    vec![InferenceType::new(true, false, vec![ITP::Input, ITP::MarkerBody(0), ITP::Unknown])],
-                    InferenceType::new(true, false, vec![ITP::MarkerBody(0), ITP::Unknown])
-                )
+            Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => {
+                unreachable!("insert_initial_call_polymorph data for non-procedure type");
             },
-            Method::Put => {
-                // void Put<T>(output<T> port, T msg)
-                (
-                    vec![
-                        InferenceType::new(true, false, vec![ITP::Output, ITP::MarkerBody(0), ITP::Unknown]),
-                        InferenceType::new(true, false, vec![ITP::MarkerBody(0), ITP::Unknown])
-                    ],
-                    InferenceType::new(false, true, vec![ITP::Void])
-                )
-            }
-            Method::Symbolic(symbolic) => {
-                let definition = &ctx.heap[symbolic.definition.unwrap()];
+        };
 
-                match definition {
-                    Definition::Component(definition) => {
-                        debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
-                        let mut parameter_types = Vec::with_capacity(definition.parameters.len());
-                        for param_id in definition.parameters.clone() {
-                            let param = &ctx.heap[param_id];
-                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, &param.parser_type, false));
-                        }
+        let mut parameter_types = Vec::with_capacity(parameters.len());
+        for parameter_id in parameters.clone().into_iter() { // TODO: @Performance
+            let param = &ctx.heap[parameter_id];
+            parameter_types.push(self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, false));
+        }
 
-                        (parameter_types, InferenceType::new(false, true, vec![InferenceTypePart::Void]))
-                    },
-                    Definition::Function(definition) => {
-                        debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
-                        let mut parameter_types = Vec::with_capacity(definition.parameters.len());
-                        for param_id in definition.parameters.clone() {
-                            let param = &ctx.heap[param_id];
-                            parameter_types.push(self.determine_inference_type_from_parser_type(ctx, &param.parser_type, false));
-                        }
-
-                        debug_assert_eq!(definition.return_types.len(), 1, "multiple return types not yet implemented");
-
-                        let return_type = self.determine_inference_type_from_parser_type(ctx, &definition.return_types[0], false);
-                        (parameter_types, return_type)
-                    },
-                    Definition::Struct(_) | Definition::Enum(_) | Definition::Union(_) => {
-                        unreachable!("insert initial polymorph data for struct/enum/union");
-                    }
-                }
+        let return_type = match returned {
+            None => {
+                // Component, so returns a "Void"
+                InferenceType::new(false, true, vec![InferenceTypePart::Void])
+            },
+            Some(returned) => {
+                debug_assert_eq!(returned.len(), 1);
+                let returned = &returned[0];
+                self.determine_inference_type_from_parser_type_elements(&returned.elements, false)
             }
         };
 
         self.extra_data.insert(call_id.upcast(), ExtraData {
-            poly_vars,
-            embedded: embedded_types,
+            poly_vars: poly_args,
+            embedded: parameter_types,
             returned: return_type
         });
     }
@@ -2905,35 +2885,28 @@ impl PassTyping {
         let literal = ctx.heap[lit_id].value.as_struct();
 
         // Handle polymorphic arguments
-        let mut poly_vars = Vec::with_capacity(literal.poly_args2.len());
+        let num_embedded = literal.parser_type.elements[0].variant.num_embedded();
         let mut total_num_poly_parts = 0;
-        for poly_arg_type_id in literal.poly_args2.clone() { // TODO: @performance
-            let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, poly_arg_type_id, true
-            ); 
-            total_num_poly_parts += inference_type.parts.len();
-            poly_vars.push(inference_type);
+        let mut poly_args = Vec::with_capacity(num_embedded);
+
+        for embedded_elements in literal.parser_type.iter_embedded(0) {
+            let poly_type = self.determine_inference_type_from_parser_type_elements(embedded_elements, true);
+            total_num_poly_parts += poly_type.parts.len();
+            poly_args.push(poly_type);
         }
 
         // Handle parser types on struct definition
-        let definition = &ctx.heap[literal.definition.unwrap()];
-        let definition = match definition {
-            Definition::Struct(definition) => {
-                debug_assert_eq!(poly_vars.len(), definition.poly_vars.len());
-                definition
-            },
-            _ => unreachable!("definition for struct literal does not point to struct definition")
-        };
+        let defined_type = ctx.types.get_base_definition(&literal.definition).unwrap();
+        let struct_type = defined_type.definition.as_struct();
+        debug_assert_eq!(poly_args.len(), defined_type.poly_vars.len());
 
         // Note: programmer is capable of specifying fields in a struct literal
         // in a different order than on the definition. We take the literal-
         // specified order to be leading.
-        let mut embedded_types = Vec::with_capacity(definition.fields.len());
+        let mut embedded_types = Vec::with_capacity(struct_type.fields.len());
         for lit_field in literal.fields.iter() {
-            let def_field = &definition.fields[lit_field.field_idx];
-            let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, &def_field.parser_type, false
-            );
+            let def_field = &struct_type.fields[lit_field.field_idx];
+            let inference_type = self.determine_inference_type_from_parser_type_elements(&def_field.parser_type.elements, false);
             embedded_types.push(inference_type);
         }
 
@@ -2942,11 +2915,11 @@ impl PassTyping {
         // - 1 part for definition
         // - N_poly_arg marker parts for each polymorphic argument
         // - all the parts for the currently known polymorphic arguments 
-        let parts_reserved = 1 + poly_vars.len() + total_num_poly_parts;
+        let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(definition.this.upcast(), poly_vars.len()));
+        parts.push(ITP::Instance(literal.definition, poly_args.len()));
         let mut return_type_done = true;
-        for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+        for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { return_type_done = false; }
 
             parts.push(ITP::MarkerBody(poly_var_idx));
@@ -2954,10 +2927,10 @@ impl PassTyping {
         }
 
         debug_assert_eq!(parts.len(), parts_reserved);
-        let return_type = InferenceType::new(!poly_vars.is_empty(), return_type_done, parts);
+        let return_type = InferenceType::new(!poly_args.is_empty(), return_type_done, parts);
 
         self.extra_data.insert(lit_id.upcast(), ExtraData{
-            poly_vars, 
+            poly_vars: poly_args,
             embedded: embedded_types,
             returned: return_type,
         });
@@ -2973,22 +2946,22 @@ impl PassTyping {
         let literal = ctx.heap[lit_id].value.as_enum();
 
         // Handle polymorphic arguments to the enum
-        let mut poly_vars = Vec::with_capacity(literal.poly_args2.len());
+        let num_poly_args = literal.parser_type.elements[0].variant.num_embedded();
         let mut total_num_poly_parts = 0;
-        for poly_arg_type_id in literal.poly_args2.clone() { // TODO: @performance
-            let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, poly_arg_type_id, true
-            );
-            total_num_poly_parts += inference_type.parts.len();
-            poly_vars.push(inference_type);
+        let mut poly_args = Vec::with_capacity(num_poly_args);
+
+        for embedded_elements in literal.parser_type.iter_embedded(0) {
+            let poly_type = self.determine_inference_type_from_parser_type_elements(embedded_elements, true);
+            total_num_poly_parts += poly_type.parts.len();
+            poly_args.push(poly_type);
         }
 
         // Handle enum type itself
-        let parts_reserved = 1 + poly_vars.len() + total_num_poly_parts;
+        let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(literal.definition.unwrap(), poly_vars.len()));
+        parts.push(ITP::Instance(literal.definition, poly_args.len()));
         let mut enum_type_done = true;
-        for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+        for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { enum_type_done = false; }
 
             parts.push(ITP::MarkerBody(poly_var_idx));
@@ -2996,10 +2969,10 @@ impl PassTyping {
         }
 
         debug_assert_eq!(parts.len(), parts_reserved);
-        let enum_type = InferenceType::new(!poly_vars.is_empty(), enum_type_done, parts);
+        let enum_type = InferenceType::new(!poly_args.is_empty(), enum_type_done, parts);
 
         self.extra_data.insert(lit_id.upcast(), ExtraData{
-            poly_vars,
+            poly_vars: poly_args,
             embedded: Vec::new(),
             returned: enum_type,
         });
@@ -3014,50 +2987,48 @@ impl PassTyping {
         let literal = ctx.heap[lit_id].value.as_union();
 
         // Construct the polymorphic variables
-        let mut poly_vars = Vec::with_capacity(literal.poly_args2.len());
+        let num_poly_args = literal.parser_type.elements[0].variant.num_embedded();
         let mut total_num_poly_parts = 0;
-        for poly_arg_type_id in literal.poly_args2.clone() { // TODO: @performance
-            let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, poly_arg_type_id, true
-            );
-            total_num_poly_parts += inference_type.parts.len();
-            poly_vars.push(inference_type);
+        let mut poly_args = Vec::with_capacity(num_poly_args);
+
+        for embedded_elements in literal.parser_type.iter_embedded(0) {
+            let poly_type = self.determine_inference_type_from_parser_type_elements(embedded_elements, true);
+            total_num_poly_parts += poly_type.parts.len();
+            poly_args.push(poly_type);
         }
 
         // Handle any of the embedded values in the variant, if specified
-        let definition_id = literal.definition.unwrap();
-        let union_definition = ctx.types.get_base_definition(&definition_id)
-            .unwrap()
-            .definition.as_union();
+        let definition_id = literal.definition;
+        let type_definition = ctx.types.get_base_definition(&definition_id).unwrap();
+        let union_definition = type_definition.definition.as_union();
+        debug_assert_eq!(poly_args.len(), type_definition.poly_vars.len());
+
         let variant_definition = &union_definition.variants[literal.variant_idx];
         debug_assert_eq!(variant_definition.embedded.len(), literal.values.len());
 
         let mut embedded = Vec::with_capacity(variant_definition.embedded.len());
         for embedded_parser_type in &variant_definition.embedded {
-            let inference_type = self.determine_inference_type_from_parser_type(
-                ctx, embedded_parser_type, false
-            );
+            let inference_type = self.determine_inference_type_from_parser_type_elements(&embedded_parser_type.elements, false);
             embedded.push(inference_type);
         }
 
         // Handle the type of the union itself
-        let parts_reserved = 1 + poly_vars.len() + total_num_poly_parts;
+        let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(definition_id, poly_vars.len()));
+        parts.push(ITP::Instance(definition_id, poly_args.len()));
         let mut union_type_done = true;
-        for (poly_var_idx, poly_var) in poly_vars.iter().enumerate() {
+        for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { union_type_done = false; }
 
             parts.push(ITP::MarkerBody(poly_var_idx));
-            
             parts.extend(poly_var.parts.iter().cloned());
         }
 
         debug_assert_eq!(parts_reserved, parts.len());
-        let union_type = InferenceType::new(!poly_vars.is_empty(), union_type_done, parts);
+        let union_type = InferenceType::new(!poly_args.is_empty(), union_type_done, parts);
 
         self.extra_data.insert(lit_id.upcast(), ExtraData{
-            poly_vars,
+            poly_vars: poly_args,
             embedded,
             returned: union_type
         });
@@ -3079,6 +3050,7 @@ impl PassTyping {
         let field_idx = field.field_idx;
 
         // Generate initial polyvar types and struct type
+        // TODO: @Performance: we can immediately set the polyvars of the subject's struct type
         let num_poly_vars = definition.poly_vars.len();
         let mut poly_vars = Vec::with_capacity(num_poly_vars);
         let struct_parts_reserved = 1 + 2 * num_poly_vars;
@@ -3095,10 +3067,7 @@ impl PassTyping {
         debug_assert_eq!(struct_parts.len(), struct_parts_reserved);
 
         // Generate initial field type
-        let field_type = self.determine_inference_type_from_parser_type(
-            ctx, &definition.fields[field_idx].parser_type, false
-        );
-
+        let field_type = self.determine_inference_type_from_parser_type_elements(&definition.fields[field_idx].parser_type.elements, false);
         self.extra_data.insert(select_id.upcast(), ExtraData{
             poly_vars,
             embedded: vec![InferenceType::new(num_poly_vars != 0, num_poly_vars == 0, struct_parts)],
@@ -3118,18 +3087,18 @@ impl PassTyping {
     ///     variables in the called/instantiated type's definition.
     /// In the second case we place InferenceTypePart::Marker instances such
     /// that we can perform type inference on the polymorphic variables.
-    fn determine_inference_type_from_parser_type(
-        &mut self, ctx: &Ctx, parser_type: &ParserType,
+    fn determine_inference_type_from_parser_type_elements(
+        &mut self, elements: &[ParserTypeElement],
         parser_type_in_body: bool
     ) -> InferenceType {
         use ParserTypeVariant as PTV;
         use InferenceTypePart as ITP;
 
-        let mut infer_type = Vec::with_capacity(parser_type.elements.len());
+        let mut infer_type = Vec::with_capacity(elements.len());
         let mut has_inferred = false;
         let mut has_markers = false;
 
-        for element in &parser_type.elements {
+        for element in elements {
             match &element.variant {
                 PTV::Message => {
                     // TODO: @types Remove the Message -> Byte hack at some point...
@@ -3160,7 +3129,7 @@ impl PassTyping {
                     if parser_type_in_body {
                         // Refers to polymorphic argument on procedure we're currently processing.
                         // This argument is already known.
-                        debug_assert_eq!(belongs_to_definition, self.definition_type.definition_id());
+                        debug_assert_eq!(*belongs_to_definition, self.definition_type.definition_id());
                         debug_assert!((poly_arg_idx as usize) < self.poly_vars.len());
 
                         infer_type.push(ITP::MarkerDefinition(poly_arg_idx as usize));
@@ -3203,7 +3172,7 @@ impl PassTyping {
                 "incompatible types: this expression expected a '{}'",
                 expr_type.display_name(&ctx.heap)
             )
-        ).with_postfixed_info(
+        ).with_info_at_span(
             &ctx.module.source, arg_expr.span(), format!(
                 "but this expression yields a '{}'",
                 arg_type.display_name(&ctx.heap)
@@ -3313,9 +3282,9 @@ impl PassTyping {
                 },
                 Expression::Literal(expr) => {
                     let definition_id = match &expr.value {
-                        Literal::Struct(v) => v.definition.unwrap(),
-                        Literal::Enum(v) => v.definition.unwrap(),
-                        Literal::Union(v) => v.definition.unwrap(),
+                        Literal::Struct(v) => v.definition,
+                        Literal::Enum(v) => v.definition,
+                        Literal::Union(v) => v.definition,
                         _ => unreachable!(),
                     };
 
@@ -3331,7 +3300,7 @@ impl PassTyping {
                     let field = expr.field.as_symbolic();
                     let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, field.definition.unwrap());
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.position(), format!(
+                        &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
                             poly_var, field.identifier.value.as_str(), struct_name
                         )
@@ -3433,7 +3402,7 @@ impl PassTyping {
                             InferenceType::partial_display_name(&ctx.heap, section_arg)
                         )
                     )
-                    .with_postfixed_info(
+                    .with_info_at_span(
                         &ctx.module.source, expr.span(), format!(
                             "While the {} inferred it to '{}'",
                             expr_return_name,

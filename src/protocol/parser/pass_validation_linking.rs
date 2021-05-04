@@ -263,8 +263,9 @@ impl Visitor2 for PassValidationLinking {
 
         // If here then we are within a function
         debug_assert_eq!(self.expr_parent, ExpressionParent::None);
+        debug_assert_eq!(ctx.heap[id].expressions.len(), 1);
         self.expr_parent = ExpressionParent::Return(id);
-        self.visit_expr(ctx, ctx.heap[id].expression)?;
+        self.visit_expr(ctx, ctx.heap[id].expressions[0])?;
         self.expr_parent = ExpressionParent::None;
 
         Ok(())
@@ -284,8 +285,8 @@ impl Visitor2 for PassValidationLinking {
             let sync_stmt = &ctx.heap[self.in_sync.unwrap()];
             return Err(
                 ParseError::new_error_str_at_span(&ctx.module.source, goto_stmt.span, "goto may not escape the surrounding synchronous block")
-                .with_postfixed_info(&ctx.module.source, target.label.span, "this is the target of the goto statement")
-                .with_postfixed_info(&ctx.module.source, sync_stmt.span, "which will jump past this statement")
+                .with_info_str_at_span(&ctx.module.source, target.label.span, "this is the target of the goto statement")
+                .with_info_str_at_span(&ctx.module.source, sync_stmt.span, "which will jump past this statement")
             );
         }
 
@@ -481,9 +482,11 @@ impl Visitor2 for PassValidationLinking {
                     // Find field in the struct definition
                     let field_idx = struct_definition.fields.iter().position(|v| v.identifier == field.identifier);
                     if field_idx.is_none() {
+                        let field_span = field.identifier.span;
+                        let literal = ctx.heap[id].value.as_struct();
                         let ast_definition = &ctx.heap[literal.definition];
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, field.identifier.span, format!(
+                            &ctx.module.source, field_span, format!(
                                 "This field does not exist on the struct '{}'",
                                 ast_definition.identifier().value.as_str()
                             )
@@ -493,8 +496,8 @@ impl Visitor2 for PassValidationLinking {
 
                     // Check if specified more than once
                     if specified[field.field_idx] {
-                        return Err(ParseError::new_error(
-                            &ctx.module.source, field.identifier.position,
+                        return Err(ParseError::new_error_str_at_span(
+                            &ctx.module.source, field.identifier.span,
                             "This field is specified more than once"
                         ));
                     }
@@ -551,6 +554,7 @@ impl Visitor2 for PassValidationLinking {
                 });
 
                 if variant_idx.is_none() {
+                    let literal = ctx.heap[id].value.as_enum();
                     let ast_definition = ctx.heap[literal.definition].as_enum();
                     return Err(ParseError::new_error_at_span(
                         &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
@@ -571,6 +575,7 @@ impl Visitor2 for PassValidationLinking {
                     v.identifier == literal.variant
                 });
                 if variant_idx.is_none() {
+                    let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
                         &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
@@ -586,6 +591,7 @@ impl Visitor2 for PassValidationLinking {
                 // number of embedded values in the union variant.
                 let union_variant = &union_definition.variants[literal.variant_idx];
                 if union_variant.embedded.len() != literal.values.len() {
+                    let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
                         &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
@@ -618,7 +624,7 @@ impl Visitor2 for PassValidationLinking {
                 let expr_section = self.expression_buffer.start_section_initialized(literal);
                 for expr_idx in 0..expr_section.len() {
                     let expr_id = expr_section[expr_idx];
-                    self.expr_parent = ExpressionParent::Expression(upcast_id, expr_id as u32);
+                    self.expr_parent = ExpressionParent::Expression(upcast_id, expr_idx as u32);
                     self.visit_expr(ctx, expr_id)?;
                 }
 
@@ -703,17 +709,17 @@ impl Visitor2 for PassValidationLinking {
         }
 
         if expected_wrapping_new_stmt {
-            if self.expr_parent != ExpressionParent::New {
+            if !self.expr_parent.is_new() {
                 return Err(ParseError::new_error_str_at_span(
                     &ctx.module.source, call_expr.span,
                     "cannot call a component, it can only be instantiated by using 'new'"
                 ));
             }
         } else {
-            if self.expr_parent == ExpressionParent::New {
+            if self.expr_parent.is_new() {
                 return Err(ParseError::new_error_str_at_span(
                     &ctx.module.source, call_expr.span,
-                    "only components can be instantiated"
+                    "only components can be instantiated, this is a function"
                 ));
             }
         }
@@ -723,7 +729,7 @@ impl Visitor2 for PassValidationLinking {
         let num_expected_args = match &call_definition.definition {
             DefinedTypeVariant::Function(definition) => definition.arguments.len(),
             DefinedTypeVariant::Component(definition) => definition.arguments.len(),
-            v => unreachable!("encountered {:?} type in call expression", v),
+            v => unreachable!("encountered {} type in call expression", v.type_class()),
         };
 
         let num_provided_args = call_expr.arguments.len();
@@ -828,8 +834,9 @@ impl PassValidationLinking {
             }
             Statement::Labeled(stmt) => {
                 let stmt_id = stmt.this;
+                let body_id = stmt.body;
                 self.checked_label_add(ctx, relative_pos, self.in_sync, stmt_id)?;
-                self.visit_statement_for_locals_labels_and_in_sync(ctx, relative_pos, stmt.body)?;
+                self.visit_statement_for_locals_labels_and_in_sync(ctx, relative_pos, body_id)?;
             },
             Statement::While(stmt) => {
                 stmt.in_sync = self.in_sync;
@@ -855,10 +862,10 @@ impl PassValidationLinking {
             let ident = &ctx.heap[id].identifier;
             if let Some(symbol) = ctx.symbols.get_symbol_by_name(cur_scope, &ident.value.as_bytes()) {
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, symbol.variant.span_of_introduction(&ctx.heap),
+                    &ctx.module.source, ident.span,
                     "local variable declaration conflicts with symbol"
-                ).with_postfixed_info(
-                    &ctx.module.source, symbol.position, "the conflicting symbol is introduced here"
+                ).with_info_str_at_span(
+                    &ctx.module.source, symbol.variant.span_of_introduction(&ctx.heap), "the conflicting symbol is introduced here"
                 ));
             }
         }
@@ -885,8 +892,11 @@ impl PassValidationLinking {
                     local.identifier == other_local.identifier {
                     // Collision within this scope
                     return Err(
-                        ParseError::new_error(&ctx.module.source, local.position, "Local variable name conflicts with another variable")
-                            .with_postfixed_info(&ctx.module.source, other_local.position, "Previous variable is found here")
+                        ParseError::new_error_str_at_span(
+                            &ctx.module.source, local.identifier.span, "Local variable name conflicts with another variable"
+                        ).with_info_str_at_span(
+                            &ctx.module.source, other_local.identifier.span, "Previous variable is found here"
+                        )
                     );
                 }
             }
@@ -900,8 +910,11 @@ impl PassValidationLinking {
                     let parameter = &ctx.heap[*parameter_id];
                     if local.identifier == parameter.identifier {
                         return Err(
-                            ParseError::new_error(&ctx.module.source, local.position, "Local variable name conflicts with parameter")
-                                .with_postfixed_info(&ctx.module.source, parameter.position, "Parameter definition is found here")
+                            ParseError::new_error_str_at_span(
+                                &ctx.module.source, local.identifier.span, "Local variable name conflicts with parameter"
+                            ).with_info_str_at_span(
+                                &ctx.module.source, parameter.span, "Parameter definition is found here"
+                            )
                         );
                     }
                 }
@@ -937,7 +950,7 @@ impl PassValidationLinking {
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
                 
-                if local.relative_pos_in_block < relative_pos && identifier.matches_identifier(&local.identifier) {
+                if local.relative_pos_in_block < relative_pos && identifier == &local.identifier {
                     return Ok(local_id.upcast());
                 }
             }
@@ -951,7 +964,7 @@ impl PassValidationLinking {
                         let definition = &ctx.heap[*definition_id];
                         for parameter_id in definition.parameters() {
                             let parameter = &ctx.heap[*parameter_id];
-                            if identifier.matches_identifier(&parameter.identifier) {
+                            if identifier == &parameter.identifier {
                                 return Ok(parameter_id.upcast());
                             }
                         }
@@ -980,7 +993,7 @@ impl PassValidationLinking {
         label.relative_pos_in_block = relative_pos;
         label.in_sync = in_sync;
 
-        let label = &*label;
+        let label = &ctx.heap[id];
         let mut scope = self.cur_scope.as_ref().unwrap();
 
         loop {
@@ -992,7 +1005,7 @@ impl PassValidationLinking {
                     // Collision
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, label.label.span, "label name is used more than once"
-                    ).with_postfixed_info(
+                    ).with_info_str_at_span(
                         &ctx.module.source, other_label.label.span, "the other label is found here"
                     ));
                 }
@@ -1036,8 +1049,8 @@ impl PassValidationLinking {
                         if local.relative_pos_in_block > relative_scope_pos && local.relative_pos_in_block < label.relative_pos_in_block {
                             return Err(
                                 ParseError::new_error_str_at_span(&ctx.module.source, identifier.span, "this target label skips over a variable declaration")
-                                .with_postfixed_info(&ctx.module.source, label.label.span, "because it jumps to this label")
-                                .with_postfixed_info(&ctx.module.source, local.identifier.span, "which skips over this variable")
+                                .with_info_str_at_span(&ctx.module.source, label.label.span, "because it jumps to this label")
+                                .with_info_str_at_span(&ctx.module.source, local.identifier.span, "which skips over this variable")
                             );
                         }
                     }
@@ -1065,7 +1078,7 @@ impl PassValidationLinking {
         loop {
             debug_assert!(scope.is_block());
             let block = scope.to_block();
-            if while_stmt.body == block.upcast() {
+            if while_stmt.body == block {
                 return true;
             }
 

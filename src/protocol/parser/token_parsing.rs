@@ -1,4 +1,4 @@
-use crate::collections::{StringRef, ScopedSection};
+use crate::collections::ScopedSection;
 use crate::protocol::ast::*;
 use crate::protocol::input_source::{
     InputSource as InputSource,
@@ -8,7 +8,7 @@ use crate::protocol::input_source::{
 };
 use super::tokens::*;
 use super::symbol_table::*;
-use super::{Module, ModuleCompilationPhase, PassCtx};
+use super::{Module, PassCtx};
 
 // Keywords
 pub(crate) const KW_LET:       &'static [u8] = b"let";
@@ -47,21 +47,39 @@ pub(crate) const KW_STMT_SYNC:     &'static [u8] = b"synchronous";
 pub(crate) const KW_STMT_NEW:      &'static [u8] = b"new";
 
 // Keywords - types
-pub(crate) const KW_TYPE_IN_PORT:  &'static [u8] = b"in";
-pub(crate) const KW_TYPE_OUT_PORT: &'static [u8] = b"out";
-pub(crate) const KW_TYPE_MESSAGE:  &'static [u8] = b"msg";
-pub(crate) const KW_TYPE_BOOL:     &'static [u8] = b"bool";
-pub(crate) const KW_TYPE_UINT8:    &'static [u8] = b"u8";
-pub(crate) const KW_TYPE_UINT16:   &'static [u8] = b"u16";
-pub(crate) const KW_TYPE_UINT32:   &'static [u8] = b"u32";
-pub(crate) const KW_TYPE_UINT64:   &'static [u8] = b"u64";
-pub(crate) const KW_TYPE_SINT8:    &'static [u8] = b"s8";
-pub(crate) const KW_TYPE_SINT16:   &'static [u8] = b"s16";
-pub(crate) const KW_TYPE_SINT32:   &'static [u8] = b"s32";
-pub(crate) const KW_TYPE_SINT64:   &'static [u8] = b"s64";
-pub(crate) const KW_TYPE_CHAR:     &'static [u8] = b"char";
-pub(crate) const KW_TYPE_STRING:   &'static [u8] = b"string";
-pub(crate) const KW_TYPE_INFERRED: &'static [u8] = b"auto";
+// Since types are needed for returning diagnostic information to the user, the
+// string variants are put here as well.
+pub(crate) const KW_TYPE_IN_PORT_STR:  &'static str = "in";
+pub(crate) const KW_TYPE_OUT_PORT_STR: &'static str = "out";
+pub(crate) const KW_TYPE_MESSAGE_STR:  &'static str = "msg";
+pub(crate) const KW_TYPE_BOOL_STR:     &'static str = "bool";
+pub(crate) const KW_TYPE_UINT8_STR:    &'static str = "u8";
+pub(crate) const KW_TYPE_UINT16_STR:   &'static str = "u16";
+pub(crate) const KW_TYPE_UINT32_STR:   &'static str = "u32";
+pub(crate) const KW_TYPE_UINT64_STR:   &'static str = "u64";
+pub(crate) const KW_TYPE_SINT8_STR:    &'static str = "s8";
+pub(crate) const KW_TYPE_SINT16_STR:   &'static str = "s16";
+pub(crate) const KW_TYPE_SINT32_STR:   &'static str = "s32";
+pub(crate) const KW_TYPE_SINT64_STR:   &'static str = "s64";
+pub(crate) const KW_TYPE_CHAR_STR:     &'static str = "char";
+pub(crate) const KW_TYPE_STRING_STR:   &'static str = "string";
+pub(crate) const KW_TYPE_INFERRED_STR: &'static str = "auto";
+
+pub(crate) const KW_TYPE_IN_PORT:  &'static [u8] = KW_TYPE_IN_PORT_STR.as_bytes();
+pub(crate) const KW_TYPE_OUT_PORT: &'static [u8] = KW_TYPE_OUT_PORT_STR.as_bytes();
+pub(crate) const KW_TYPE_MESSAGE:  &'static [u8] = KW_TYPE_MESSAGE_STR.as_bytes();
+pub(crate) const KW_TYPE_BOOL:     &'static [u8] = KW_TYPE_BOOL_STR.as_bytes();
+pub(crate) const KW_TYPE_UINT8:    &'static [u8] = KW_TYPE_UINT8_STR.as_bytes();
+pub(crate) const KW_TYPE_UINT16:   &'static [u8] = KW_TYPE_UINT16_STR.as_bytes();
+pub(crate) const KW_TYPE_UINT32:   &'static [u8] = KW_TYPE_UINT32_STR.as_bytes();
+pub(crate) const KW_TYPE_UINT64:   &'static [u8] = KW_TYPE_UINT64_STR.as_bytes();
+pub(crate) const KW_TYPE_SINT8:    &'static [u8] = KW_TYPE_SINT8_STR.as_bytes();
+pub(crate) const KW_TYPE_SINT16:   &'static [u8] = KW_TYPE_SINT16_STR.as_bytes();
+pub(crate) const KW_TYPE_SINT32:   &'static [u8] = KW_TYPE_SINT32_STR.as_bytes();
+pub(crate) const KW_TYPE_SINT64:   &'static [u8] = KW_TYPE_SINT64_STR.as_bytes();
+pub(crate) const KW_TYPE_CHAR:     &'static [u8] = KW_TYPE_CHAR_STR.as_bytes();
+pub(crate) const KW_TYPE_STRING:   &'static [u8] = KW_TYPE_STRING_STR.as_bytes();
+pub(crate) const KW_TYPE_INFERRED: &'static [u8] = KW_TYPE_INFERRED_STR.as_bytes();
 
 /// A special trait for when consuming comma-separated things such that we can
 /// push them onto a `Vec` and onto a `ScopedSection`. As we monomorph for
@@ -82,7 +100,7 @@ impl<T> Extendable for Vec<T> {
     }
 }
 
-impl<T: Sized + Copy> Extendable for ScopedSection<T> {
+impl<T: Sized> Extendable for ScopedSection<T> {
     type Value = T;
 
     #[inline]
@@ -136,11 +154,11 @@ pub(crate) fn consume_token(source: &InputSource, iter: &mut TokenIter, expected
 
 /// Consumes a comma separated list until the closing delimiter is encountered
 pub(crate) fn consume_comma_separated_until<T, F, E>(
-    close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
-    consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
+    close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx,
+    mut consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
     close_pos: Option<&mut InputPosition>
 ) -> Result<(), ParseError>
-    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+    where F: FnMut(&InputSource, &mut TokenIter, &mut PassCtx) -> Result<T, ParseError>,
           E: Extendable<Value=T>
 {
     let mut had_comma = true;
@@ -162,7 +180,7 @@ pub(crate) fn consume_comma_separated_until<T, F, E>(
             ));
         }
 
-        let new_item = consumer_fn(source, iter)?;
+        let new_item = consumer_fn(source, iter, ctx)?;
         target.push(new_item);
 
         next = iter.next();
@@ -183,28 +201,28 @@ pub(crate) fn consume_comma_separated_until<T, F, E>(
 /// - Opening and closing delimiter encountered, and items were processed.
 /// - Found an opening delimiter, but processing an item failed.
 pub(crate) fn maybe_consume_comma_separated<T, F, E>(
-    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
+    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx,
     consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
     close_pos: Option<&mut InputPosition>
 ) -> Result<bool, ParseError>
-    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+    where F: FnMut(&InputSource, &mut TokenIter, &mut PassCtx) -> Result<T, ParseError>,
           E: Extendable<Value=T>
 {
-    let mut next = iter.next();
-    if Some(open_delim) != next {
+    if Some(open_delim) != iter.next() {
         return Ok(false);
     }
 
     // Opening delimiter encountered, so must parse the comma-separated list.
     iter.consume();
-    consume_comma_separated_until(close_delim, source, iter, consumer_fn, target, item_name_and_article, close_pos)?;
+    consume_comma_separated_until(close_delim, source, iter, ctx, consumer_fn, target, item_name_and_article, close_pos)?;
 
     Ok(true)
 }
 
-pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut TokenIter) -> Result<(), ParseError>>(
-    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
-    consumer_fn: F, item_name_and_article: &'static str
+pub(crate) fn maybe_consume_comma_separated_spilled<F: FnMut(&InputSource, &mut TokenIter, &mut PassCtx) -> Result<(), ParseError>>(
+    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource,
+    iter: &mut TokenIter, ctx: &mut PassCtx,
+    mut consumer_fn: F, item_name_and_article: &'static str
 ) -> Result<bool, ParseError> {
     let mut next = iter.next();
     if Some(open_delim) != next {
@@ -225,7 +243,7 @@ pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut Tok
             ));
         }
 
-        consumer_fn(source, iter)?;
+        consumer_fn(source, iter, ctx)?;
         next = iter.next();
         had_comma = next == Some(TokenKind::Comma);
         if had_comma {
@@ -239,16 +257,17 @@ pub(crate) fn maybe_consume_comma_separated_spilled<F: Fn(&InputSource, &mut Tok
 /// Consumes a comma-separated list and expected the opening and closing
 /// characters to be present. The returned array may still be empty
 pub(crate) fn consume_comma_separated<T, F, E>(
-    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource, iter: &mut TokenIter,
+    open_delim: TokenKind, close_delim: TokenKind, source: &InputSource,
+    iter: &mut TokenIter, ctx: &mut PassCtx,
     consumer_fn: F, target: &mut E, item_name_and_article: &'static str,
     list_name_and_article: &'static str, close_pos: Option<&mut InputPosition>
 ) -> Result<(), ParseError>
-    where F: Fn(&InputSource, &mut TokenIter) -> Result<T, ParseError>,
+    where F: FnMut(&InputSource, &mut TokenIter, &mut PassCtx) -> Result<T, ParseError>,
           E: Extendable<Value=T>
 {
     let first_pos = iter.last_valid_pos();
     match maybe_consume_comma_separated(
-        open_delim, close_delim, source, iter, consumer_fn, target,
+        open_delim, close_delim, source, iter, ctx, consumer_fn, target,
         item_name_and_article, close_pos
     ) {
         Ok(true) => Ok(()),

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fmt::{Debug, Display, Write};
 use std::io::Write as IOWrite;
 
@@ -240,16 +242,14 @@ impl ASTWriter {
 
                 self.kv(indent2).with_s_key("Name").with_identifier_val(&import.module);
                 self.kv(indent2).with_s_key("Alias").with_identifier_val(&import.alias);
-                self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Target").with_disp_val(&import.module_id.index);
             },
             Import::Symbols(import) => {
                 self.kv(indent).with_id(PREFIX_IMPORT_ID, import.this.index)
                     .with_s_key("ImportSymbol");
 
                 self.kv(indent2).with_s_key("Name").with_identifier_val(&import.module);
-                self.kv(indent2).with_s_key("Target")
-                    .with_opt_disp_val(import.module_id.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Target").with_disp_val(&import.module_id.index);
 
                 self.kv(indent2).with_s_key("Symbols");
 
@@ -259,8 +259,7 @@ impl ASTWriter {
                     self.kv(indent3).with_s_key("AliasedSymbol");
                     self.kv(indent4).with_s_key("Name").with_identifier_val(&symbol.name);
                     self.kv(indent4).with_s_key("Alias").with_opt_identifier_val(symbol.alias.as_ref());
-                    self.kv(indent4).with_s_key("Definition")
-                        .with_opt_disp_val(symbol.definition_id.as_ref().map(|v| &v.index));
+                    self.kv(indent4).with_s_key("Definition").with_disp_val(&symbol.definition_id.index);
                 }
             }
         }
@@ -526,8 +525,10 @@ impl ASTWriter {
             Statement::Return(stmt) => {
                 self.kv(indent).with_id(PREFIX_RETURN_STMT_ID, stmt.this.0.index)
                     .with_s_key("Return");
-                self.kv(indent2).with_s_key("Expression");
-                self.write_expr(heap, stmt.expression, indent3);
+                self.kv(indent2).with_s_key("Expressions");
+                for expr_id in &stmt.expressions {
+                    self.write_expr(heap, *expr_id, indent3);
+                }
             },
             Statement::Goto(stmt) => {
                 self.kv(indent).with_id(PREFIX_GOTO_STMT_ID, stmt.this.0.index)
@@ -681,7 +682,11 @@ impl ASTWriter {
                     Literal::True => { val.with_s_val("true"); },
                     Literal::False => { val.with_s_val("false"); },
                     Literal::Character(data) => { val.with_disp_val(data); },
-                    Literal::String(data) => { val.with_disp_val(data.as_str()); },
+                    Literal::String(data) => {
+                        // Stupid hack
+                        let string = String::from(data.as_str());
+                        val.with_disp_val(&string);
+                    },
                     Literal::Integer(data) => { val.with_debug_val(data); },
                     Literal::Struct(data) => {
                         val.with_s_val("Struct");
@@ -689,9 +694,7 @@ impl ASTWriter {
 
                         self.kv(indent3).with_s_key("ParserType")
                             .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
-                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
-                            write_option(s, data.definition.as_ref().map(|v| &v.index));
-                        });
+                        self.kv(indent3).with_s_key("Definition").with_disp_val(&data.definition.index);
 
                         for field in &data.fields {
                             self.kv(indent3).with_s_key("Field");
@@ -706,9 +709,7 @@ impl ASTWriter {
 
                         self.kv(indent3).with_s_key("ParserType")
                             .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
-                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
-                            write_option(s, data.definition.as_ref().map(|v| &v.index))
-                        });
+                        self.kv(indent3).with_s_key("Definition").with_disp_val(&data.definition.index);
                         self.kv(indent3).with_s_key("VariantIdx").with_disp_val(&data.variant_idx);
                     },
                     Literal::Union(data) => {
@@ -717,9 +718,7 @@ impl ASTWriter {
 
                         self.kv(indent3).with_s_key("ParserType")
                             .with_custom_val(|t| write_parser_type(t, heap, &data.parser_type));
-                        self.kv(indent3).with_s_key("Definition").with_custom_val(|s| {
-                            write_option(s, data.definition.as_ref().map(|v| &v.index));
-                        });
+                        self.kv(indent3).with_s_key("Definition").with_disp_val(&data.definition.index);
                         self.kv(indent3).with_s_key("VariantIdx").with_disp_val(&data.variant_idx);
 
                         for value in &data.values {
@@ -866,12 +865,12 @@ fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
             PTV::PolymorphicArgument(definition_id, arg_idx) => {
                 let definition = &heap[*definition_id];
                 let poly_var = &definition.poly_vars()[*arg_idx].value;
-                target.write_str(poly_var.as_str());
+                target.push_str(poly_var.as_str());
             },
             PTV::Definition(definition_id, num_embedded) => {
                 let definition = &heap[*definition_id];
                 let definition_ident = definition.identifier().value.as_str();
-                target.write_str(definition_ident);
+                target.push_str(definition_ident);
 
                 let num_embedded = *num_embedded;
                 if num_embedded != 0 {
@@ -893,6 +892,7 @@ fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
     write_element(target, heap, t, 0);
 }
 
+// TODO: @Cleanup, this is littered at three places in the codebase
 fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t: &ConcreteType) {
     use ConcreteTypePart as CTP;
 
@@ -912,11 +912,16 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
             CTP::Void => target.push_str("void"),
             CTP::Message => target.push_str("msg"),
             CTP::Bool => target.push_str("bool"),
-            CTP::Byte => target.push_str("byte"),
-            CTP::Short => target.push_str("short"),
-            CTP::Int => target.push_str("int"),
-            CTP::Long => target.push_str("long"),
-            CTP::String => target.push_str("string"),
+            CTP::UInt8 => target.push_str(KW_TYPE_UINT8_STR),
+            CTP::UInt16 => target.push_str(KW_TYPE_UINT16_STR),
+            CTP::UInt32 => target.push_str(KW_TYPE_UINT32_STR),
+            CTP::UInt64 => target.push_str(KW_TYPE_UINT64_STR),
+            CTP::SInt8 => target.push_str(KW_TYPE_SINT8_STR),
+            CTP::SInt16 => target.push_str(KW_TYPE_SINT16_STR),
+            CTP::SInt32 => target.push_str(KW_TYPE_SINT32_STR),
+            CTP::SInt64 => target.push_str(KW_TYPE_SINT64_STR),
+            CTP::Character => target.push_str(KW_TYPE_CHAR_STR),
+            CTP::String => target.push_str(KW_TYPE_STRING_STR),
             CTP::Array => {
                 idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 target.push_str("[]");
@@ -963,7 +968,6 @@ fn write_expression_parent(target: &mut String, parent: &ExpressionParent) {
         EP::If(id) => format!("IfStmt({})", id.0.index),
         EP::While(id) => format!("WhileStmt({})", id.0.index),
         EP::Return(id) => format!("ReturnStmt({})", id.0.index),
-        EP::Assert(id) => format!("AssertStmt({})", id.0.index),
         EP::New(id) => format!("NewStmt({})", id.0.index),
         EP::ExpressionStmt(id) => format!("ExprStmt({})", id.0.index),
         EP::Expression(id, idx) => format!("Expr({}, {})", id.index, idx)

@@ -12,9 +12,9 @@ pub(crate) struct PassDefinitions {
     cur_definition: DefinitionId,
     // Temporary buffers of various kinds
     buffer: String,
-    struct_fields: Vec<StructFieldDefinition>,
-    enum_variants: Vec<EnumVariantDefinition>,
-    union_variants: Vec<UnionVariantDefinition>,
+    struct_fields: ScopedBuffer<StructFieldDefinition>,
+    enum_variants: ScopedBuffer<EnumVariantDefinition>,
+    union_variants: ScopedBuffer<UnionVariantDefinition>,
     parameters: ScopedBuffer<ParameterId>,
     expressions: ScopedBuffer<ExpressionId>,
     statements: ScopedBuffer<StatementId>,
@@ -26,9 +26,9 @@ impl PassDefinitions {
         Self{
             cur_definition: DefinitionId::new_invalid(),
             buffer: String::with_capacity(128),
-            struct_fields: Vec::with_capacity(128),
-            enum_variants: Vec::with_capacity(128),
-            union_variants: Vec::with_capacity(128),
+            struct_fields: ScopedBuffer::new_reserved(128),
+            enum_variants: ScopedBuffer::new_reserved(128),
+            union_variants: ScopedBuffer::new_reserved(128),
             parameters: ScopedBuffer::new_reserved(128),
             expressions: ScopedBuffer::new_reserved(128),
             statements: ScopedBuffer::new_reserved(128),
@@ -89,6 +89,7 @@ impl PassDefinitions {
             match ident {
                 Some(KW_STRUCT) => self.visit_struct_definition(module, &mut iter, ctx)?,
                 Some(KW_ENUM) => self.visit_enum_definition(module, &mut iter, ctx)?,
+                Some(KW_UNION) => self.visit_union_definition(module, &mut iter, ctx)?,
                 Some(KW_FUNCTION) => self.visit_function_definition(module, &mut iter, ctx)?,
                 Some(KW_PRIMITIVE) | Some(KW_COMPOSITE) => self.visit_component_definition(module, &mut iter, ctx)?,
                 _ => return Err(ParseError::new_error_str_at_pos(
@@ -109,14 +110,16 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
-        let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse struct definition
-        consume_polymorphic_vars_spilled(&module.source, iter)?;
-        debug_assert!(self.struct_fields.is_empty());
+        consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
+
+        let mut fields_section = self.struct_fields.start_section();
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
-            |source, iter| {
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
+            |source, iter, ctx| {
+                let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
+
                 let start_pos = iter.last_valid_pos();
                 let parser_type = consume_parser_type(
                     source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope,
@@ -128,13 +131,12 @@ impl PassDefinitions {
                     field, parser_type
                 })
             },
-            &mut self.struct_fields, "a struct field", "a list of struct fields", None
+            &mut fields_section, "a struct field", "a list of struct fields", None
         )?;
 
         // Transfer to preallocated definition
         let struct_def = ctx.heap[definition_id].as_struct_mut();
-        struct_def.fields.clone_from(&self.struct_fields);
-        self.struct_fields.clear();
+        struct_def.fields = fields_section.into_vec();
 
         Ok(())
     }
@@ -149,14 +151,14 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
-        let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse enum definition
-        consume_polymorphic_vars_spilled(&module.source, iter)?;
-        debug_assert!(self.enum_variants.is_empty());
+        consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
+
+        let mut enum_section = self.enum_variants.start_section();
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
-            |source, iter| {
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
+            |source, iter, ctx| {
                 let identifier = consume_ident_interned(source, iter, ctx)?;
                 let value = if iter.next() == Some(TokenKind::Equal) {
                     iter.consume();
@@ -167,13 +169,12 @@ impl PassDefinitions {
                 };
                 Ok(EnumVariantDefinition{ identifier, value })
             },
-            &mut self.enum_variants, "an enum variant", "a list of enum variants", None
+            &mut enum_section, "an enum variant", "a list of enum variants", None
         )?;
 
         // Transfer to definition
         let enum_def = ctx.heap[definition_id].as_enum_mut();
-        enum_def.variants.clone_from(&self.enum_variants);
-        self.enum_variants.clear();
+        enum_def.variants = enum_section.into_vec();
 
         Ok(())
     }
@@ -188,19 +189,21 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
-        let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse union definition
-        consume_polymorphic_vars_spilled(&module.source, iter)?;
-        debug_assert!(self.union_variants.is_empty());
+        consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
+
+        let mut variants_section = self.union_variants.start_section();
         consume_comma_separated(
-            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
-            |source, iter| {
+            TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
+            |source, iter, ctx| {
                 let identifier = consume_ident_interned(source, iter, ctx)?;
                 let mut close_pos = identifier.span.end;
+
                 let has_embedded = maybe_consume_comma_separated(
-                    TokenKind::OpenParen, TokenKind::CloseParen, source, iter,
-                    |source, iter| {
+                    TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
+                    |source, iter, ctx| {
+                        let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
                         consume_parser_type(
                             source, iter, &ctx.symbols, &ctx.heap, poly_vars,
                             module_scope, definition_id, false, 0
@@ -221,13 +224,12 @@ impl PassDefinitions {
                     value
                 })
             },
-            &mut self.union_variants, "a union variant", "a list of union variants", None
+            &mut variants_section, "a union variant", "a list of union variants", None
         )?;
 
         // Transfer to AST
         let union_def = ctx.heap[definition_id].as_union_mut();
-        union_def.variants.clone_from(&self.union_variants);
-        self.union_variants.clear();
+        union_def.variants = variants_section.into_vec();
 
         Ok(())
     }
@@ -242,12 +244,11 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
-        let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse function's argument list
         let mut parameter_section = self.parameters.start_section();
         consume_parameter_list(
-            &module.source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
+            &module.source, iter, ctx, &mut parameter_section, module_scope, definition_id
         )?;
         let parameters = parameter_section.into_vec();
 
@@ -255,8 +256,9 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::ArrowRight)?;
         let mut open_curly_pos = iter.last_valid_pos();
         consume_comma_separated_until(
-            TokenKind::OpenCurly, &module.source, iter,
-            |source, iter| {
+            TokenKind::OpenCurly, &module.source, iter, ctx,
+            |source, iter, ctx| {
+                let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
                 consume_parser_type(source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope, definition_id, false, 0)
             },
             &mut self.parser_types, "a return type", Some(&mut open_curly_pos)
@@ -293,12 +295,11 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
-        let poly_vars = ctx.heap[definition_id].poly_vars();
 
         // Parse component's argument list
         let mut parameter_section = self.parameters.start_section();
         consume_parameter_list(
-            &module.source, iter, ctx, &mut parameter_section, poly_vars, module_scope, definition_id
+            &module.source, iter, ctx, &mut parameter_section, module_scope, definition_id
         )?;
         let parameters = parameter_section.into_vec();
 
@@ -438,12 +439,19 @@ impl PassDefinitions {
     fn consume_block_statement_without_leading_curly(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx, open_curly_pos: InputPosition
     ) -> Result<BlockStatementId, ParseError> {
-        let mut statements = Vec::new();
+        let mut stmt_section = self.statements.start_section();
         let mut next = iter.next();
-        while next.is_some() && next != Some(TokenKind::CloseCurly) {
-
+        while next != Some(TokenKind::CloseCurly) {
+            if next.is_none() {
+                return Err(ParseError::new_error_str_at_pos(
+                    &module.source, iter.last_valid_pos(), "expected a statement or '}'"
+                ));
+            }
+            self.consume_statement(module, iter, ctx, &mut stmt_section)?;
+            next = iter.next();
         }
 
+        let statements = stmt_section.into_vec();
         let mut block_span = consume_token(&module.source, iter, TokenKind::CloseCurly)?;
         block_span.begin = open_curly_pos;
 
@@ -565,14 +573,16 @@ impl PassDefinitions {
         let mut scoped_section = self.expressions.start_section();
 
         consume_comma_separated_until(
-            TokenKind::SemiColon, &module.source, iter,
-            |source, iter| self.consume_expression(module, iter, ctx),
+            TokenKind::SemiColon, &module.source, iter, ctx,
+            |_source, iter, ctx| self.consume_expression(module, iter, ctx),
             &mut scoped_section, "a return expression", None
         )?;
         let expressions = scoped_section.into_vec();
 
         if expressions.is_empty() {
             return Err(ParseError::new_error_str_at_span(&module.source, return_span, "expected at least one return value"));
+        } else if expressions.len() > 1 {
+            return Err(ParseError::new_error_str_at_span(&module.source, return_span, "multiple return values are not (yet) supported"))
         }
 
         Ok(ctx.heap.alloc_return_statement(|this| ReturnStatement{
@@ -1190,8 +1200,8 @@ impl PassDefinitions {
             let (start_pos, mut end_pos) = iter.next_positions();
             let mut scoped_section = self.expressions.start_section();
             consume_comma_separated(
-                TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
-                |source, iter| self.consume_expression(module, iter, ctx),
+                TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
+                |_source, iter, ctx| self.consume_expression(module, iter, ctx),
                 &mut scoped_section, "an expression", "a list of expressions", Some(&mut end_pos)
             )?;
 
@@ -1260,8 +1270,8 @@ impl PassDefinitions {
                                 let mut last_token = iter.last_valid_pos();
                                 let mut struct_fields = Vec::new();
                                 consume_comma_separated(
-                                    TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter,
-                                    |source, iter| {
+                                    TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
+                                    |source, iter, ctx| {
                                         let identifier = consume_ident_interned(source, iter, ctx)?;
                                         consume_token(source, iter, TokenKind::Colon)?;
                                         let value = self.consume_expression(module, iter, ctx)?;
@@ -1337,9 +1347,6 @@ impl PassDefinitions {
                                 }).upcast()
                             },
                             Definition::Function(function_definition) => {
-                                // Function call: consume the arguments
-                                let arguments = self.consume_expression_list(module, iter, ctx, None)?;
-
                                 // Check whether it is a builtin function
                                 let method = if function_definition.builtin {
                                     match function_definition.identifier.value.as_str() {
@@ -1354,6 +1361,9 @@ impl PassDefinitions {
                                 } else {
                                     Method::UserFunction
                                 };
+
+                                // Function call: consume the arguments
+                                let arguments = self.consume_expression_list(module, iter, ctx, None)?;
 
                                 ctx.heap.alloc_call_expression(|this| CallExpression{
                                     this,
@@ -1460,8 +1470,8 @@ impl PassDefinitions {
     ) -> Result<Vec<ExpressionId>, ParseError> {
         let mut section = self.expressions.start_section();
         consume_comma_separated(
-            TokenKind::OpenParen, TokenKind::CloseParen, &module.source, iter,
-            |source, iter| self.consume_expression(module, iter, ctx),
+            TokenKind::OpenParen, TokenKind::CloseParen, &module.source, iter, ctx,
+            |_source, iter, ctx| self.consume_expression(module, iter, ctx),
             &mut section, "an expression", "a list of expressions", end_pos
         )?;
         Ok(section.into_vec())
@@ -1807,10 +1817,10 @@ fn consume_parser_type_ident(
 }
 
 /// Consumes polymorphic variables and throws them on the floor.
-fn consume_polymorphic_vars_spilled(source: &InputSource, iter: &mut TokenIter) -> Result<(), ParseError> {
+fn consume_polymorphic_vars_spilled(source: &InputSource, iter: &mut TokenIter, _ctx: &mut PassCtx) -> Result<(), ParseError> {
     maybe_consume_comma_separated_spilled(
-        TokenKind::OpenAngle, TokenKind::CloseAngle, source, iter,
-        |source, iter| {
+        TokenKind::OpenAngle, TokenKind::CloseAngle, source, iter, _ctx,
+        |source, iter, _ctx| {
             consume_ident(source, iter)?;
             Ok(())
         }, "a polymorphic variable"
@@ -1820,12 +1830,13 @@ fn consume_polymorphic_vars_spilled(source: &InputSource, iter: &mut TokenIter) 
 
 /// Consumes the parameter list to functions/components
 fn consume_parameter_list(
-    source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx, target: &mut ScopedSection<ParameterId>,
-    poly_vars: &[Identifier], scope: SymbolScope, definition_id: DefinitionId
+    source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx,
+    target: &mut ScopedSection<ParameterId>, scope: SymbolScope, definition_id: DefinitionId
 ) -> Result<(), ParseError> {
     consume_comma_separated(
-        TokenKind::OpenParen, TokenKind::CloseParen, source, iter,
-        |source, iter| {
+        TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
+        |source, iter, ctx| {
+            let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
             let (start_pos, _) = iter.next_positions();
             let parser_type = consume_parser_type(
                 source, iter, &ctx.symbols, &ctx.heap, poly_vars, scope,
