@@ -178,13 +178,16 @@ pub enum TokenRangeKind {
     Code,
 }
 
+pub const NO_RELATION: i32 = -1;
+pub const NO_SIBLING: i32 = NO_RELATION;
+
 /// A range of tokens with a specific meaning. Such a range is part of a tree
 /// where each parent tree envelops all of its children.
 #[derive(Debug)]
 pub struct TokenRange {
     // Index of parent in `TokenBuffer.ranges`, does not have a parent if the
-    // range kind is Module, in that case the parent index points to itself.
-    pub parent_idx: usize,
+    // range kind is Module, in that case the parent index is -1.
+    pub parent_idx: i32,
     pub range_kind: TokenRangeKind,
     pub curly_depth: u32,
     // Offsets into `TokenBuffer.ranges`: the tokens belonging to this range.
@@ -192,9 +195,9 @@ pub struct TokenRange {
     pub end: u32,               // last token (exclusive index)
     // Child ranges
     pub num_child_ranges: u32,  // Number of subranges
-    pub first_child_idx: u32,   // First subrange (or points to self if no subranges)
-    pub last_child_idx: u32,    // Last subrange (or points to self if no subranges)
-    pub next_sibling_idx: Option<u32>,
+    pub first_child_idx: i32,   // First subrange (or -1 if no subranges)
+    pub last_child_idx: i32,    // Last subrange (or -1 if no subranges)
+    pub next_sibling_idx: i32,  // Next subrange (or -1 if no next subrange)
 }
 
 pub struct TokenBuffer {

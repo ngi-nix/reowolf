@@ -11,6 +11,7 @@ use super::visitor::{
     Visitor2, 
     VisitorResult
 };
+use crate::protocol::parser::ModuleCompilationPhase;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
@@ -63,9 +64,8 @@ pub(crate) struct PassValidationLinking {
     // used as an expression parent)
     expr_parent: ExpressionParent,
     // Keeping track of relative position in block in the breadth-first pass.
-    // May not correspond to block.statement[index] if any statements are
-    // inserted after the breadth-pass
     relative_pos_in_block: u32,
+    definition_buffer: ScopedBuffer<DefinitionId>,
     // Single buffer of statement IDs that we want to traverse in a block.
     // Required to work around Rust borrowing rules and to prevent constant
     // cloning of vectors.
@@ -84,6 +84,7 @@ impl PassValidationLinking {
             expr_parent: ExpressionParent::None,
             def_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             relative_pos_in_block: 0,
+            definition_buffer: ScopedBuffer::new_reserved(128),
             statement_buffer: ScopedBuffer::new_reserved(STMT_BUFFER_INIT_CAPACITY),
             expression_buffer: ScopedBuffer::new_reserved(EXPR_BUFFER_INIT_CAPACITY),
         }
@@ -100,6 +101,20 @@ impl PassValidationLinking {
 }
 
 impl Visitor2 for PassValidationLinking {
+    fn visit_module(&mut self, ctx: &mut Ctx) -> VisitorResult {
+        debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::TypesAddedToTable);
+
+        let root = &ctx.heap[ctx.module.root_id];
+        let section = self.definition_buffer.start_section_initialized(&root.definitions);
+        for definition_idx in 0..section.len() {
+            let definition_id = section[definition_idx];
+            self.visit_definition(ctx, definition_id)?;
+        }
+        section.forget();
+
+        ctx.module.phase = ModuleCompilationPhase::ValidatedAndLinked;
+        Ok(())
+    }
     //--------------------------------------------------------------------------
     // Definition visitors
     //--------------------------------------------------------------------------

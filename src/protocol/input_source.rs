@@ -264,9 +264,9 @@ impl ParseErrorStatement {
         Self{
             statement_kind,
             context_kind,
-            start_line: first_line_start,
+            start_line: span.begin.line,
             start_column,
-            end_line: last_line_start,
+            end_line: span.end.line,
             end_column,
             filename: source.filename.clone(),
             context,
@@ -319,8 +319,10 @@ impl fmt::Display for ParseErrorStatement {
 
         fn extend_annotation(first_col: u32, last_col: u32, source: &str, target: &mut String, extend_char: char) {
             debug_assert!(first_col > 0 && last_col > first_col);
-            for (char_idx, char) in source.chars().enumerate().skip(first_col as usize - 1) {
-                if char_idx == last_col as usize {
+            let first_idx = first_col as usize - 1;
+            let last_idx = last_col as usize - 1;
+            for (char_idx, char) in source.chars().enumerate().skip(first_idx) {
+                if char_idx == last_idx as usize {
                     break;
                 }
 
@@ -342,12 +344,13 @@ impl fmt::Display for ParseErrorStatement {
             ContextKind::SingleLine => {
                 // Write single line of context with indicator for the offending
                 // span underneath.
+                context.push_str(" |  ");
                 transform_context(&self.context, &mut context);
                 context.push('\n');
                 f.write_str(&context)?;
 
                 annotation.push_str(" | ");
-                extend_annotation(1, self.start_column, &self.context, &mut annotation, ' ');
+                extend_annotation(1, self.start_column + 1, &self.context, &mut annotation, ' ');
                 extend_annotation(self.start_column, self.end_column, &self.context, &mut annotation, '~');
                 annotation.push('\n');
 

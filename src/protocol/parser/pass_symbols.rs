@@ -80,9 +80,10 @@ impl PassSymbols {
                 self.visit_pragma_range(modules, module_idx, ctx, range_idx_usize)?;
             }
 
-            match next_sibling_idx {
-                Some(idx) => { range_idx = idx; },
-                None => { break; },
+            if next_sibling_idx == NO_SIBLING {
+                break;
+            } else {
+                range_idx = next_sibling_idx;
             }
         }
 

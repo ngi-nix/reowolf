@@ -58,9 +58,10 @@ impl PassDefinitions {
 
             self.visit_range(modules, module_idx, ctx, range_idx_usize)?;
 
-            match cur_range.next_sibling_idx {
-                Some(idx) => { range_idx = idx; },
-                None => { break; },
+            if cur_range.next_sibling_idx == NO_SIBLING {
+                break;
+            } else {
+                range_idx = cur_range.next_sibling_idx;
             }
         }
 
@@ -94,7 +95,7 @@ impl PassDefinitions {
                 Some(KW_PRIMITIVE) | Some(KW_COMPOSITE) => self.visit_component_definition(module, &mut iter, ctx)?,
                 _ => return Err(ParseError::new_error_str_at_pos(
                     &module.source, iter.last_valid_pos(),
-                    "unexpected symbol, expected some kind of type or procedure definition"
+                    "unexpected symbol, expected a keyword marking the start of a definition"
                 )),
             }
         }
@@ -110,6 +111,7 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
+        self.cur_definition = definition_id;
 
         // Parse struct definition
         consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
@@ -151,6 +153,7 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
+        self.cur_definition = definition_id;
 
         // Parse enum definition
         consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
@@ -189,6 +192,7 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
+        self.cur_definition = definition_id;
 
         // Parse union definition
         consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
@@ -244,6 +248,9 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
+        self.cur_definition = definition_id;
+
+        consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
 
         // Parse function's argument list
         let mut parameter_section = self.parameters.start_section();
@@ -295,6 +302,9 @@ impl PassDefinitions {
         let module_scope = SymbolScope::Module(module.root_id);
         let definition_id = ctx.symbols.get_symbol_by_name_defined_in_scope(module_scope, ident_text)
             .unwrap().variant.as_definition().definition_id;
+        self.cur_definition = definition_id;
+
+        consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
 
         // Parse component's argument list
         let mut parameter_section = self.parameters.start_section();
@@ -357,7 +367,7 @@ impl PassDefinitions {
             let id = self.consume_block_statement(module, iter, ctx)?;
             section.push(id.upcast());
         } else if next == TokenKind::Ident {
-            let (ident, _) = consume_any_ident(&module.source, iter)?;
+            let ident = peek_ident(&module.source, iter).unwrap();
             if ident == KW_STMT_IF {
                 // Consume if statement and place end-if statement directly
                 // after it.

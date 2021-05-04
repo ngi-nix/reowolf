@@ -9,7 +9,7 @@ use super::*;
 fn test_struct_monomorphs() {
     Tester::new_single_source_expect_ok(
         "no polymorph",
-        "struct Integer{ int field }"
+        "struct Integer{ s32 field }"
     ).for_struct("Integer", |s| { s
         .assert_num_monomorphs(0);
     });
@@ -18,25 +18,25 @@ fn test_struct_monomorphs() {
         "single polymorph",
         "
         struct Number<T>{ T number }
-        int instantiator() {
-            auto a = Number<byte>{ number: 0 };
-            auto b = Number<byte>{ number: 1 };
-            auto c = Number<int>{ number: 2 };
-            auto d = Number<long>{ number: 3 };
-            auto e = Number<Number<short>>{ number: Number{ number: 4 }};
+        s32 instantiator() {
+            auto a = Number<s8>{ number: 0 };
+            auto b = Number<s8>{ number: 1 };
+            auto c = Number<s32>{ number: 2 };
+            auto d = Number<s64>{ number: 3 };
+            auto e = Number<Number<s16>>{ number: Number{ number: 4 }};
             return 0;
         }
         "
     ).for_struct("Number", |s| { s
-        .assert_has_monomorph("byte")
-        .assert_has_monomorph("short")
-        .assert_has_monomorph("int")
-        .assert_has_monomorph("long")
-        .assert_has_monomorph("Number<short>")
+        .assert_has_monomorph("s8")
+        .assert_has_monomorph("s16")
+        .assert_has_monomorph("s32")
+        .assert_has_monomorph("s64")
+        .assert_has_monomorph("Number<s16>")
         .assert_num_monomorphs(5);
     }).for_function("instantiator", |f| { f
-        .for_variable("a", |v| {v.assert_concrete_type("Number<byte>");} )
-        .for_variable("e", |v| {v.assert_concrete_type("Number<Number<short>>");} );
+        .for_variable("a", |v| {v.assert_concrete_type("Number<s8>");} )
+        .for_variable("e", |v| {v.assert_concrete_type("Number<Number<s16>>");} );
     });
 }
 
@@ -46,7 +46,7 @@ fn test_enum_monomorphs() {
         "no polymorph",
         "
         enum Answer{ Yes, No }
-        int do_it() { auto a = Answer::Yes; return 0; }
+        s32 do_it() { auto a = Answer::Yes; return 0; }
         "
     ).for_enum("Answer", |e| { e
         .assert_num_monomorphs(0);
@@ -56,19 +56,19 @@ fn test_enum_monomorphs() {
         "single polymorph",
         "
         enum Answer<T> { Yes, No }
-        int instantiator() {
-            auto a = Answer<byte>::Yes;
-            auto b = Answer<byte>::No;
-            auto c = Answer<int>::Yes;
-            auto d = Answer<Answer<Answer<long>>>::No;
+        s32 instantiator() {
+            auto a = Answer<s8>::Yes;
+            auto b = Answer<s8>::No;
+            auto c = Answer<s32>::Yes;
+            auto d = Answer<Answer<Answer<s64>>>::No;
             return 0;
         }
         "
     ).for_enum("Answer", |e| { e
         .assert_num_monomorphs(3)
-        .assert_has_monomorph("byte")
-        .assert_has_monomorph("int")
-        .assert_has_monomorph("Answer<Answer<long>>");
+        .assert_has_monomorph("s8")
+        .assert_has_monomorph("s32")
+        .assert_has_monomorph("Answer<Answer<s64>>");
     });
 }
 
@@ -78,37 +78,37 @@ fn test_union_monomorphs() {
         "no polymorph",
         "
         union Trinary { Undefined, Value(boolean) }
-        int do_it() { auto a = Trinary::Value(true); return 0; }
+        s32 do_it() { auto a = Trinary::Value(true); return 0; }
         "
     ).for_union("Trinary", |e| { e
         .assert_num_monomorphs(0);
     });
 
     // TODO: Does this do what we want? Or do we expect the embedded monomorph
-    //  Result<byte,int> to be instantiated as well? I don't think so.
+    //  Result<s8,s32> to be instantiated as well? I don't think so.
     Tester::new_single_source_expect_ok(
         "polymorphs",
         "
         union Result<T, E>{ Ok(T), Err(E) }
-        int instantiator() {
-            short a_short = 5;
-            auto a = Result<byte, boolean>::Ok(0);
-            auto b = Result<boolean, byte>::Ok(true);
-            auto c = Result<Result<byte, int>, Result<short, long>>::Err(Result::Ok(5));
-            auto d = Result<Result<byte, int>, auto>::Err(Result<auto, long>::Ok(a_short));
+        s32 instantiator() {
+            s16 a_s16 = 5;
+            auto a = Result<s8, boolean>::Ok(0);
+            auto b = Result<boolean, s8>::Ok(true);
+            auto c = Result<Result<s8, s32>, Result<s16, s64>>::Err(Result::Ok(5));
+            auto d = Result<Result<s8, s32>, auto>::Err(Result<auto, s64>::Ok(a_s16));
             return 0;
         }
         "
     ).for_union("Result", |e| { e
         .assert_num_monomorphs(4)
-        .assert_has_monomorph("byte;bool")
-        .assert_has_monomorph("bool;byte")
-        .assert_has_monomorph("Result<byte,int>;Result<short,long>")
-        .assert_has_monomorph("short;long");
+        .assert_has_monomorph("s8;bool")
+        .assert_has_monomorph("bool;s8")
+        .assert_has_monomorph("Result<s8,s32>;Result<s16,s64>")
+        .assert_has_monomorph("s16;s64");
     }).for_function("instantiator", |f| { f
         .for_variable("d", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Result<Result<byte,int>,Result<short,long>>");
+            .assert_concrete_type("Result<Result<s8,s32>,Result<s16,s64>>");
         });
     });
 }

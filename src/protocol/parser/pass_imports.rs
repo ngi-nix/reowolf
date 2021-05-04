@@ -39,9 +39,10 @@ impl PassImport {
                 self.visit_import_range(modules, module_idx, ctx, range_idx_usize)?;
             }
 
-            match cur_range.next_sibling_idx {
-                Some(idx) => { range_idx = idx; },
-                None => { break; }
+            if cur_range.next_sibling_idx == NO_SIBLING {
+                break;
+            } else {
+                range_idx = cur_range.next_sibling_idx;
             }
         }
 

@@ -9,11 +9,11 @@ fn test_module_import() {
     Tester::new("single domain name")
         .with_source("
         #module external
-        struct Foo { int field }
+        struct Foo { s32 field }
         ")
         .with_source("
         import external;
-        int caller() {
+        s32 caller() {
             auto a = external::Foo{ field: 0 };
             return a.field;
         }
@@ -24,11 +24,11 @@ fn test_module_import() {
     Tester::new("multi domain name")
         .with_source("
         #module external.domain
-        struct Foo { int field }
+        struct Foo { s32 field }
         ")
         .with_source("
         import external.domain;
-        int caller() {
+        s32 caller() {
             auto a = domain::Foo{ field: 0 };
             return a.field;
         }
@@ -39,11 +39,11 @@ fn test_module_import() {
     Tester::new("aliased domain name")
         .with_source("
         #module external
-        struct Foo { int field }
+        struct Foo { s32 field }
         ")
         .with_source("
         import external as aliased;
-        int caller() {
+        s32 caller() {
             auto a = aliased::Foo{ field: 0 };
             return a.field;
         }
@@ -57,11 +57,11 @@ fn test_single_symbol_import() {
     Tester::new("specific symbol")
         .with_source("
         #module external
-        struct Foo { int field }
+        struct Foo { s32 field }
         ")
         .with_source("
         import external::Foo;
-        int caller() {
+        s32 caller() {
             auto a = Foo{ field: 1 };
             auto b = Foo{ field: 2 };
             return a.field + b.field;
@@ -72,11 +72,11 @@ fn test_single_symbol_import() {
     Tester::new("specific aliased symbol")
         .with_source("
         #module external
-        struct Foo { int field }
+        struct Foo { s32 field }
         ")
         .with_source("
         import external::Foo as Bar;
-        int caller() {
+        s32 caller() {
             return Bar{ field: 0 }.field;
         }
         ")
@@ -87,11 +87,11 @@ fn test_single_symbol_import() {
     // Tester::new("import all")
     //     .with_source("
     //     #module external
-    //     struct Foo { int field }
+    //     struct Foo { s32 field }
     //     ")
     //     .with_source("
     //     import external::*;
-    //     int caller() { return Foo{field:0}.field; }
+    //     s32 caller() { return Foo{field:0}.field; }
     //     ")
     //     .compile()
     //     .expect_ok();
@@ -102,12 +102,12 @@ fn test_multi_symbol_import() {
     Tester::new("specific symbols")
         .with_source("
         #module external
-        struct Foo { byte f }
-        struct Bar { byte b }
+        struct Foo { s8 f }
+        struct Bar { s8 b }
         ")
         .with_source("
         import external::{Foo, Bar};
-        byte caller() {
+        s8 caller() {
             return Foo{f:0}.f + Bar{b:1}.b;
         }
         ")
@@ -117,12 +117,12 @@ fn test_multi_symbol_import() {
     Tester::new("aliased symbols")
         .with_source("
         #module external
-        struct Foo { byte in_foo }
-        struct Bar { byte in_bar }
+        struct Foo { s8 in_foo }
+        struct Bar { s8 in_bar }
         ")
         .with_source("
         import external::{Foo as Bar, Bar as Foo};
-        byte caller() {
+        s8 caller() {
             return Foo{in_bar:0}.in_bar + Bar{in_foo:0}.in_foo;    
         }")
         .compile()
@@ -132,12 +132,12 @@ fn test_multi_symbol_import() {
     // Tester::new("import all")
     //     .with_source("
     //     #module external
-    //     struct Foo { byte f };
-    //     struct Bar { byte b };
+    //     struct Foo { s8 f };
+    //     struct Bar { s8 b };
     //     ")
     //     .with_source("
     //     import external::*;
-    //     byte caller() {
+    //     s8 caller() {
     //         auto f = Foo{f:0};
     //         auto b = Bar{b:0};
     //         return f.f + b.b;
@@ -152,12 +152,12 @@ fn test_illegal_import_use() {
     Tester::new("unexpected polymorphic args")
         .with_source("
         #module external
-        struct Foo { byte f }
+        struct Foo { s8 f }
         ")
         .with_source("
         import external;
-        byte caller() {
-            auto foo = external::Foo<int>{ f: 0 };
+        s8 caller() {
+            auto foo = external::Foo<s32>{ f: 0 };
             return foo.f;
         }
         ")
@@ -174,8 +174,8 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import external;
-        byte caller() {
-            auto foo = external::Foo<byte, int>{ f: 0 };
+        s8 caller() {
+            auto foo = external::Foo<s8, s32>{ f: 0 };
             return foo.f;
         }")
         .compile()
@@ -191,7 +191,7 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import external;
-        byte caller() {
+        s8 caller() {
             auto foo = external{ f: 0 };
             return 0;
         }
@@ -205,11 +205,11 @@ fn test_illegal_import_use() {
     Tester::new("more namespaces than needed, not polymorphic")
         .with_source("
         #module external
-        struct Foo { byte f }
+        struct Foo { s8 f }
         ")
         .with_source("
         import external;
-        byte caller() {
+        s8 caller() {
             auto foo = external::Foo::f{ f: 0 };
             return 0;
         }")
@@ -223,7 +223,7 @@ fn test_illegal_import_use() {
     Tester::new("import from another import")
         .with_source("
         #module mod1
-        struct Foo { byte f }
+        struct Foo { s8 f }
         ")
         .with_source("
         #module mod2
@@ -232,7 +232,7 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import mod2;
-        byte caller() {
+        s8 caller() {
             auto bar = mod2::Bar{ f: mod2::Foo{ f: 0 } };
             return var.f.f;
         }")

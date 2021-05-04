@@ -10,16 +10,16 @@ fn test_correct_struct_instance() {
     Tester::new_single_source_expect_ok(
         "single field",
         "
-        struct Foo { int a }
-        Foo bar(int arg) { return Foo{ a: arg }; }
+        struct Foo { s32 a }
+        Foo bar(s32 arg) { return Foo{ a: arg }; }
         "
     );
 
     Tester::new_single_source_expect_ok(
         "multiple fields",
         "
-        struct Foo { int a, int b }
-        Foo bar(int arg) { return Foo{ a: arg, b: arg }; }
+        struct Foo { s32 a, s32 b }
+        Foo bar(s32 arg) { return Foo{ a: arg, b: arg }; }
         "
     );
 
@@ -27,7 +27,7 @@ fn test_correct_struct_instance() {
         "single field, explicit polymorph",
         "
         struct Foo<T>{ T field }
-        Foo<int> bar(int arg) { return Foo<int>{ field: arg }; }
+        Foo<s32> bar(s32 arg) { return Foo<s32>{ field: arg }; }
         "
     );
 
@@ -35,7 +35,7 @@ fn test_correct_struct_instance() {
         "single field, implicit polymorph",
         "
         struct Foo<T>{ T field }
-        int bar(int arg) {
+        s32 bar(s32 arg) {
             auto thingo = Foo{ field: arg };
             return arg;
         }
@@ -46,8 +46,8 @@ fn test_correct_struct_instance() {
         "multiple fields, same explicit polymorph",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        int bar(int arg) {
-            auto qux = Pair<int, int>{ first: arg, second: arg };
+        s32 bar(s32 arg) {
+            auto qux = Pair<s32, s32>{ first: arg, second: arg };
             return arg;
         }
         "
@@ -57,7 +57,7 @@ fn test_correct_struct_instance() {
         "multiple fields, same implicit polymorph", 
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        int bar(int arg) {
+        s32 bar(s32 arg) {
             auto wup = Pair{ first: arg, second: arg };
             return arg;
         }
@@ -68,8 +68,8 @@ fn test_correct_struct_instance() {
         "multiple fields, different explicit polymorph",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        int bar(int arg1, byte arg2) {
-            auto shoo = Pair<int, byte>{ first: arg1, second: arg2 };
+        s32 bar(s32 arg1, s8 arg2) {
+            auto shoo = Pair<s32, s8>{ first: arg1, second: arg2 };
             return arg1;
         }
         "
@@ -79,7 +79,7 @@ fn test_correct_struct_instance() {
         "multiple fields, different implicit polymorph",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        int bar(int arg1, byte arg2) {
+        s32 bar(s32 arg1, s8 arg2) {
             auto shrubbery = Pair{ first: arg1, second: arg2 };
             return arg1;
         }
@@ -91,7 +91,7 @@ fn test_correct_struct_instance() {
 fn test_incorrect_struct_instance() {
     Tester::new_single_source_expect_err(
         "reused field in definition",
-        "struct Foo{ int a, byte a }"
+        "struct Foo{ s32 a, s8 a }"
     ).error(|e| { e
         .assert_num(2)
         .assert_occurs_at(0, "a }")
@@ -173,7 +173,7 @@ fn test_correct_enum_instance() {
         "explicit multi-polymorph",
         "
         enum Foo<A, B>{ A, B }
-        Foo<byte, int> bar() { return Foo::B; }
+        Foo<s8, int> bar() { return Foo::B; }
         "
     );
 }
@@ -235,7 +235,7 @@ fn test_correct_union_instance() {
     Tester::new_single_source_expect_ok(
         "multiple embedded",
         "
-        union Foo { A(int), B(byte) }
+        union Foo { A(int), B(s8) }
         Foo bar() { return Foo::B(2); }
         "
     );
@@ -243,7 +243,7 @@ fn test_correct_union_instance() {
     Tester::new_single_source_expect_ok(
         "multiple values in embedded",
         "
-        union Foo { A(int, byte) }
+        union Foo { A(int, s8) }
         Foo bar() { return Foo::A(0, 2); }
         "
     );
@@ -267,7 +267,7 @@ fn test_correct_union_instance() {
         "multiple polymorphic vars",
         "
         union Result<T, E> { Ok(T), Err(E), }
-        Result<int, byte> bar() { return Result::Ok(3); }
+        Result<int, s8> bar() { return Result::Ok(3); }
         "
     );
 
@@ -275,7 +275,7 @@ fn test_correct_union_instance() {
         "multiple polymorphic in one variant",
         "
         union MaybePair<T1, T2>{ None, Some(T1, T2) }
-        MaybePair<byte, int> bar() { return MaybePair::Some(1, 2); }
+        MaybePair<s8, int> bar() { return MaybePair::Some(1, 2); }
         "
     );
 }
@@ -298,11 +298,11 @@ fn test_incorrect_union_instance() {
     Tester::new_single_source_expect_err(
         "embedded-variant name reuse",
         "
-        union Foo{ A(int), A(byte) }
+        union Foo{ A(int), A(s8) }
         "
     ).error(|e| { e 
         .assert_num(2)
-        .assert_occurs_at(0, "A(byte)")
+        .assert_occurs_at(0, "A(s8)")
         .assert_msg_has(0, "union variant is defined more than once")
         .assert_occurs_at(1, "A(int)")
         .assert_msg_has(1, "other union variant");
@@ -311,7 +311,7 @@ fn test_incorrect_union_instance() {
     Tester::new_single_source_expect_err(
         "undefined variant",
         "
-        union Silly{ Thing(byte) }
+        union Silly{ Thing(s8) }
         Silly bar() { return Silly::Undefined(5); }
         "
     ).error(|e| { e

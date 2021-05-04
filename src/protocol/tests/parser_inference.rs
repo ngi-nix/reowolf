@@ -9,7 +9,7 @@ fn test_integer_inference() {
     Tester::new_single_source_expect_ok(
         "by arguments",
         "
-        int call(byte b, short s, int i, long l) {
+        func call(u8 b, u16 s, u32 i, u64 l) -> u32 {
             auto b2 = b;
             auto s2 = s;
             auto i2 = i;
@@ -20,27 +20,27 @@ fn test_integer_inference() {
     ).for_function("call", |f| { f
         .for_variable("b2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("byte");
+            .assert_concrete_type("u8");
         })
         .for_variable("s2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("short");
+            .assert_concrete_type("u16");
         })
         .for_variable("i2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("int");
+            .assert_concrete_type("u32");
         })
         .for_variable("l2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("long");
+            .assert_concrete_type("u64");
         });
     });
 
     Tester::new_single_source_expect_ok(
         "by assignment",
         "
-        int call() {
-            byte b1 = 0; short s1 = 0; int i1 = 0; long l1 = 0;
+        func call() -> u32 {
+            u8 b1 = 0; u16 s1 = 0; u32 i1 = 0; u64 l1 = 0;
             auto b2 = b1;
             auto s2 = s1;
             auto i2 = i1;
@@ -50,19 +50,19 @@ fn test_integer_inference() {
     ).for_function("call", |f| { f
         .for_variable("b2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("byte");
+            .assert_concrete_type("u8");
         })
         .for_variable("s2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("short");
+            .assert_concrete_type("u16");
         })
         .for_variable("i2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("int");
+            .assert_concrete_type("u32");
         })
         .for_variable("l2", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("long");
+            .assert_concrete_type("u64");
         });
     });
 }
@@ -71,15 +71,15 @@ fn test_integer_inference() {
 fn test_binary_expr_inference() {
     Tester::new_single_source_expect_ok(
         "compatible types",
-        "int call() {
-            byte b0 = 0;
-            byte b1 = 1;
-            short s0 = 0;
-            short s1 = 1;
-            int i0 = 0;
-            int i1 = 1;
-            long l0 = 0;
-            long l1 = 1;
+        "func call() -> s32 {
+            s8 b0 = 0;
+            s8 b1 = 1;
+            s16 s0 = 0;
+            s16 s1 = 1;
+            s32 i0 = 0;
+            s32 i1 = 1;
+            s64 l0 = 0;
+            s64 l1 = 1;
             auto b = b0 + b1;
             auto s = s0 + s1;
             auto i = i0 + i1;
@@ -89,27 +89,27 @@ fn test_binary_expr_inference() {
     ).for_function("call", |f| { f
         .for_expression_by_source(
             "b0 + b1", "+", 
-            |e| { e.assert_concrete_type("byte"); }
+            |e| { e.assert_concrete_type("s8"); }
         )
         .for_expression_by_source(
             "s0 + s1", "+", 
-            |e| { e.assert_concrete_type("short"); }
+            |e| { e.assert_concrete_type("s16"); }
         )
         .for_expression_by_source(
             "i0 + i1", "+", 
-            |e| { e.assert_concrete_type("int"); }
+            |e| { e.assert_concrete_type("s32"); }
         )
         .for_expression_by_source(
             "l0 + l1", "+", 
-            |e| { e.assert_concrete_type("long"); }
+            |e| { e.assert_concrete_type("s64"); }
         );
     });
 
     Tester::new_single_source_expect_err(
         "incompatible types", 
-        "int call() {
-            byte b = 0;
-            long l = 1;
+        "func call() -> s32 {
+            s8 b = 0;
+            s64 l = 1;
             auto r = b + l;
             return 0;
         }"
@@ -117,8 +117,8 @@ fn test_binary_expr_inference() {
         .assert_ctx_has(0, "b + l")
         .assert_msg_has(0, "cannot apply")
         .assert_occurs_at(0, "+")
-        .assert_msg_has(1, "has type 'byte'")
-        .assert_msg_has(2, "has type 'long'");
+        .assert_msg_has(1, "has type 's8'")
+        .assert_msg_has(2, "has type 's64'");
     });
 }
 
@@ -130,12 +130,12 @@ fn test_struct_inference() {
         "by function calls",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) { 
+        func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
             return Pair{ first: first, second: second };
         }
-        int fix_t1<T2>(Pair<byte, T2> arg) { return 0; }
-        int fix_t2<T1>(Pair<T1, int> arg) { return 0; }
-        int test() {
+        func fix_t1<T2>(Pair<s8, T2> arg) -> s32 { return 0; }
+        func fix_t2<T1>(Pair<T1, s32> arg) -> s32 { return 0; }
+        func test() -> s32 {
             auto first = 0;
             auto second = 1;
             auto pair = construct(first, second);
@@ -147,15 +147,15 @@ fn test_struct_inference() {
     ).for_function("test", |f| { f
         .for_variable("first", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("byte");
+            .assert_concrete_type("s8");
         })
         .for_variable("second", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("int");
+            .assert_concrete_type("s32");
         })
         .for_variable("pair", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Pair<byte,int>");
+            .assert_concrete_type("Pair<s8,s32>");
         });
     });
 
@@ -163,15 +163,15 @@ fn test_struct_inference() {
         "by field access",
         "
         struct Pair<T1, T2>{ T1 first, T2 second }
-        Pair<T1, T2> construct<T1, T2>(T1 first, T2 second) {
+        func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
             return Pair{ first: first, second: second };
         }
-        int test() {
+        test() -> s32 {
             auto first = 0;
             auto second = 1;
             auto pair = construct(first, second);
-            byte assign_first = 0;
-            long assign_second = 1;
+            s8 assign_first = 0;
+            s64 assign_second = 1;
             pair.first = assign_first;
             pair.second = assign_second;
             return 0;
@@ -180,15 +180,15 @@ fn test_struct_inference() {
     ).for_function("test", |f| { f
         .for_variable("first", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("byte");
+            .assert_concrete_type("s8");
         })
         .for_variable("second", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("long");
+            .assert_concrete_type("s64");
         })
         .for_variable("pair", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Pair<byte,long>");
+            .assert_concrete_type("Pair<s8,s64>");
         });
     });
 
@@ -196,10 +196,12 @@ fn test_struct_inference() {
         "by nested field access",
         "
         struct Node<T1, T2>{ T1 l, T2 r }
-        Node<T1, T2> construct<T1, T2>(T1 l, T2 r) { return Node{ l: l, r: r }; }
-        int fix_poly<T>(Node<T, T> a) { return 0; }
-        int test() {
-            byte assigned = 0;
+        func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> {
+            return Node{ l: l, r: r };
+        }
+        func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
+        func test() -> s32 {
+            s8 assigned = 0;
             auto thing = construct(assigned, construct(0, 1));
             fix_poly(thing.r);
             thing.r.r = assigned;
@@ -209,7 +211,7 @@ fn test_struct_inference() {
     ).for_function("test", |f| { f
         .for_variable("thing", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Node<byte,Node<byte,byte>>");
+            .assert_concrete_type("Node<s8,Node<s8,s8>>");
         });
     });
 }
@@ -220,7 +222,7 @@ fn test_enum_inference() {
         "no polymorphic vars",
         "
         enum Choice { A, B }
-        int test_instances() {
+        test_instances() -> s32 {
             auto foo = Choice::A;
             auto bar = Choice::B;
             return 0;
@@ -244,21 +246,21 @@ fn test_enum_inference() {
             A,
             B,
         }
-        int fix_as_byte(Choice<byte> arg) { return 0; }
-        int fix_as_int(Choice<int> arg) { return 0; }
-        int test_instances() {
-            auto choice_byte = Choice::A;
-            auto choice_int1 = Choice::B;
-            Choice<auto> choice_int2 = Choice::B;
-            fix_as_byte(choice_byte);
-            fix_as_int(choice_int1);
-            return fix_as_int(choice_int2);
+        func fix_as_s8(Choice<s8> arg) -> s32 { return 0; }
+        fix_as_s32(Choice<s32> arg) -> s32 { return 0; }
+        test_instances() -> s32 {
+            auto choice_s8 = Choice::A;
+            auto choice_s32_1 = Choice::B;
+            Choice<auto> choice_s32_2 = Choice::B;
+            fix_as_s8(choice_s8);
+            fix_as_s32(choice_s32_1);
+            return fix_as_int(choice_s32_2);
         }
         "
     ).for_function("test_instances", |f| { f
-        .for_variable("choice_byte", |v| { v
+        .for_variable("choice_s8", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Choice<byte>");
+            .assert_concrete_type("Choice<s8>");
         })
         .for_variable("choice_int1", |v| { v
             .assert_parser_type("auto")
@@ -274,10 +276,10 @@ fn test_enum_inference() {
         "two polymorphic vars",
         "
         enum Choice<T1, T2>{ A, B, }
-        int fix_t1<T>(Choice<byte, T> arg) { return 0; }
-        int fix_t2<T>(Choice<T, int> arg) { return 0; }
-        int test_instances() {
-            Choice<byte, auto> choice1 = Choice::A;
+        fix_t1<T>(Choice<s8, T> arg) -> s32 { return 0; }
+        fix_t2<T>(Choice<T, int> arg) -> s32 { return 0; }
+        test_instances() -> int {
+            Choice<s8, auto> choice1 = Choice::A;
             Choice<auto, int> choice2 = Choice::A;
             Choice<auto, auto> choice3 = Choice::B;
             auto choice4 = Choice::B;
@@ -288,20 +290,20 @@ fn test_enum_inference() {
         "
     ).for_function("test_instances", |f| { f
         .for_variable("choice1", |v| { v
-            .assert_parser_type("Choice<byte,auto>")
-            .assert_concrete_type("Choice<byte,int>");
+            .assert_parser_type("Choice<s8,auto>")
+            .assert_concrete_type("Choice<s8,int>");
         })
         .for_variable("choice2", |v| { v
             .assert_parser_type("Choice<auto,int>")
-            .assert_concrete_type("Choice<byte,int>");
+            .assert_concrete_type("Choice<s8,int>");
         })
         .for_variable("choice3", |v| { v
             .assert_parser_type("Choice<auto,auto>")
-            .assert_concrete_type("Choice<byte,int>");
+            .assert_concrete_type("Choice<s8,int>");
         })
         .for_variable("choice4", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Choice<byte,int>");
+            .assert_concrete_type("Choice<s8,int>");
         });
     });
 }
@@ -311,10 +313,10 @@ fn test_failed_polymorph_inference() {
     Tester::new_single_source_expect_err(
         "function call inference mismatch",
         "
-        int poly<T>(T a, T b) { return 0; }
-        int call() {
-            byte first_arg = 5;
-            long second_arg = 2;
+        func poly<T>(T a, T b) -> s32 { return 0; }
+        func call() -> s32 {
+            s8 first_arg = 5;
+            s64 second_arg = 2;
             return poly(first_arg, second_arg);
         }
         "
@@ -324,18 +326,18 @@ fn test_failed_polymorph_inference() {
         .assert_occurs_at(0, "poly")
         .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
         .assert_occurs_at(1, "second_arg")
-        .assert_msg_has(1, "inferred it to 'long'")
+        .assert_msg_has(1, "inferred it to 's64'")
         .assert_occurs_at(2, "first_arg")
-        .assert_msg_has(2, "inferred it to 'byte'");
+        .assert_msg_has(2, "inferred it to 's8'");
     });
 
     Tester::new_single_source_expect_err(
         "struct literal inference mismatch",
         "
         struct Pair<T>{ T first, T second }
-        int call() {
-            byte first_arg = 5;
-            long second_arg = 2;
+        call() -> s32 {
+            s8 first_arg = 5;
+            s64 second_arg = 2;
             auto pair = Pair{ first: first_arg, second: second_arg };
             return 3;
         }
@@ -346,9 +348,9 @@ fn test_failed_polymorph_inference() {
         .assert_occurs_at(0, "Pair{")
         .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
         .assert_occurs_at(1, "second_arg")
-        .assert_msg_has(1, "inferred it to 'long'")
+        .assert_msg_has(1, "inferred it to 's64'")
         .assert_occurs_at(2, "first_arg")
-        .assert_msg_has(2, "inferred it to 'byte'");
+        .assert_msg_has(2, "inferred it to 's8'");
     });
 
     // Cannot really test literal inference error, but this comes close
@@ -356,17 +358,17 @@ fn test_failed_polymorph_inference() {
         "enum literal inference mismatch",
         "
         enum Uninteresting<T>{ Variant }
-        int fix_t<T>(Uninteresting<T> arg) { return 0; }
-        int call() {
+        func fix_t<T>(Uninteresting<T> arg) -> s32 { return 0; }
+        func call() -> s32 {
             auto a = Uninteresting::Variant;
-            fix_t<byte>(a);
+            fix_t<s8>(a);
             fix_t<int>(a);
             return 4;
         }
         "
     ).error(|e| { e
         .assert_num(2)
-        .assert_any_msg_has("type 'Uninteresting<byte>'")
+        .assert_any_msg_has("type 'Uninteresting<s8>'")
         .assert_any_msg_has("type 'Uninteresting<int>'");
     });
 
@@ -374,8 +376,8 @@ fn test_failed_polymorph_inference() {
         "field access inference mismatch",
         "
         struct Holder<Shazam>{ Shazam a }
-        int call() {
-            byte to_hold = 0;
+        func call() -> s32 {
+            s8 to_hold = 0;
             auto holder = Holder{ a: to_hold };
             return holder.a;
         }
@@ -385,7 +387,7 @@ fn test_failed_polymorph_inference() {
         .assert_ctx_has(0, "holder.a")
         .assert_occurs_at(0, ".")
         .assert_msg_has(0, "Conflicting type for polymorphic variable 'Shazam'")
-        .assert_msg_has(1, "inferred it to 'byte'")
+        .assert_msg_has(1, "inferred it to 's8'")
         .assert_msg_has(2, "inferred it to 'int'");
     });
 
@@ -394,11 +396,11 @@ fn test_failed_polymorph_inference() {
         "nested field access inference mismatch",
         "
         struct Node<T1, T2>{ T1 l, T2 r }
-        Node<T1, T2> construct<T1, T2>(T1 l, T2 r) { return Node{ l: l, r: r }; }
-        int fix_poly<T>(Node<T, T> a) { return 0; }
-        int test() {
-            byte assigned = 0;
-            long another = 1;
+        func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> { return Node{ l: l, r: r }; }
+        func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
+        func test() -> s32 {
+            s8 assigned = 0;
+            s64 another = 1;
             auto thing = construct(assigned, construct(another, 1));
             fix_poly(thing.r);
             thing.r.r = assigned;

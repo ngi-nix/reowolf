@@ -16,7 +16,7 @@ pub(crate) const EXPR_BUFFER_INIT_CAPACITY: usize = 256;
 /// General context structure that is used while traversing the AST.
 pub(crate) struct Ctx<'p> {
     pub heap: &'p mut Heap,
-    pub module: &'p Module,
+    pub module: &'p mut Module,
     pub symbols: &'p mut SymbolTable,
     pub types: &'p mut TypeTable,
 }

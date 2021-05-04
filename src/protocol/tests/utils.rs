@@ -1,3 +1,4 @@
+use crate::collections::StringPool;
 use crate::protocol::{
     ast::*,
     input_source::*,
@@ -123,6 +124,7 @@ pub(crate) struct AstOkTester {
     heap: Heap,
     symbols: SymbolTable,
     types: TypeTable,
+    pool: StringPool,
 }
 
 impl AstOkTester {
@@ -133,6 +135,7 @@ impl AstOkTester {
             heap: parser.heap,
             symbols: parser.symbol_table,
             types: parser.type_table,
+            pool: parser.string_pool,
         }
     }
 
@@ -209,6 +212,7 @@ impl AstOkTester {
         let mut found = false;
         for definition in self.heap.definitions.iter() {
             if let Definition::Function(definition) = definition {
+                println!("DEBUG: Have {}", definition.identifier.value.as_str());
                 if definition.identifier.value.as_str() != name {
                     continue;
                 }
@@ -218,6 +222,8 @@ impl AstOkTester {
                 f(tester);
                 found = true;
                 break;
+            } else {
+                println!("DEBUG: Have (not a function, but) {}", definition.identifier().value.as_str());
             }
         }
 

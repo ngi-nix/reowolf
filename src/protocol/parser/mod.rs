@@ -133,9 +133,12 @@ impl Parser {
         // Continue compilation with the remaining phases now that the types
         // are all in the type table
         for module_idx in 0..self.modules.len() {
+            // TODO: Remove the entire Visitor abstraction. It really doesn't
+            //  make sense considering the amount of special handling we do
+            //  in each pass.
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
-                module: &self.modules[module_idx],
+                module: &mut self.modules[module_idx],
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
             };
@@ -144,7 +147,7 @@ impl Parser {
 
         // Perform typechecking on all modules
         let mut queue = ResolveQueue::new();
-        for module in &self.modules {
+        for module in &mut self.modules {
             let ctx = visitor::Ctx{
                 heap: &mut self.heap,
                 module,
@@ -157,7 +160,7 @@ impl Parser {
             let top = queue.pop().unwrap();
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
-                module: &self.modules[top.root_id.index as usize],
+                module: &mut self.modules[top.root_id.index as usize],
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
             };

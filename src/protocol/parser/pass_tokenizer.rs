@@ -44,15 +44,15 @@ impl PassTokenizer {
         // see `push_range` and `pop_range`.
         self.stack_idx = 0;
         target.ranges.push(TokenRange{
-            parent_idx: 0,
+            parent_idx: NO_RELATION,
             range_kind: TokenRangeKind::Module,
             curly_depth: 0,
             start: 0,
             end: 0,
             num_child_ranges: 0,
-            first_child_idx: 0,
-            last_child_idx: 0,
-            next_sibling_idx: None,
+            first_child_idx: NO_RELATION,
+            last_child_idx: NO_RELATION,
+            next_sibling_idx: NO_RELATION,
         });
 
         // Main tokenization loop
@@ -142,6 +142,20 @@ impl PassTokenizer {
             ));
         }
 
+        // Ranges that did not depend on curly braces may have missing tokens.
+        // So close all of the active tokens
+        while self.stack_idx != 0 {
+            self.pop_range(target, target.tokens.len() as u32);
+        }
+
+        // And finally, we may have a token range at the end that doesn't belong
+        // to a range yet, so insert a "code" range if this is the case.
+        debug_assert_eq!(self.stack_idx, 0);
+        let last_token_idx = target.tokens.len() as u32;
+        if target.ranges[0].end != last_token_idx {
+
+        }
+
         // TODO: @remove once I'm sure the algorithm works. For now it is better
         //  if the debugging is a little more expedient
         if cfg!(debug_assertions) {
@@ -149,23 +163,24 @@ impl PassTokenizer {
             for parent_idx in 0..target.ranges.len() {
                 let cur_range = &target.ranges[parent_idx];
                 if cur_range.num_child_ranges == 0 {
-                    assert_eq!(cur_range.first_child_idx, parent_idx as u32);
-                    assert_eq!(cur_range.last_child_idx, parent_idx as u32);
+                    assert_eq!(cur_range.first_child_idx, NO_RELATION);
+                    assert_eq!(cur_range.last_child_idx, NO_RELATION);
                 } else {
-                    assert_ne!(cur_range.first_child_idx, parent_idx as u32);
-                    assert_ne!(cur_range.last_child_idx, parent_idx as u32);
+                    assert_ne!(cur_range.first_child_idx, NO_RELATION);
+                    assert_ne!(cur_range.last_child_idx, NO_RELATION);
 
                     let mut child_counter = 0u32;
-                    let last_child_idx = cur_range.first_child_idx;
-                    let mut child_idx = Some(cur_range.first_child_idx);
-                    while let Some(cur_child_idx) = child_idx {
-                        let child_range = &target.ranges[cur_child_idx as usize];
-                        assert_eq!(child_range.parent_idx, parent_idx);
+                    let mut last_valid_child_idx = cur_range.first_child_idx;
+                    let mut child_idx = cur_range.first_child_idx;
+                    while child_idx != NO_RELATION {
+                        let child_range = &target.ranges[child_idx as usize];
+                        assert_eq!(child_range.parent_idx, parent_idx as i32);
+                        last_valid_child_idx = child_idx;
                         child_idx = child_range.next_sibling_idx;
                         child_counter += 1;
                     }
 
-                    assert_eq!(cur_range.last_child_idx, last_child_idx);
+                    assert_eq!(cur_range.last_child_idx, last_valid_child_idx);
                     assert_eq!(cur_range.num_child_ranges, child_counter);
                 }
             }
@@ -626,79 +641,92 @@ impl PassTokenizer {
         has_newline
     }
 
-    /// Pushes a new token range onto the stack in the buffers.
-    fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token: u32) {
-        let new_range_idx = target.ranges.len() as u32;
-        let cur_range = &mut target.ranges[self.stack_idx];
+    fn push_range(&mut self, target: &mut TokenBuffer, range_kind: TokenRangeKind, first_token_idx: u32) {
+        let new_range_idx = target.ranges.len() as i32;
+        let parent_idx = self.stack_idx as i32;
+        let parent_range = &mut target.ranges[self.stack_idx];
+        let curly_depth = self.curly_stack.len() as u32;
 
-        // If we have just popped a range and then push a new range, then the
-        // first token is equal to the last token registered on the current
-        // range. If not, then we had some intermediate tokens that did not
-        // belong to a particular kind of token range: hence we insert an
-        // intermediate "code" range.
-        if cur_range.end != first_token {
-            let code_start = cur_range.end;
-
-            if cur_range.first_child_idx == self.stack_idx as u32 {
-                // The parent of the new "code" range we're going to push does
-                // not have any registered children yet.
-                cur_range.first_child_idx = new_range_idx;
-            }
-            cur_range.last_child_idx = new_range_idx + 1;
-
-            cur_range.end = first_token;
-            cur_range.num_child_ranges += 1;
-            target.ranges.push(TokenRange{
-                parent_idx: self.stack_idx,
-                range_kind: TokenRangeKind::Code,
-                curly_depth: self.curly_stack.len() as u32,
-                start: code_start,
-                end: first_token,
-                num_child_ranges: 0,
-                first_child_idx: new_range_idx,
-                last_child_idx: new_range_idx,
-                next_sibling_idx: Some(new_range_idx + 1), // we're going to push this thing next
-            });
-        } else {
-            // We're going to push the range in the code below, but while we
-            // have the `cur_range` borrowed mutably, we fix up its children
-            // indices.
-            if cur_range.first_child_idx == self.stack_idx as u32 {
-                cur_range.first_child_idx = new_range_idx;
-            }
-            cur_range.last_child_idx = new_range_idx;
+        if parent_range.first_child_idx == NO_RELATION {
+            parent_range.first_child_idx = new_range_idx;
         }
 
-        // Insert a new range
-        let parent_idx = self.stack_idx;
+        if parent_range.end != first_token_idx {
+            // We popped a range, processed some intermediate tokens and now
+            // enter a new range. Those intermediate tokens do not belong to a
+            // particular range yet. So we put them in a "code" range.
+
+            // Remember last sibling from parent (if any)
+            let sibling_idx = parent_range.last_child_idx;
+
+            // Push the code range
+            let code_start_idx = parent_range.end;
+            let code_end_idx = first_token_idx;
+
+            parent_range.last_child_idx = new_range_idx;
+            parent_range.end = code_end_idx;
+            parent_range.num_child_ranges += 1;
+
+            target.ranges.push(TokenRange{
+                parent_idx,
+                range_kind: TokenRangeKind::Code,
+                curly_depth,
+                start: code_start_idx,
+                end: code_end_idx,
+                num_child_ranges: 0,
+                first_child_idx: NO_RELATION,
+                last_child_idx: NO_RELATION,
+                next_sibling_idx: new_range_idx + 1, // we're going to push this range below
+            });
+
+            // Fix up the sibling indices
+            if sibling_idx != NO_RELATION {
+                let sibling_range = &mut target.ranges[sibling_idx as usize];
+                sibling_range.next_sibling_idx = new_range_idx;
+            }
+        }
+
+        // Push the new range
         self.stack_idx = target.ranges.len();
-        let new_range_idx = self.stack_idx as u32;
         target.ranges.push(TokenRange{
             parent_idx,
             range_kind,
-            curly_depth: self.curly_stack.len() as u32,
-            start: first_token,
-            end: first_token,
+            curly_depth,
+            start: first_token_idx,
+            end: first_token_idx, // modified when popped
             num_child_ranges: 0,
-            first_child_idx: new_range_idx,
-            last_child_idx: new_range_idx,
-            next_sibling_idx: None,
-        });
+            first_child_idx: NO_RELATION,
+            last_child_idx: NO_RELATION,
+            next_sibling_idx: NO_RELATION
+        })
     }
 
-    fn pop_range(&mut self, target: &mut TokenBuffer, end_index: u32) {
-        let last = &mut target.ranges[self.stack_idx];
-        debug_assert!(self.stack_idx != last.parent_idx, "attempting to pop top-level range");
+    fn pop_range(&mut self, target: &mut TokenBuffer, end_token_idx: u32) {
+        let popped_idx = self.stack_idx as i32;
+        let popped_range = &mut target.ranges[self.stack_idx];
+        debug_assert!(self.stack_idx != 0, "attempting to pop top-level range");
 
         // Fix up the current range before going back to parent
-        last.end = end_index;
-        debug_assert_ne!(last.start, end_index);
+        popped_range.end = end_token_idx;
+        debug_assert_ne!(popped_range.start, end_token_idx);
 
-        // Go back to parent
-        self.stack_idx = last.parent_idx;
+        // Go back to parent and fix up its child pointers, but remember the
+        // last child, so we can link it to the newly popped range.
+        self.stack_idx = popped_range.parent_idx as usize;
         let parent = &mut target.ranges[self.stack_idx];
-        parent.end = end_index;
+        if parent.first_child_idx == NO_RELATION {
+            parent.first_child_idx = popped_idx;
+        }
+        let prev_sibling_idx = parent.last_child_idx;
+        parent.last_child_idx = popped_idx;
+        parent.end = end_token_idx;
         parent.num_child_ranges += 1;
+
+        // Fix up the sibling (if it exists)
+        if prev_sibling_idx != NO_RELATION {
+            let sibling = &mut target.ranges[prev_sibling_idx as usize];
+            sibling.next_sibling_idx = popped_idx;
+        }
     }
 
 

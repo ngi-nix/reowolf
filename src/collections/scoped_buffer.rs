@@ -1,5 +1,3 @@
-use std::iter::FromIterator;
-
 /// scoped_buffer.rs
 ///
 /// Solves the common pattern where we are performing some kind of recursive
@@ -10,13 +8,17 @@ use std::iter::FromIterator;
 /// It is unsafe because we're using pointers to circumvent borrowing rules in
 /// the name of code cleanliness. The correctness of use is checked in debug
 /// mode.
+
+use std::iter::FromIterator;
+
 pub(crate) struct ScopedBuffer<T: Sized> {
     pub inner: Vec<T>,
 }
 
 /// A section of the buffer. Keeps track of where we started the section. When
 /// done with the section one must call `into_vec` or `forget` to remove the
-/// section from the underlying buffer.
+/// section from the underlying buffer. This will also be done upon dropping the
+/// ScopedSection in case errors are being handled.
 pub(crate) struct ScopedSection<T: Sized> {
     inner: *mut Vec<T>,
     start_size: u32,
@@ -75,16 +77,28 @@ impl<T: Sized> ScopedSection<T> {
     }
 
     #[inline]
-    pub(crate) fn forget(self) {
+    pub(crate) fn forget(mut self) {
         let vec = unsafe{&mut *self.inner};
-        debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to forget section, but size is larger than expected");
+        if cfg!(debug_assertions) {
+            debug_assert_eq!(
+                vec.len(), self.cur_size as usize,
+                "trying to forget section, but size is larger than expected"
+            );
+            self.cur_size = self.start_size;
+        }
         vec.truncate(self.start_size as usize);
     }
 
     #[inline]
-    pub(crate) fn into_vec(self) -> Vec<T> {
+    pub(crate) fn into_vec(mut self) -> Vec<T> {
         let vec = unsafe{&mut *self.inner};
-        debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to turn section into vec, but size is larger than expected");
+        if cfg!(debug_assertions) {
+            debug_assert_eq!(
+                vec.len(), self.cur_size as usize,
+                "trying to turn section into vec, but size is larger than expected"
+            );
+            self.cur_size = self.start_size;
+        }
         let section = Vec::from_iter(vec.drain(self.start_size as usize..));
         section
     }
@@ -102,8 +116,8 @@ impl<T: Sized> std::ops::Index<usize> for ScopedSection<T> {
 #[cfg(debug_assertions)]
 impl<T: Sized> Drop for ScopedSection<T> {
     fn drop(&mut self) {
-        // Make sure that the data was actually taken out of the scoped section
-        let vec = unsafe{&*self.inner};
-        debug_assert_eq!(vec.len(), self.start_size as usize);
+        let mut vec = unsafe{&mut *self.inner};
+        debug_assert_eq!(vec.len(), self.cur_size as usize);
+        vec.truncate(self.start_size as usize);
     }
 }

@@ -47,10 +47,10 @@
 
 macro_rules! debug_log {
     ($format:literal) => {
-        enabled_debug_print!(true, "types", $format);
+        enabled_debug_print!(false, "types", $format);
     };
     ($format:literal, $($args:expr),*) => {
-        enabled_debug_print!(true, "types", $format, $($args),*);
+        enabled_debug_print!(false, "types", $format, $($args),*);
     };
 }
 
