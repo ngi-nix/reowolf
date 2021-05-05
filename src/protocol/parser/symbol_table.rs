@@ -191,8 +191,6 @@ impl SymbolTable {
         );
         debug_assert!(!self.scope_lookup.contains_key(&new_scope), "inserting scope {:?}, but it already exists", new_scope);
 
-        println!("DEBUG: Inserting scope {:?} with parent {:?}", new_scope, parent_scope);
-
         if let Some(parent_scope) = parent_scope {
             let parent = self.scope_lookup.get_mut(&parent_scope).unwrap();
             parent.child_scopes.push(new_scope);
@@ -214,7 +212,6 @@ impl SymbolTable {
     // Note: we do not return a reference because Rust doesn't like it.
     pub(crate) fn insert_symbol(&mut self, in_scope: SymbolScope, symbol: Symbol) -> Result<(), (Symbol, Symbol)> {
         debug_assert!(self.scope_lookup.contains_key(&in_scope), "inserting symbol {}, but scope {:?} does not exist", symbol.name.as_str(), in_scope);
-        println!("DEBUG: Inserting symbol {:?} in scope {:?}", symbol, in_scope);
         let mut seek_scope = in_scope;
         loop {
             let scoped_symbols = self.scope_lookup.get(&seek_scope).unwrap();

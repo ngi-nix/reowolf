@@ -13,7 +13,7 @@ fn test_module_import() {
         ")
         .with_source("
         import external;
-        s32 caller() {
+        func caller() -> s32 {
             auto a = external::Foo{ field: 0 };
             return a.field;
         }
@@ -28,7 +28,7 @@ fn test_module_import() {
         ")
         .with_source("
         import external.domain;
-        s32 caller() {
+        func caller() -> s32 {
             auto a = domain::Foo{ field: 0 };
             return a.field;
         }
@@ -43,7 +43,7 @@ fn test_module_import() {
         ")
         .with_source("
         import external as aliased;
-        s32 caller() {
+        func caller() -> s32 {
             auto a = aliased::Foo{ field: 0 };
             return a.field;
         }
@@ -61,7 +61,7 @@ fn test_single_symbol_import() {
         ")
         .with_source("
         import external::Foo;
-        s32 caller() {
+        func caller() -> s32 {
             auto a = Foo{ field: 1 };
             auto b = Foo{ field: 2 };
             return a.field + b.field;
@@ -76,7 +76,7 @@ fn test_single_symbol_import() {
         ")
         .with_source("
         import external::Foo as Bar;
-        s32 caller() {
+        func caller() -> s32 {
             return Bar{ field: 0 }.field;
         }
         ")
@@ -107,7 +107,7 @@ fn test_multi_symbol_import() {
         ")
         .with_source("
         import external::{Foo, Bar};
-        s8 caller() {
+        func caller() -> s8 {
             return Foo{f:0}.f + Bar{b:1}.b;
         }
         ")
@@ -122,29 +122,28 @@ fn test_multi_symbol_import() {
         ")
         .with_source("
         import external::{Foo as Bar, Bar as Foo};
-        s8 caller() {
+        func caller() -> s8 {
             return Foo{in_bar:0}.in_bar + Bar{in_foo:0}.in_foo;    
         }")
         .compile()
         .expect_ok();
 
-    // TODO: Re-enable once std lib is properly implemented
-    // Tester::new("import all")
-    //     .with_source("
-    //     #module external
-    //     struct Foo { s8 f };
-    //     struct Bar { s8 b };
-    //     ")
-    //     .with_source("
-    //     import external::*;
-    //     s8 caller() {
-    //         auto f = Foo{f:0};
-    //         auto b = Bar{b:0};
-    //         return f.f + b.b;
-    //     }
-    //     ")
-    //     .compile()
-    //     .expect_ok();
+    Tester::new("import all")
+        .with_source("
+        #module external
+        struct Foo { s8 f }
+        struct Bar { s8 b }
+        ")
+        .with_source("
+        import external::*;
+        func caller() -> s8 {
+            auto f = Foo{f:0};
+            auto b = Bar{b:0};
+            return f.f + b.b;
+        }
+        ")
+        .compile()
+        .expect_ok();
 }
 
 #[test]
@@ -156,7 +155,7 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import external;
-        s8 caller() {
+        func caller() -> s8 {
             auto foo = external::Foo<s32>{ f: 0 };
             return foo.f;
         }
@@ -164,7 +163,7 @@ fn test_illegal_import_use() {
         .compile()
         .expect_err()
         .error(|e| { e
-            .assert_msg_has(0, "the type Foo is not polymorphic");
+            .assert_msg_has(0, "the type 'external::Foo' is not polymorphic");
         });
 
     Tester::new("mismatched polymorphic args")
@@ -174,7 +173,7 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import external;
-        s8 caller() {
+        func caller() -> s8 {
             auto foo = external::Foo<s8, s32>{ f: 0 };
             return foo.f;
         }")
@@ -182,7 +181,7 @@ fn test_illegal_import_use() {
         .expect_err()
         .error(|e| { e
             .assert_msg_has(0, "expected 1 polymorphic")
-            .assert_msg_has(0, "2 were specified");
+            .assert_msg_has(0, "2 were provided");
         });
 
     Tester::new("module as type")
@@ -191,7 +190,7 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import external;
-        s8 caller() {
+        func caller() -> s8 {
             auto foo = external{ f: 0 };
             return 0;
         }
@@ -199,25 +198,22 @@ fn test_illegal_import_use() {
         .compile()
         .expect_err()
         .error(|e| { e
-            .assert_msg_has(0, "resolved to a namespace");
+            .assert_msg_has(0, "expected a type but got a module");
         });
 
-    Tester::new("more namespaces than needed, not polymorphic")
+    Tester::new("missing type")
         .with_source("
         #module external
-        struct Foo { s8 f }
+        struct Bar {}
         ")
         .with_source("
-        import external;
-        s8 caller() {
-            auto foo = external::Foo::f{ f: 0 };
-            return 0;
-        }")
+        import external::Foo;
+        ")
         .compile()
         .expect_err()
         .error(|e| { e
-            .assert_msg_has(0, "not fully resolve this identifier")
-            .assert_msg_has(0, "able to match 'external::Foo'");
+            .assert_msg_has(0, "could not find symbol 'Foo' within module 'external'")
+            .assert_occurs_at(0, "Foo");
         });
 
     Tester::new("import from another import")
@@ -232,14 +228,15 @@ fn test_illegal_import_use() {
         ")
         .with_source("
         import mod2;
-        s8 caller() {
+        func caller() -> s8 {
             auto bar = mod2::Bar{ f: mod2::Foo{ f: 0 } };
             return var.f.f;
         }")
         .compile()
         .expect_err()
         .error(|e| { e
-            .assert_msg_has(0, "Could not resolve this identifier")
-            .assert_occurs_at(0, "mod2::Foo");
+            .assert_msg_has(0, "unknown type 'Foo' in module 'mod2'")
+            .assert_msg_has(0, "module 'mod2' does import 'Foo'")
+            .assert_occurs_at(0, "Foo");
         });
 }

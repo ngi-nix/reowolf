@@ -154,7 +154,7 @@ impl PassTokenizer {
         let last_registered_idx = target.ranges[0].end;
         let last_token_idx = target.tokens.len() as u32;
         if last_registered_idx != last_token_idx {
-            self.add_code_range(target, 0, last_registered_idx, last_token_idx);
+            self.add_code_range(target, 0, last_registered_idx, last_token_idx, NO_RELATION);
         }
 
         // TODO: @remove once I'm sure the algorithm works. For now it is better
@@ -644,11 +644,11 @@ impl PassTokenizer {
 
     fn add_code_range(
         &mut self, target: &mut TokenBuffer, parent_idx: i32,
-        code_start_idx: u32, code_end_idx: u32
+        code_start_idx: u32, code_end_idx: u32, next_sibling_idx: i32
     ) {
         let new_range_idx = target.ranges.len() as i32;
         let parent_range = &mut target.ranges[parent_idx as usize];
-        debug_assert_ne!(parent_range.end, code_start_idx, "called push_code_range without a need to do so");
+        debug_assert_ne!(parent_range.end, code_end_idx, "called push_code_range without a need to do so");
 
         let sibling_idx = parent_range.last_child_idx;
 
@@ -666,7 +666,7 @@ impl PassTokenizer {
             num_child_ranges: 0,
             first_child_idx: NO_RELATION,
             last_child_idx: NO_RELATION,
-            next_sibling_idx: new_range_idx + 1, // we're going to push this range below
+            next_sibling_idx,
         });
 
         // Fix up the sibling indices
@@ -687,7 +687,7 @@ impl PassTokenizer {
 
         let last_registered_idx = parent_range.end;
         if last_registered_idx != first_token_idx {
-            self.add_code_range(target, parent_idx, last_registered_idx, first_token_idx);
+            self.add_code_range(target, parent_idx, last_registered_idx, first_token_idx, new_range_idx + 1);
         }
 
         // Push the new range
@@ -798,9 +798,10 @@ fn is_integer_literal_start(c: u8) -> bool {
 }
 
 fn maybe_number_remaining(c: u8) -> bool {
+    // Note: hex range includes the possible binary indicator 'b' and 'B';
     return
-        (c == b'b' || c == b'B' || c == b'o' || c == b'O' || c == b'x' || c == b'X') ||
-            (c >= b'0' && c <= b'9') ||
+        (c == b'o' || c == b'O' || c == b'x' || c == b'X') ||
+            (c >= b'0' && c <= b'9') || (c >= b'A' && c <= b'F') || (c >= b'a' && c <= b'f') ||
             c == b'_';
 }
 

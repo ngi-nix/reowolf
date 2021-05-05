@@ -594,7 +594,7 @@ impl Visitor2 for PassValidationLinking {
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
                         &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
-                            "the variant does '{}' does not exist on the union '{}'",
+                            "the variant '{}' does not exist on the union '{}'",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
                         )
                     ));

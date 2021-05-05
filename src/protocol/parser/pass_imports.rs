@@ -161,7 +161,6 @@ impl PassImport {
 
             if Some(TokenKind::Ident) == next {
                 // Importing a single symbol
-                iter.consume();
                 let (imported_symbol, symbol_definition) = consume_symbol_and_maybe_alias(
                     &module.source, &mut iter, ctx, &module_identifier.value, target_root_id
                 )?;

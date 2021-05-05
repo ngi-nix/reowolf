@@ -159,61 +159,61 @@ fn test_struct_inference() {
         });
     });
 
-    // Tester::new_single_source_expect_ok(
-    //     "by field access",
-    //     "
-    //     struct Pair<T1, T2>{ T1 first, T2 second }
-    //     func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
-    //         return Pair{ first: first, second: second };
-    //     }
-    //     test() -> s32 {
-    //         auto first = 0;
-    //         auto second = 1;
-    //         auto pair = construct(first, second);
-    //         s8 assign_first = 0;
-    //         s64 assign_second = 1;
-    //         pair.first = assign_first;
-    //         pair.second = assign_second;
-    //         return 0;
-    //     }
-    //     "
-    // ).for_function("test", |f| { f
-    //     .for_variable("first", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("s8");
-    //     })
-    //     .for_variable("second", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("s64");
-    //     })
-    //     .for_variable("pair", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("Pair<s8,s64>");
-    //     });
-    // });
-    //
-    // Tester::new_single_source_expect_ok(
-    //     "by nested field access",
-    //     "
-    //     struct Node<T1, T2>{ T1 l, T2 r }
-    //     func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> {
-    //         return Node{ l: l, r: r };
-    //     }
-    //     func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
-    //     func test() -> s32 {
-    //         s8 assigned = 0;
-    //         auto thing = construct(assigned, construct(0, 1));
-    //         fix_poly(thing.r);
-    //         thing.r.r = assigned;
-    //         return 0;
-    //     }
-    //     ",
-    // ).for_function("test", |f| { f
-    //     .for_variable("thing", |v| { v
-    //         .assert_parser_type("auto")
-    //         .assert_concrete_type("Node<s8,Node<s8,s8>>");
-    //     });
-    // });
+    Tester::new_single_source_expect_ok(
+        "by field access",
+        "
+        struct Pair<T1, T2>{ T1 first, T2 second }
+        func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
+            return Pair{ first: first, second: second };
+        }
+        func test() -> s32 {
+            auto first = 0;
+            auto second = 1;
+            auto pair = construct(first, second);
+            s8 assign_first = 0;
+            s64 assign_second = 1;
+            pair.first = assign_first;
+            pair.second = assign_second;
+            return 0;
+        }
+        "
+    ).for_function("test", |f| { f
+        .for_variable("first", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("s8");
+        })
+        .for_variable("second", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("s64");
+        })
+        .for_variable("pair", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Pair<s8,s64>");
+        });
+    });
+
+    Tester::new_single_source_expect_ok(
+        "by nested field access",
+        "
+        struct Node<T1, T2>{ T1 l, T2 r }
+        func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> {
+            return Node{ l: l, r: r };
+        }
+        func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
+        func test() -> s32 {
+            s8 assigned = 0;
+            auto thing = construct(assigned, construct(0, 1));
+            fix_poly(thing.r);
+            thing.r.r = assigned;
+            return 0;
+        }
+        ",
+    ).for_function("test", |f| { f
+        .for_variable("thing", |v| { v
+            .assert_parser_type("auto")
+            .assert_concrete_type("Node<s8,Node<s8,s8>>");
+        });
+    });
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn test_enum_inference() {
         "no polymorphic vars",
         "
         enum Choice { A, B }
-        test_instances() -> s32 {
+        func test_instances() -> s32 {
             auto foo = Choice::A;
             auto bar = Choice::B;
             return 0;
@@ -247,14 +247,14 @@ fn test_enum_inference() {
             B,
         }
         func fix_as_s8(Choice<s8> arg) -> s32 { return 0; }
-        fix_as_s32(Choice<s32> arg) -> s32 { return 0; }
-        test_instances() -> s32 {
+        func fix_as_s32(Choice<s32> arg) -> s32 { return 0; }
+        func test_instances() -> s32 {
             auto choice_s8 = Choice::A;
             auto choice_s32_1 = Choice::B;
             Choice<auto> choice_s32_2 = Choice::B;
             fix_as_s8(choice_s8);
             fix_as_s32(choice_s32_1);
-            return fix_as_int(choice_s32_2);
+            return fix_as_s32(choice_s32_2);
         }
         "
     ).for_function("test_instances", |f| { f
@@ -262,13 +262,13 @@ fn test_enum_inference() {
             .assert_parser_type("auto")
             .assert_concrete_type("Choice<s8>");
         })
-        .for_variable("choice_int1", |v| { v
+        .for_variable("choice_s32_1", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Choice<int>");
+            .assert_concrete_type("Choice<s32>");
         })
-        .for_variable("choice_int2", |v| { v
+        .for_variable("choice_s32_2", |v| { v
             .assert_parser_type("Choice<auto>")
-            .assert_concrete_type("Choice<int>");
+            .assert_concrete_type("Choice<s32>");
         });
     });
 
@@ -276,11 +276,11 @@ fn test_enum_inference() {
         "two polymorphic vars",
         "
         enum Choice<T1, T2>{ A, B, }
-        fix_t1<T>(Choice<s8, T> arg) -> s32 { return 0; }
-        fix_t2<T>(Choice<T, int> arg) -> s32 { return 0; }
-        test_instances() -> int {
+        func fix_t1<T>(Choice<s8, T> arg) -> s32 { return 0; }
+        func fix_t2<T>(Choice<T, s32> arg) -> s32 { return 0; }
+        func test_instances() -> s32 {
             Choice<s8, auto> choice1 = Choice::A;
-            Choice<auto, int> choice2 = Choice::A;
+            Choice<auto, s32> choice2 = Choice::A;
             Choice<auto, auto> choice3 = Choice::B;
             auto choice4 = Choice::B;
             fix_t1(choice1); fix_t1(choice2); fix_t1(choice3); fix_t1(choice4);
@@ -291,19 +291,19 @@ fn test_enum_inference() {
     ).for_function("test_instances", |f| { f
         .for_variable("choice1", |v| { v
             .assert_parser_type("Choice<s8,auto>")
-            .assert_concrete_type("Choice<s8,int>");
+            .assert_concrete_type("Choice<s8,s32>");
         })
         .for_variable("choice2", |v| { v
-            .assert_parser_type("Choice<auto,int>")
-            .assert_concrete_type("Choice<s8,int>");
+            .assert_parser_type("Choice<auto,s32>")
+            .assert_concrete_type("Choice<s8,s32>");
         })
         .for_variable("choice3", |v| { v
             .assert_parser_type("Choice<auto,auto>")
-            .assert_concrete_type("Choice<s8,int>");
+            .assert_concrete_type("Choice<s8,s32>");
         })
         .for_variable("choice4", |v| { v
             .assert_parser_type("auto")
-            .assert_concrete_type("Choice<s8,int>");
+            .assert_concrete_type("Choice<s8,s32>");
         });
     });
 }
@@ -335,7 +335,7 @@ fn test_failed_polymorph_inference() {
         "struct literal inference mismatch",
         "
         struct Pair<T>{ T first, T second }
-        call() -> s32 {
+        func call() -> s32 {
             s8 first_arg = 5;
             s64 second_arg = 2;
             auto pair = Pair{ first: first_arg, second: second_arg };
@@ -362,14 +362,14 @@ fn test_failed_polymorph_inference() {
         func call() -> s32 {
             auto a = Uninteresting::Variant;
             fix_t<s8>(a);
-            fix_t<int>(a);
+            fix_t<s32>(a);
             return 4;
         }
         "
     ).error(|e| { e
         .assert_num(2)
         .assert_any_msg_has("type 'Uninteresting<s8>'")
-        .assert_any_msg_has("type 'Uninteresting<int>'");
+        .assert_any_msg_has("type 'Uninteresting<s32>'");
     });
 
     Tester::new_single_source_expect_err(
@@ -388,7 +388,7 @@ fn test_failed_polymorph_inference() {
         .assert_occurs_at(0, ".")
         .assert_msg_has(0, "Conflicting type for polymorphic variable 'Shazam'")
         .assert_msg_has(1, "inferred it to 's8'")
-        .assert_msg_has(2, "inferred it to 'int'");
+        .assert_msg_has(2, "inferred it to 's32'");
     });
 
     // TODO: Needs better error messages anyway, but this failed before

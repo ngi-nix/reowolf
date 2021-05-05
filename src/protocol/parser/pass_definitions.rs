@@ -52,11 +52,15 @@ impl PassDefinitions {
 
             match cur_range.range_kind {
                 TokenRangeKind::Module => unreachable!(), // should not be reachable
-                TokenRangeKind::Pragma | TokenRangeKind::Import => continue, // already fully parsed
-                TokenRangeKind::Definition | TokenRangeKind::Code => {}
+                TokenRangeKind::Pragma | TokenRangeKind::Import => {
+                    // Already fully parsed, fall through and go to next range
+                },
+                TokenRangeKind::Definition | TokenRangeKind::Code => {
+                    // Visit range even if it is a "code" range to provide
+                    // proper error messages.
+                    self.visit_range(modules, module_idx, ctx, range_idx_usize)?;
+                },
             }
-
-            self.visit_range(modules, module_idx, ctx, range_idx_usize)?;
 
             if cur_range.next_sibling_idx == NO_SIBLING {
                 break;
@@ -1290,7 +1294,7 @@ impl PassDefinitions {
                                         let value = self.consume_expression(module, iter, ctx)?;
                                         Ok(LiteralStructField{ identifier, value, field_idx: 0 })
                                     },
-                                    &mut struct_fields, "a struct field", "a list of struct field", Some(&mut last_token)
+                                    &mut struct_fields, "a struct field", "a list of struct fields", Some(&mut last_token)
                                 )?;
 
                                 ctx.heap.alloc_literal_expression(|this| LiteralExpression{
@@ -1329,8 +1333,12 @@ impl PassDefinitions {
                                 let variant = consume_ident_interned(&module.source, iter, ctx)?;
 
                                 // Consume any possible embedded values
-                                let mut end_pos = iter.last_valid_pos();
-                                let values = self.consume_expression_list(module, iter, ctx, Some(&mut end_pos))?;
+                                let mut end_pos = variant.span.end;
+                                let values = if Some(TokenKind::OpenParen) == iter.next() {
+                                    self.consume_expression_list(module, iter, ctx, Some(&mut end_pos))?
+                                } else {
+                                    Vec::new()
+                                };
 
                                 ctx.heap.alloc_literal_expression(|this| LiteralExpression{
                                     this,
@@ -1402,6 +1410,8 @@ impl PassDefinitions {
             } else {
                 // Check for builtin keywords or builtin functions
                 if ident_text == KW_LIT_NULL || ident_text == KW_LIT_TRUE || ident_text == KW_LIT_FALSE {
+                    iter.consume();
+
                     // Parse builtin literal
                     let value = match ident_text {
                         KW_LIT_NULL => Literal::Null,
@@ -1418,13 +1428,27 @@ impl PassDefinitions {
                         concrete_type: ConcreteType::default(),
                     }).upcast()
                 } else {
-                    // I'm a bit unsure about this. One may as well have wrongfully
-                    // typed `TypeWithTypo<Subtype>::`, then we assume that
-                    // `TypeWithTypo` is a variable. So might want to come back to
-                    // this later to do some silly heuristics.
+                    // Not a builtin literal, but also not a known type. So we
+                    // assume it is a variable expression. Although if we do,
+                    // then if a programmer mistyped a struct/function name the
+                    // error messages will be rather cryptic. For polymorphic
+                    // arguments we can't really do anything at all (because it
+                    // uses the '<' token). In the other cases we try to provide
+                    // a better error message.
                     iter.consume();
-                    if Some(TokenKind::ColonColon) == iter.next() {
+                    let next = iter.next();
+                    if Some(TokenKind::ColonColon) == next {
                         return Err(ParseError::new_error_str_at_span(&module.source, ident_span, "unknown identifier"));
+                    } else if Some(TokenKind::OpenParen) == next {
+                        return Err(ParseError::new_error_str_at_span(
+                            &module.source, ident_span,
+                            "unknown identifier, did you mistype a union variant's or a function's name?"
+                        ));
+                    } else if Some(TokenKind::OpenCurly) == next {
+                        return Err(ParseError::new_error_str_at_span(
+                            &module.source, ident_span,
+                            "unknown identifier, did you mistype a struct type's name?"
+                        ))
                     }
 
                     let ident_text = ctx.pool.intern(ident_text);
@@ -1498,7 +1522,7 @@ impl PassDefinitions {
 /// these.
 ///
 /// Note that the first depth index is used as a hack.
-// TODO: @Optimize, @Span fix
+// TODO: @Optimize, @Span fix, @Cleanup
 fn consume_parser_type(
     source: &InputSource, iter: &mut TokenIter, symbols: &SymbolTable, heap: &Heap, poly_vars: &[Identifier],
     cur_scope: SymbolScope, wrapping_definition: DefinitionId, allow_inference: bool, first_angle_depth: i32,
@@ -1508,6 +1532,8 @@ fn consume_parser_type(
         depth: i32,
     }
 
+    // After parsing the array modified "[]", we need to insert an array type
+    // before the most recently parsed type.
     fn insert_array_before(elements: &mut Vec<Entry>, depth: i32, span: InputSpan) {
         let index = elements.iter().rposition(|e| e.depth == depth).unwrap();
         elements.insert(index, Entry{
@@ -1517,9 +1543,11 @@ fn consume_parser_type(
     }
 
     // Most common case we just have one type, perhaps with some array
-    // annotations.
+    // annotations. This is both the hot-path, and simplifies the state machine
+    // that follows and is responsible for parsing more complicated types.
     let element = consume_parser_type_ident(source, iter, symbols, heap, poly_vars, cur_scope, wrapping_definition, allow_inference)?;
     if iter.next() != Some(TokenKind::OpenAngle) {
+        let num_embedded = element.variant.num_embedded();
         let mut num_array = 0;
         while iter.next() == Some(TokenKind::OpenSquare) {
             iter.consume();
@@ -1528,11 +1556,21 @@ fn consume_parser_type(
         }
 
         let array_span = element.full_span;
-        let mut elements = Vec::with_capacity(num_array + 1);
+        let mut elements = Vec::with_capacity(num_array + num_embedded + 1);
         for _ in 0..num_array {
             elements.push(ParserTypeElement{ full_span: array_span, variant: ParserTypeVariant::Array });
         }
         elements.push(element);
+
+        if num_embedded != 0 {
+            if !allow_inference {
+                return Err(ParseError::new_error_str_at_span(source, array_span, "type inference is not allowed here"));
+            }
+
+            for _ in 0..num_embedded {
+                elements.push(ParserTypeElement { full_span: array_span, variant: ParserTypeVariant::Inferred });
+            }
+        }
 
         return Ok(ParserType{ elements });
     };
@@ -1696,12 +1734,26 @@ fn consume_parser_type(
                     });
                 }
             } else {
-                // Mismatch in number of embedded types
-                let expected_args_text = if expected_subtypes == 1 {
-                    "polymorphic argument"
-                } else {
-                    "polymorphic arguments"
-                };
+                // Mismatch in number of embedded types, produce a neat error
+                // message.
+                let type_name = String::from_utf8_lossy(source.section_at_span(cur_element.element.full_span));
+                fn polymorphic_name_text(num: usize) -> &'static str {
+                    if num == 1 { "polymorphic argument" } else { "polymorphic arguments" }
+                }
+                fn were_or_was(num: usize) -> &'static str {
+                    if num == 1 { "was" } else { "were" }
+                }
+
+                if expected_subtypes == 0 {
+                    return Err(ParseError::new_error_at_span(
+                        source, cur_element.element.full_span,
+                        format!(
+                            "the type '{}' is not polymorphic, yet {} {} {} provided",
+                            type_name, encountered_subtypes, polymorphic_name_text(encountered_subtypes),
+                            were_or_was(encountered_subtypes)
+                        )
+                    ));
+                }
 
                 let maybe_infer_text = if allow_inference {
                     " (or none, to perform implicit type inference)"
@@ -1712,8 +1764,10 @@ fn consume_parser_type(
                 return Err(ParseError::new_error_at_span(
                     source, cur_element.element.full_span,
                     format!(
-                        "expected {} {}{}, but {} were provided",
-                        expected_subtypes, expected_args_text, maybe_infer_text, encountered_subtypes
+                        "expected {} {}{} for the type '{}', but {} {} provided",
+                        expected_subtypes, polymorphic_name_text(expected_subtypes),
+                        maybe_infer_text, type_name, encountered_subtypes,
+                        were_or_was(encountered_subtypes)
                     )
                 ));
             }
@@ -1785,7 +1839,7 @@ fn consume_parser_type_ident(
                         SymbolVariant::Module(symbol_module) => {
                             // Expecting more identifiers
                             if Some(TokenKind::ColonColon) != iter.next() {
-                                return Err(ParseError::new_error_str_at_span(source, type_span, "expected type but got module"));
+                                return Err(ParseError::new_error_str_at_span(source, type_span, "expected a type but got a module"));
                             }
 
                             consume_token(source, iter, TokenKind::ColonColon)?;
@@ -1800,13 +1854,22 @@ fn consume_parser_type_ident(
 
                             let new_symbol = symbols.get_symbol_by_name_defined_in_scope(scope, type_text);
                             if new_symbol.is_none() {
+                                // If the type is imported in the module then notify the programmer
+                                // that imports do not leak outside of a module
+                                let type_name = String::from_utf8_lossy(type_text);
+                                let module_name = String::from_utf8_lossy(old_text);
+                                let suffix = if symbols.get_symbol_by_name(scope, type_text).is_some() {
+                                    format!(
+                                        ". The module '{}' does import '{}', but these imports are not visible to other modules",
+                                        &module_name, &type_name
+                                    )
+                                } else {
+                                    String::new()
+                                };
+
                                 return Err(ParseError::new_error_at_span(
                                     source, next_span,
-                                    format!(
-                                        "unknown type '{}' in module '{}'",
-                                        String::from_utf8_lossy(type_text),
-                                        String::from_utf8_lossy(old_text)
-                                    )
+                                    format!("unknown type '{}' in module '{}'{}", type_name, module_name, suffix)
                                 ));
                             }
 

@@ -161,7 +161,7 @@ impl InputSource {
             }
         }
 
-        lookup.push(self.input.len() as u32); // for lookup_line_end
+        lookup.push(self.input.len() as u32 + 1); // for lookup_line_end, intentionally adding one character
         debug_assert_eq!(self.line as usize + 2, lookup.len(), "remove me: i am a testing assert and sometimes invalid");
 
         // Return created lookup
@@ -183,13 +183,11 @@ impl InputSource {
         let offset = lookup[(line_number + 1) as usize] - 1;
         let offset_usize = offset as usize;
 
-        // Compensate for newlines and a potential carriage feed
-        if self.input[offset_usize] == b'\n' {
-            if offset_usize > 0 && self.input[offset_usize] == b'\r' {
-                offset - 2
-            } else {
-                offset - 1
-            }
+        // Compensate for newlines and a potential carriage feed. Note that the
+        // end position is exclusive. So we only need to compensate for a
+        // "\r\n"
+        if offset_usize > 0 && offset_usize < self.input.len() && self.input[offset_usize] == b'\n' && self.input[offset_usize - 1] == b'\r' {
+            offset - 1
         } else {
             offset
         }
@@ -319,17 +317,28 @@ impl fmt::Display for ParseErrorStatement {
 
         fn extend_annotation(first_col: u32, last_col: u32, source: &str, target: &mut String, extend_char: char) {
             debug_assert!(first_col > 0 && last_col > first_col);
+
+            // If the first index exceeds the size of the context then we should
+            // have a message placed at the newline character
             let first_idx = first_col as usize - 1;
             let last_idx = last_col as usize - 1;
-            for (char_idx, char) in source.chars().enumerate().skip(first_idx) {
-                if char_idx == last_idx as usize {
-                    break;
-                }
+            if first_idx >= source.len() {
+                // If any of these fail then the logic behind reporting errors
+                // is incorrect.
+                debug_assert_eq!(first_idx, source.len());
+                debug_assert_eq!(first_idx + 1, last_idx);
+                target.push(extend_char);
+            } else {
+                for (char_idx, char) in source.chars().enumerate().skip(first_idx) {
+                    if char_idx == last_idx as usize {
+                        break;
+                    }
 
-                if char == '\t' {
-                    for _ in 0..4 { target.push(extend_char); }
-                } else {
-                    target.push(extend_char);
+                    if char == '\t' {
+                        for _ in 0..4 { target.push(extend_char); }
+                    } else {
+                        target.push(extend_char);
+                    }
                 }
             }
         }

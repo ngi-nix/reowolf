@@ -18,7 +18,7 @@ fn test_struct_monomorphs() {
         "single polymorph",
         "
         struct Number<T>{ T number }
-        s32 instantiator() {
+        func instantiator() -> s32 {
             auto a = Number<s8>{ number: 0 };
             auto b = Number<s8>{ number: 1 };
             auto c = Number<s32>{ number: 2 };
@@ -46,7 +46,7 @@ fn test_enum_monomorphs() {
         "no polymorph",
         "
         enum Answer{ Yes, No }
-        s32 do_it() { auto a = Answer::Yes; return 0; }
+        func do_it() -> s32 { auto a = Answer::Yes; return 0; }
         "
     ).for_enum("Answer", |e| { e
         .assert_num_monomorphs(0);
@@ -56,7 +56,7 @@ fn test_enum_monomorphs() {
         "single polymorph",
         "
         enum Answer<T> { Yes, No }
-        s32 instantiator() {
+        func instantiator() -> s32 {
             auto a = Answer<s8>::Yes;
             auto b = Answer<s8>::No;
             auto c = Answer<s32>::Yes;
@@ -77,8 +77,8 @@ fn test_union_monomorphs() {
     Tester::new_single_source_expect_ok(
         "no polymorph",
         "
-        union Trinary { Undefined, Value(boolean) }
-        s32 do_it() { auto a = Trinary::Value(true); return 0; }
+        union Trinary { Undefined, Value(bool) }
+        func do_it() -> s32 { auto a = Trinary::Value(true); return 0; }
         "
     ).for_union("Trinary", |e| { e
         .assert_num_monomorphs(0);
@@ -90,10 +90,10 @@ fn test_union_monomorphs() {
         "polymorphs",
         "
         union Result<T, E>{ Ok(T), Err(E) }
-        s32 instantiator() {
+        func instantiator() -> s32 {
             s16 a_s16 = 5;
-            auto a = Result<s8, boolean>::Ok(0);
-            auto b = Result<boolean, s8>::Ok(true);
+            auto a = Result<s8, bool>::Ok(0);
+            auto b = Result<bool, s8>::Ok(true);
             auto c = Result<Result<s8, s32>, Result<s16, s64>>::Err(Result::Ok(5));
             auto d = Result<Result<s8, s32>, auto>::Err(Result<auto, s64>::Ok(a_s16));
             return 0;

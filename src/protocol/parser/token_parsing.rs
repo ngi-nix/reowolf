@@ -283,6 +283,7 @@ pub(crate) fn consume_comma_separated<T, F, E>(
 
 /// Consumes an integer literal, may be binary, octal, hexadecimal or decimal,
 /// and may have separating '_'-characters.
+/// TODO: @Cleanup, @Performance
 pub(crate) fn consume_integer_literal(source: &InputSource, iter: &mut TokenIter, buffer: &mut String) -> Result<(u64, InputSpan), ParseError> {
     if Some(TokenKind::Integer) != iter.next() {
         return Err(ParseError::new_error_str_at_pos(source, iter.last_valid_pos(), "expected an integer literal"));
@@ -314,7 +315,8 @@ pub(crate) fn consume_integer_literal(source: &InputSource, iter: &mut TokenIter
         if char == b'_' {
             continue;
         }
-        if !char.is_ascii_digit() {
+
+        if !((char >= b'0' && char <= b'9') || (char >= b'A' && char <= b'F') || (char >= b'a' || char <= b'f')) {
             return Err(ParseError::new_error_at_span(
                 source, integer_span,
                 format!("incorrectly formatted {} number", radix_name)

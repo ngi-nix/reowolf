@@ -124,7 +124,7 @@ pub(crate) struct AstOkTester {
     heap: Heap,
     symbols: SymbolTable,
     types: TypeTable,
-    pool: StringPool,
+    pool: StringPool, // This is stored because if we drop it on the floor, we lose all our `StringRef<'static>`s
 }
 
 impl AstOkTester {
@@ -212,7 +212,6 @@ impl AstOkTester {
         let mut found = false;
         for definition in self.heap.definitions.iter() {
             if let Definition::Function(definition) = definition {
-                println!("DEBUG: Have {}", definition.identifier.value.as_str());
                 if definition.identifier.value.as_str() != name {
                     continue;
                 }
@@ -222,8 +221,6 @@ impl AstOkTester {
                 f(tester);
                 found = true;
                 break;
-            } else {
-                println!("DEBUG: Have (not a function, but) {}", definition.identifier().value.as_str());
             }
         }
 
