@@ -91,6 +91,7 @@ impl PassSymbols {
         let module_scope = SymbolScope::Module(root_id);
         ctx.symbols.insert_scope(None, module_scope);
         for symbol in self.symbols.drain(..) {
+            ctx.symbols.insert_scope(Some(module_scope), SymbolScope::Definition(symbol.variant.as_definition().definition_id));
             if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(module_scope, symbol) {
                 return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol))
             }

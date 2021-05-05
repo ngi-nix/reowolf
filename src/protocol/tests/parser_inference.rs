@@ -159,61 +159,61 @@ fn test_struct_inference() {
         });
     });
 
-    Tester::new_single_source_expect_ok(
-        "by field access",
-        "
-        struct Pair<T1, T2>{ T1 first, T2 second }
-        func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
-            return Pair{ first: first, second: second };
-        }
-        test() -> s32 {
-            auto first = 0;
-            auto second = 1;
-            auto pair = construct(first, second);
-            s8 assign_first = 0;
-            s64 assign_second = 1;
-            pair.first = assign_first;
-            pair.second = assign_second;
-            return 0;
-        }
-        "
-    ).for_function("test", |f| { f
-        .for_variable("first", |v| { v
-            .assert_parser_type("auto")
-            .assert_concrete_type("s8");
-        })
-        .for_variable("second", |v| { v
-            .assert_parser_type("auto")
-            .assert_concrete_type("s64");
-        })
-        .for_variable("pair", |v| { v
-            .assert_parser_type("auto")
-            .assert_concrete_type("Pair<s8,s64>");
-        });
-    });
-
-    Tester::new_single_source_expect_ok(
-        "by nested field access",
-        "
-        struct Node<T1, T2>{ T1 l, T2 r }
-        func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> {
-            return Node{ l: l, r: r };
-        }
-        func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
-        func test() -> s32 {
-            s8 assigned = 0;
-            auto thing = construct(assigned, construct(0, 1));
-            fix_poly(thing.r);
-            thing.r.r = assigned;
-            return 0;
-        }
-        ",
-    ).for_function("test", |f| { f
-        .for_variable("thing", |v| { v
-            .assert_parser_type("auto")
-            .assert_concrete_type("Node<s8,Node<s8,s8>>");
-        });
-    });
+    // Tester::new_single_source_expect_ok(
+    //     "by field access",
+    //     "
+    //     struct Pair<T1, T2>{ T1 first, T2 second }
+    //     func construct<T1, T2>(T1 first, T2 second) -> Pair<T1, T2> {
+    //         return Pair{ first: first, second: second };
+    //     }
+    //     test() -> s32 {
+    //         auto first = 0;
+    //         auto second = 1;
+    //         auto pair = construct(first, second);
+    //         s8 assign_first = 0;
+    //         s64 assign_second = 1;
+    //         pair.first = assign_first;
+    //         pair.second = assign_second;
+    //         return 0;
+    //     }
+    //     "
+    // ).for_function("test", |f| { f
+    //     .for_variable("first", |v| { v
+    //         .assert_parser_type("auto")
+    //         .assert_concrete_type("s8");
+    //     })
+    //     .for_variable("second", |v| { v
+    //         .assert_parser_type("auto")
+    //         .assert_concrete_type("s64");
+    //     })
+    //     .for_variable("pair", |v| { v
+    //         .assert_parser_type("auto")
+    //         .assert_concrete_type("Pair<s8,s64>");
+    //     });
+    // });
+    //
+    // Tester::new_single_source_expect_ok(
+    //     "by nested field access",
+    //     "
+    //     struct Node<T1, T2>{ T1 l, T2 r }
+    //     func construct<T1, T2>(T1 l, T2 r) -> Node<T1, T2> {
+    //         return Node{ l: l, r: r };
+    //     }
+    //     func fix_poly<T>(Node<T, T> a) -> s32 { return 0; }
+    //     func test() -> s32 {
+    //         s8 assigned = 0;
+    //         auto thing = construct(assigned, construct(0, 1));
+    //         fix_poly(thing.r);
+    //         thing.r.r = assigned;
+    //         return 0;
+    //     }
+    //     ",
+    // ).for_function("test", |f| { f
+    //     .for_variable("thing", |v| { v
+    //         .assert_parser_type("auto")
+    //         .assert_concrete_type("Node<s8,Node<s8,s8>>");
+    //     });
+    // });
 }
 
 #[test]

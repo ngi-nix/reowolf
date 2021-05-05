@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::fmt::{Debug, Display, Write};
+use std::fmt::{Debug, Display};
 use std::io::Write as IOWrite;
 
 use super::ast::*;

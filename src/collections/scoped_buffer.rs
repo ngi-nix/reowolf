@@ -116,7 +116,7 @@ impl<T: Sized> std::ops::Index<usize> for ScopedSection<T> {
 #[cfg(debug_assertions)]
 impl<T: Sized> Drop for ScopedSection<T> {
     fn drop(&mut self) {
-        let mut vec = unsafe{&mut *self.inner};
+        let vec = unsafe{&mut *self.inner};
         debug_assert_eq!(vec.len(), self.cur_size as usize);
         vec.truncate(self.start_size as usize);
     }

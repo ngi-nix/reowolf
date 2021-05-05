@@ -99,13 +99,16 @@ impl PassImport {
                 alias: alias_identifier,
                 module_id: target_root_id
             }));
-            ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
+
+            if let Err((new_symbol, old_symbol)) = ctx.symbols.insert_symbol(SymbolScope::Module(module.root_id), Symbol{
                 name: alias_name,
                 variant: SymbolVariant::Module(SymbolModule{
                     root_id: target_root_id,
                     introduced_at: import_id,
                 }),
-            });
+            }) {
+                return Err(construct_symbol_conflict_error(modules, module_idx, ctx, &new_symbol, &old_symbol));
+            }
         } else if Some(TokenKind::ColonColon) == next {
             iter.consume();
 

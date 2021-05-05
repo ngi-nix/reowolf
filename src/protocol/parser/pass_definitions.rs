@@ -18,7 +18,7 @@ pub(crate) struct PassDefinitions {
     parameters: ScopedBuffer<ParameterId>,
     expressions: ScopedBuffer<ExpressionId>,
     statements: ScopedBuffer<StatementId>,
-    parser_types: Vec<ParserType>,
+    parser_types: ScopedBuffer<ParserType>,
 }
 
 impl PassDefinitions {
@@ -32,7 +32,7 @@ impl PassDefinitions {
             parameters: ScopedBuffer::new_reserved(128),
             expressions: ScopedBuffer::new_reserved(128),
             statements: ScopedBuffer::new_reserved(128),
-            parser_types: Vec::with_capacity(128),
+            parser_types: ScopedBuffer::new_reserved(128),
         }
     }
 
@@ -204,6 +204,8 @@ impl PassDefinitions {
                 let identifier = consume_ident_interned(source, iter, ctx)?;
                 let mut close_pos = identifier.span.end;
 
+                let mut types_section = self.parser_types.start_section();
+
                 let has_embedded = maybe_consume_comma_separated(
                     TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
                     |source, iter, ctx| {
@@ -213,14 +215,14 @@ impl PassDefinitions {
                             module_scope, definition_id, false, 0
                         )
                     },
-                    &mut self.parser_types, "an embedded type", Some(&mut close_pos)
+                    &mut types_section, "an embedded type", Some(&mut close_pos)
                 )?;
                 let value = if has_embedded {
-                    UnionVariantValue::Embedded(self.parser_types.clone())
+                    UnionVariantValue::Embedded(types_section.into_vec())
                 } else {
+                    types_section.forget();
                     UnionVariantValue::None
                 };
-                self.parser_types.clear();
 
                 Ok(UnionVariantDefinition{
                     span: InputSpan::from_positions(identifier.span.begin, close_pos),
@@ -261,16 +263,17 @@ impl PassDefinitions {
 
         // Consume return types
         consume_token(&module.source, iter, TokenKind::ArrowRight)?;
-        let mut open_curly_pos = iter.last_valid_pos();
+        let mut return_types = self.parser_types.start_section();
+        let mut open_curly_pos = iter.last_valid_pos(); // bogus value
         consume_comma_separated_until(
             TokenKind::OpenCurly, &module.source, iter, ctx,
             |source, iter, ctx| {
                 let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
                 consume_parser_type(source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope, definition_id, false, 0)
             },
-            &mut self.parser_types, "a return type", Some(&mut open_curly_pos)
+            &mut return_types, "a return type", Some(&mut open_curly_pos)
         )?;
-        let return_types = self.parser_types.clone();
+        let return_types = return_types.into_vec();
 
         // TODO: @ReturnValues
         match return_types.len() {

@@ -1932,14 +1932,14 @@ impl PassTyping {
                 let signature_type: *mut _ = &mut poly_data.embedded[0];
                 let subject_type: *mut _ = self.expr_types.get_mut(&subject_id).unwrap();
                 
-                let progress_subject = Self::apply_equal2_polyvar_constraint(&ctx.heap,
+                let progress_subject = Self::apply_equal2_polyvar_constraint(
                     poly_data, &poly_progress, signature_type, subject_type
                 );
 
                 let signature_type: *mut _ = &mut poly_data.returned;
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-                let progress_expr = Self::apply_equal2_polyvar_constraint(&ctx.heap,
+                let progress_expr = Self::apply_equal2_polyvar_constraint(
                     poly_data, &poly_progress, signature_type, expr_type
                 );
 
@@ -1985,8 +1985,8 @@ impl PassTyping {
             },
             Literal::Struct(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
-                for poly in &extra.poly_vars {
-                    debug_log!(" * Poly: {}", poly.display_name(&ctx.heap));
+                for _poly in &extra.poly_vars {
+                    debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
                 let mut poly_progress = HashSet::new();
                 debug_assert_eq!(extra.embedded.len(), data.fields.len());
@@ -2050,7 +2050,7 @@ impl PassTyping {
                     let field_expr_id = data.fields[field_idx].value;
                     let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
 
-                    let progress_arg = Self::apply_equal2_polyvar_constraint(&ctx.heap,
+                    let progress_arg = Self::apply_equal2_polyvar_constraint(
                         extra, &poly_progress, signature_type, field_type
                     );
 
@@ -2069,15 +2069,15 @@ impl PassTyping {
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
-                    &ctx.heap, extra, &poly_progress, signature_type, expr_type
+                    extra, &poly_progress, signature_type, expr_type
                 );
 
                 progress_expr
             },
             Literal::Enum(_) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
-                for poly in &extra.poly_vars {
-                    debug_log!(" * Poly: {}", poly.display_name(&ctx.heap));
+                for _poly in &extra.poly_vars {
+                    debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
                 let mut poly_progress = HashSet::new();
                 
@@ -2105,15 +2105,15 @@ impl PassTyping {
 
                 debug_log!(" * During (reinferring from progress polyvars):");
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
-                    &ctx.heap, extra, &poly_progress, signature_type, expr_type
+                    extra, &poly_progress, signature_type, expr_type
                 );
 
                 progress_expr
             },
             Literal::Union(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
-                for poly in &extra.poly_vars {
-                    debug_log!(" * Poly: {}", poly.display_name(&ctx.heap));
+                for _poly in &extra.poly_vars {
+                    debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
                 let mut poly_progress = HashSet::new();
                 debug_assert_eq!(extra.embedded.len(), data.values.len());
@@ -2174,7 +2174,7 @@ impl PassTyping {
                     let value_type: *mut _ = self.expr_types.get_mut(&value_expr_id).unwrap();
                     
                     let progress_arg = Self::apply_equal2_polyvar_constraint(
-                        &ctx.heap, extra, &poly_progress, signature_type, value_type
+                        extra, &poly_progress, signature_type, value_type
                     );
 
                     debug_log!(
@@ -2192,7 +2192,7 @@ impl PassTyping {
                 let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
-                    &ctx.heap, extra, &poly_progress, signature_type, expr_type
+                    extra, &poly_progress, signature_type, expr_type
                 );
 
                 progress_expr
@@ -2305,8 +2305,8 @@ impl PassTyping {
         // reapplying the polymorph type to each argument type and the return
         // type should always succeed.
         debug_log!(" * During (reinferring from progressed polyvars):");
-        for (poly_idx, poly_var) in extra.poly_vars.iter().enumerate() {
-            debug_log!("   - Poly {} | sig: {}", poly_idx, poly_var.display_name(&ctx.heap));
+        for (_poly_idx, _poly_var) in extra.poly_vars.iter().enumerate() {
+            debug_log!("   - Poly {} | sig: {}", _poly_idx, _poly_var.display_name(&ctx.heap));
         }
         // TODO: @performance If the algorithm is changed to be more "on demand
         //  argument re-evaluation", instead of "all-argument re-evaluation",
@@ -2316,7 +2316,7 @@ impl PassTyping {
             let arg_expr_id = expr.arguments[arg_idx];
             let arg_type: *mut _ = self.expr_types.get_mut(&arg_expr_id).unwrap();
             
-            let progress_arg = Self::apply_equal2_polyvar_constraint(&ctx.heap,
+            let progress_arg = Self::apply_equal2_polyvar_constraint(
                 extra, &poly_progress,
                 signature_type, arg_type
             );
@@ -2335,7 +2335,7 @@ impl PassTyping {
         let signature_type: *mut _ = &mut extra.returned;
         let ret_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
 
-        let progress_ret = Self::apply_equal2_polyvar_constraint(&ctx.heap,
+        let progress_ret = Self::apply_equal2_polyvar_constraint(
             extra, &poly_progress, signature_type, ret_type
         );
         debug_log!(
@@ -2600,7 +2600,6 @@ impl PassTyping {
     ///
     /// This function returns true if the expression's type has been progressed
     fn apply_equal2_polyvar_constraint(
-        heap: &Heap,
         polymorph_data: &ExtraData, _polymorph_progress: &HashSet<usize>,
         signature_type: *mut InferenceType, expr_type: *mut InferenceType
     ) -> bool {
