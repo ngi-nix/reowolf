@@ -1507,17 +1507,17 @@ impl Store {
             Expression::Unary(expr) => {
                 let mut value = self.eval(h, ctx, expr.expression)?;
                 match expr.operation {
-                    UnaryOperation::PostIncrement => {
+                    UnaryOperator::PostIncrement => {
                         self.update(h, ctx, expr.expression, value.plus(&ONE))?;
                     }
-                    UnaryOperation::PreIncrement => {
+                    UnaryOperator::PreIncrement => {
                         value = value.plus(&ONE);
                         self.update(h, ctx, expr.expression, value.clone())?;
                     }
-                    UnaryOperation::PostDecrement => {
+                    UnaryOperator::PostDecrement => {
                         self.update(h, ctx, expr.expression, value.minus(&ONE))?;
                     }
-                    UnaryOperation::PreDecrement => {
+                    UnaryOperator::PreDecrement => {
                         value = value.minus(&ONE);
                         self.update(h, ctx, expr.expression, value.clone())?;
                     }

@@ -12,6 +12,7 @@ use super::visitor::{
     VisitorResult
 };
 use crate::protocol::parser::ModuleCompilationPhase;
+use crossbeam_utils::thread::scope;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {
@@ -48,30 +49,32 @@ impl DefinitionType {
 /// Because of this scheme expressions will not be visited in the breadth-first
 /// pass.
 pub(crate) struct PassValidationLinking {
-    /// `in_sync` is `Some(id)` if the visitor is visiting the children of a
-    /// synchronous statement. A single value is sufficient as nested
-    /// synchronous statements are not allowed
+    // `in_sync` is `Some(id)` if the visitor is visiting the children of a
+    // synchronous statement. A single value is sufficient as nested
+    // synchronous statements are not allowed
     in_sync: Option<SynchronousStatementId>,
-    /// `in_while` contains the last encountered `While` statement. This is used
-    /// to resolve unlabeled `Continue`/`Break` statements.
+    // `in_while` contains the last encountered `While` statement. This is used
+    // to resolve unlabeled `Continue`/`Break` statements.
     in_while: Option<WhileStatementId>,
     // Traversal state: current scope (which can be used to find the parent
-    // scope), the definition variant we are considering, and whether the
-    // visitor is performing breadthwise block statement traversal.
-    cur_scope: Option<Scope>,
+    // scope) and the definition variant we are considering.
+    cur_scope: Scope,
     def_type: DefinitionType,
     // Parent expression (the previous stmt/expression we visited that could be
     // used as an expression parent)
     expr_parent: ExpressionParent,
+    // Set by parent to indicate that child expression must be assignable. The
+    // child will throw an error if it is not assignable. The stored span is
+    // used for the error's position
+    must_be_assignable: Option<InputSpan>,
     // Keeping track of relative position in block in the breadth-first pass.
     relative_pos_in_block: u32,
+    // Various temporary buffers for traversal. Essentially working around
+    // Rust's borrowing rules since it cannot understand we're modifying AST
+    // members but not the AST container.
+    variable_buffer: ScopedBuffer<VariableId>,
     definition_buffer: ScopedBuffer<DefinitionId>,
-    // Single buffer of statement IDs that we want to traverse in a block.
-    // Required to work around Rust borrowing rules and to prevent constant
-    // cloning of vectors.
     statement_buffer: ScopedBuffer<StatementId>,
-    // Another buffer, now with expression IDs, to prevent constant cloning of
-    // vectors while working around rust's borrowing rules
     expression_buffer: ScopedBuffer<ExpressionId>,
 }
 
@@ -80,10 +83,12 @@ impl PassValidationLinking {
         Self{
             in_sync: None,
             in_while: None,
-            cur_scope: None,
+            cur_scope: Scope::Definition(DefinitionId::new_invalid()),
             expr_parent: ExpressionParent::None,
             def_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
+            must_be_assignable: None,
             relative_pos_in_block: 0,
+            variable_buffer: ScopedBuffer::new_reserved(128),
             definition_buffer: ScopedBuffer::new_reserved(128),
             statement_buffer: ScopedBuffer::new_reserved(STMT_BUFFER_INIT_CAPACITY),
             expression_buffer: ScopedBuffer::new_reserved(EXPR_BUFFER_INIT_CAPACITY),
@@ -93,7 +98,7 @@ impl PassValidationLinking {
     fn reset_state(&mut self) {
         self.in_sync = None;
         self.in_while = None;
-        self.cur_scope = None;
+        self.cur_scope = Scope::Definition(DefinitionId::new_invalid());
         self.expr_parent = ExpressionParent::None;
         self.def_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
         self.relative_pos_in_block = 0;
@@ -126,11 +131,21 @@ impl Visitor2 for PassValidationLinking {
             ComponentVariant::Primitive => DefinitionType::Primitive(id),
             ComponentVariant::Composite => DefinitionType::Composite(id),
         };
-        self.cur_scope = Some(Scope::Definition(id.upcast()));
+        self.cur_scope = Scope::Definition(id.upcast());
         self.expr_parent = ExpressionParent::None;
 
+        // Visit parameters and assign a unique scope ID
+        let definition = &ctx.heap[id];
+        let body_id = definition.body;
+        let section = self.variable_buffer.start_section_initialized(&definition.parameters);
+        for variable_idx in 0..section.len() {
+            let variable_id = section[variable_idx];
+            let variable = &mut ctx.heap[variable_id];
+            variable.unique_id_in_scope = variable_idx as i32;
+        }
+        section.forget();
+
         // Visit statements in component body
-        let body_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_id)?;
         Ok(())
     }
@@ -140,11 +155,21 @@ impl Visitor2 for PassValidationLinking {
 
         // Set internal statement indices
         self.def_type = DefinitionType::Function(id);
-        self.cur_scope = Some(Scope::Definition(id.upcast()));
+        self.cur_scope = Scope::Definition(id.upcast());
         self.expr_parent = ExpressionParent::None;
 
+        // Visit parameters and assign a unique scope ID
+        let definition = &ctx.heap[id];
+        let body_id = definition.body;
+        let section = self.variable_buffer.start_section_initialized(&definition.parameters);
+        for variable_idx in 0..section.len() {
+            let variable_id = section[variable_idx];
+            let variable = &mut ctx.heap[variable_id];
+            variable.unique_id_in_scope = variable_idx as i32;
+        }
+        section.forget();
+
         // Visit statements in function body
-        let body_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_id)?;
         Ok(())
     }
@@ -356,8 +381,10 @@ impl Visitor2 for PassValidationLinking {
         assignment_expr.parent = old_expr_parent;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
+        self.must_be_assignable = Some(assignment_expr.span);
         self.visit_expr(ctx, left_expr_id)?;
         self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
+        self.must_be_assignable = None;
         self.visit_expr(ctx, right_expr_id)?;
         self.expr_parent = old_expr_parent;
         Ok(())
@@ -366,6 +393,12 @@ impl Visitor2 for PassValidationLinking {
     fn visit_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         let conditional_expr = &mut ctx.heap[id];
+
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to the result from a conditional expression"
+            ))
+        }
 
         let test_expr_id = conditional_expr.test;
         let true_expr_id = conditional_expr.true_expression;
@@ -388,6 +421,13 @@ impl Visitor2 for PassValidationLinking {
     fn visit_binary_expr(&mut self, ctx: &mut Ctx, id: BinaryExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         let binary_expr = &mut ctx.heap[id];
+
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to the result from a binary expression"
+            ))
+        }
+
         let left_expr_id = binary_expr.left;
         let right_expr_id = binary_expr.right;
 
@@ -406,6 +446,12 @@ impl Visitor2 for PassValidationLinking {
     fn visit_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> VisitorResult {
         let unary_expr = &mut ctx.heap[id];
         let expr_id = unary_expr.expression;
+
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to the result from a unary expression"
+            ))
+        }
 
         let old_expr_parent = self.expr_parent;
         unary_expr.parent = old_expr_parent;
@@ -476,6 +522,12 @@ impl Visitor2 for PassValidationLinking {
         let literal_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
         literal_expr.parent = old_expr_parent;
+
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to a literal expression"
+            ))
+        }
 
         match &mut literal_expr.value {
             Literal::Null | Literal::True | Literal::False |
@@ -655,6 +707,12 @@ impl Visitor2 for PassValidationLinking {
     fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
         let call_expr = &mut ctx.heap[id];
 
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to the result from a call expression"
+            ))
+        }
+
         // Check whether the method is allowed to be called within the code's
         // context (in sync, definition type, etc.)
         let mut expected_wrapping_new_stmt = false;
@@ -797,14 +855,19 @@ impl PassValidationLinking {
         // Set parent scope and relative position in the parent scope. Remember
         // these values to set them back to the old values when we're done with
         // the traversal of the block's statements.
+        let scope_next_unique_id = get_scope_next_unique_id(ctx, &self.cur_scope);
+
         let body = &mut ctx.heap[id];
         body.parent_scope = self.cur_scope.clone();
         body.relative_pos_in_parent = self.relative_pos_in_block;
+        body.first_unique_id_in_scope = scope_next_unique_id;
+        body.next_unique_id_in_scope = scope_next_unique_id;
 
-        let old_scope = self.cur_scope.replace(match hint {
+        let old_scope = self.cur_scope.clone();
+        self.cur_scope = match hint {
             Some(sync_id) => Scope::Synchronous((sync_id, id)),
             None => Scope::Regular(id),
-        });
+        };
         let old_relative_pos = self.relative_pos_in_block;
 
         // Copy statement IDs into buffer
@@ -818,6 +881,7 @@ impl PassValidationLinking {
             self.visit_statement_for_locals_labels_and_in_sync(ctx, self.relative_pos_in_block, statement_section[stmt_idx])?;
         }
 
+        // Perform the depth-first traversal
         for stmt_idx in 0..statement_section.len() {
             self.relative_pos_in_block = stmt_idx as u32;
             self.visit_stmt(ctx, statement_section[stmt_idx])?;
@@ -868,8 +932,8 @@ impl PassValidationLinking {
 
     /// Adds a local variable to the current scope. It will also annotate the
     /// `Local` in the AST with its relative position in the block.
-    fn checked_local_add(&mut self, ctx: &mut Ctx, relative_pos: u32, id: LocalId) -> Result<(), ParseError> {
-        debug_assert!(self.cur_scope.is_some());
+    fn checked_local_add(&mut self, ctx: &mut Ctx, relative_pos: u32, id: VariableId) -> Result<(), ParseError> {
+        debug_assert!(self.cur_scope.is_block());
 
         // Make sure we do not conflict with any global symbols
         let cur_scope = SymbolScope::Definition(self.def_type.definition_id());
@@ -891,7 +955,7 @@ impl PassValidationLinking {
         // Make sure we do not shadow any variables in any of the scopes. Note
         // that variables in parent scopes may be declared later
         let local = &ctx.heap[id];
-        let mut scope = self.cur_scope.as_ref().unwrap();
+        let mut scope = &self.cur_scope;
         let mut local_relative_pos = self.relative_pos_in_block;
 
         loop {
@@ -928,7 +992,7 @@ impl PassValidationLinking {
                             ParseError::new_error_str_at_span(
                                 &ctx.module.source, local.identifier.span, "Local variable name conflicts with parameter"
                             ).with_info_str_at_span(
-                                &ctx.module.source, parameter.span, "Parameter definition is found here"
+                                &ctx.module.source, parameter.identifier.span, "Parameter definition is found here"
                             )
                         );
                     }
@@ -942,8 +1006,13 @@ impl PassValidationLinking {
         }
 
         // No collisions at all
-        let block = &mut ctx.heap[self.cur_scope.as_ref().unwrap().to_block()];
+        let block = &mut ctx.heap[self.cur_scope.to_block()];
         block.locals.push(id);
+        let unique_id_in_scope = block.next_unique_id_in_scope;
+        block.next_unique_id_in_scope += 1;
+
+        let variable = &mut ctx.heap[id];
+        variable.unique_id_in_scope = unique_id_in_scope;
 
         Ok(())
     }
@@ -951,12 +1020,12 @@ impl PassValidationLinking {
     /// Finds a variable in the visitor's scope that must appear before the
     /// specified relative position within that block.
     fn find_variable(&self, ctx: &Ctx, mut relative_pos: u32, identifier: &Identifier) -> Result<VariableId, ParseError> {
-        debug_assert!(self.cur_scope.is_some());
+        debug_assert!(self.cur_scope.is_block());
 
         // TODO: May still refer to an alias of a global symbol using a single
         //  identifier in the namespace.
         // No need to use iterator over namespaces if here
-        let mut scope = self.cur_scope.as_ref().unwrap();
+        let mut scope = &self.cur_scope;
         
         loop {
             debug_assert!(scope.is_block());
@@ -1000,7 +1069,7 @@ impl PassValidationLinking {
     /// Adds a particular label to the current scope. Will return an error if
     /// there is another label with the same name visible in the current scope.
     fn checked_label_add(&mut self, ctx: &mut Ctx, relative_pos: u32, in_sync: Option<SynchronousStatementId>, id: LabeledStatementId) -> Result<(), ParseError> {
-        debug_assert!(self.cur_scope.is_some());
+        debug_assert!(self.cur_scope.is_block());
 
         // Make sure label is not defined within the current scope or any of the
         // parent scope.
@@ -1009,7 +1078,7 @@ impl PassValidationLinking {
         label.in_sync = in_sync;
 
         let label = &ctx.heap[id];
-        let mut scope = self.cur_scope.as_ref().unwrap();
+        let mut scope = &self.cur_scope;
 
         loop {
             debug_assert!(scope.is_block(), "scope is not a block");
@@ -1044,9 +1113,9 @@ impl PassValidationLinking {
     /// will make sure that the target label does not skip over any variable
     /// declarations within the scope in which the label was found.
     fn find_label(&self, ctx: &Ctx, identifier: &Identifier) -> Result<LabeledStatementId, ParseError> {
-        debug_assert!(self.cur_scope.is_some());
+        debug_assert!(self.cur_scope.is_block());
 
-        let mut scope = self.cur_scope.as_ref().unwrap();
+        let mut scope = &self.cur_scope;
         loop {
             debug_assert!(scope.is_block(), "scope is not a block");
             let relative_scope_pos = ctx.heap[scope.to_block()].relative_pos_in_parent;
@@ -1088,7 +1157,7 @@ impl PassValidationLinking {
     /// statement that is one of our current parents.
     fn has_parent_while_scope(&self, ctx: &Ctx, id: WhileStatementId) -> bool {
         debug_assert!(self.cur_scope.is_some());
-        let mut scope = self.cur_scope.as_ref().unwrap();
+        let mut scope = &self.cur_scope;
         let while_stmt = &ctx.heap[id];
         loop {
             debug_assert!(scope.is_block());
@@ -1099,7 +1168,7 @@ impl PassValidationLinking {
 
             let block = &ctx.heap[block];
             debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
-            scope = block.parent_scope.as_ref().unwrap();
+            scope = &block.parent_scope;
             if !scope.is_block() {
                 return false;
             }
@@ -1170,5 +1239,22 @@ impl PassValidationLinking {
         }
 
         Ok(target)
+    }
+}
+
+fn get_scope_next_unique_id(ctx: &Ctx, scope: &Scope) -> i32 {
+    match scope {
+        Scope::Definition(definition_id) => {
+            let definition = &ctx.heap[*definition_id];
+            match definition {
+                Definition::Component(definition) => definition.parameters.len() as i32,
+                Definition::Function(definition) => definition.parameters.len() as i32,
+                _ => unreachable!("Scope::Definition points to non-procedure type")
+            }
+        },
+        Scope::Synchronous((_, block_id)) | Scope::Regular(block_id) => {
+            let block = &ctx.heap[*block_id];
+            block.next_unique_id_in_scope
+        }
     }
 }

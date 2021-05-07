@@ -14,8 +14,6 @@ const PREFIX_PRAGMA_ID: &'static str = "Prag";
 const PREFIX_IMPORT_ID: &'static str = "Imp ";
 const PREFIX_TYPE_ANNOT_ID: &'static str = "TyAn";
 const PREFIX_VARIABLE_ID: &'static str = "Var ";
-const PREFIX_PARAMETER_ID: &'static str = "Par ";
-const PREFIX_LOCAL_ID: &'static str = "Loc ";
 const PREFIX_DEFINITION_ID: &'static str = "Def ";
 const PREFIX_STRUCT_ID: &'static str = "DefS";
 const PREFIX_ENUM_ID: &'static str = "DefE";
@@ -409,9 +407,13 @@ impl ASTWriter {
             Statement::Block(stmt) => {
                 self.kv(indent).with_id(PREFIX_BLOCK_STMT_ID, stmt.this.0.index)
                     .with_s_key("Block");
+                self.kv(indent2).with_s_key("FirstUniqueScopeID").with_disp_val(&stmt.first_unique_id_in_scope);
+                self.kv(indent2).with_s_key("NextUniqueScopeID").with_disp_val(&stmt.next_unique_id_in_scope);
+                self.kv(indent2).with_s_key("RelativePos").with_disp_val(&stmt.relative_pos_in_parent);
 
+                self.kv(indent2).with_s_key("Statements");
                 for stmt_id in &stmt.statements {
-                    self.write_stmt(heap, *stmt_id, indent2);
+                    self.write_stmt(heap, *stmt_id, indent3);
                 }
             },
             Statement::Local(stmt) => {
@@ -421,9 +423,9 @@ impl ASTWriter {
                             .with_s_key("LocalChannel");
 
                         self.kv(indent2).with_s_key("From");
-                        self.write_local(heap, stmt.from, indent3);
+                        self.write_variable(heap, stmt.from, indent3);
                         self.kv(indent2).with_s_key("To");
-                        self.write_local(heap, stmt.to, indent3);
+                        self.write_variable(heap, stmt.to, indent3);
                         self.kv(indent2).with_s_key("Next")
                             .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
                     },
@@ -432,7 +434,7 @@ impl ASTWriter {
                             .with_s_key("LocalMemory");
 
                         self.kv(indent2).with_s_key("Variable");
-                        self.write_local(heap, stmt.variable, indent3);
+                        self.write_variable(heap, stmt.variable, indent3);
                         self.kv(indent2).with_s_key("Next")
                             .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
                     }
@@ -788,16 +790,19 @@ impl ASTWriter {
         }
     }
 
-    fn write_local(&mut self, heap: &Heap, local_id: LocalId, indent: usize) {
-        let local = &heap[local_id];
+    fn write_variable(&mut self, heap: &Heap, variable_id: VariableId, indent: usize) {
+        let var = &heap[variable_id];
         let indent2 = indent + 1;
 
-        self.kv(indent).with_id(PREFIX_LOCAL_ID, local_id.0.index)
-            .with_s_key("Local");
+        self.kv(indent).with_id(PREFIX_VARIABLE_ID, variable_id.0.index)
+            .with_s_key("Variable");
 
-        self.kv(indent2).with_s_key("Name").with_identifier_val(&local.identifier);
+        self.kv(indent2).with_s_key("Name").with_identifier_val(&var.identifier);
+        self.kv(indent2).with_s_key("Kind").with_debug_val(&var.kind);
         self.kv(indent2).with_s_key("ParserType")
-            .with_custom_val(|w| write_parser_type(w, heap, &local.parser_type));
+            .with_custom_val(|w| write_parser_type(w, heap, &var.parser_type));
+        self.kv(indent2).with_s_key("RelativePos").with_disp_val(&var.relative_pos_in_block);
+        self.kv(indent2).with_s_key("UniqueScopeID").with_disp_val(&var.unique_id_in_scope);
     }
 
     //--------------------------------------------------------------------------

@@ -719,10 +719,10 @@ impl Visitor for AssignableExpressions {
             self.error(h[expr].span.begin)
         } else {
             match h[expr].operation {
-                UnaryOperation::PostDecrement
-                | UnaryOperation::PreDecrement
-                | UnaryOperation::PostIncrement
-                | UnaryOperation::PreIncrement => {
+                UnaryOperator::PostDecrement
+                | UnaryOperator::PreDecrement
+                | UnaryOperator::PostIncrement
+                | UnaryOperator::PreIncrement => {
                     self.assignable = true;
                     recursive_unary_expression(self, h, expr)?;
                     self.assignable = false;

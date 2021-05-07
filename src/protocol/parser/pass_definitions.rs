@@ -355,7 +355,9 @@ impl PassDefinitions {
                 is_implicit: true,
                 span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
                 statements,
-                parent_scope: None,
+                parent_scope: Scope::Definition(DefinitionId::new_invalid()),
+                first_unique_id_in_scope: -1,
+                next_unique_id_in_scope: -1,
                 relative_pos_in_parent: 0,
                 locals: Vec::new(),
                 labels: Vec::new()
@@ -382,7 +384,7 @@ impl PassDefinitions {
                 section.push(id.upcast());
 
                 let end_if = ctx.heap.alloc_end_if_statement(|this| EndIfStatement{
-                    this, start_if: id, next: None
+                    this, start_if: id, next: StatementId::new_invalid()
                 });
                 section.push(id.upcast());
 
@@ -393,7 +395,7 @@ impl PassDefinitions {
                 section.push(id.upcast());
 
                 let end_while = ctx.heap.alloc_end_while_statement(|this| EndWhileStatement{
-                    this, start_while: id, next: None
+                    this, start_while: id, next: StatementId::new_invalid()
                 });
                 section.push(id.upcast());
 
@@ -410,7 +412,7 @@ impl PassDefinitions {
                 section.push(id.upcast());
 
                 let end_sync = ctx.heap.alloc_end_synchronous_statement(|this| EndSynchronousStatement{
-                    this, start_sync: id, next: None
+                    this, start_sync: id, next: StatementId::new_invalid()
                 });
 
                 let sync_stmt = &mut ctx.heap[id];
@@ -477,7 +479,9 @@ impl PassDefinitions {
             is_implicit: false,
             span: block_span,
             statements,
-            parent_scope: None,
+            parent_scope: Scope::Definition(DefinitionId::new_invalid()),
+            first_unique_id_in_scope: -1,
+            next_unique_id_in_scope: -1,
             relative_pos_in_parent: 0,
             locals: Vec::new(),
             labels: Vec::new(),
@@ -656,7 +660,7 @@ impl PassDefinitions {
             this,
             span: new_span,
             expression: call_id,
-            next: None
+            next: StatementId::new_invalid(),
         }))
     }
 
@@ -691,17 +695,21 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::SemiColon)?;
 
         // Construct ports
-        let from = ctx.heap.alloc_local(|this| Local{
+        let from = ctx.heap.alloc_variable(|this| Variable{
             this,
+            kind: VariableKind::Local,
             identifier: from_identifier,
             parser_type: channel_type.clone(),
             relative_pos_in_block: 0,
+            unique_id_in_scope: -1,
         });
-        let to = ctx.heap.alloc_local(|this| Local{
+        let to = ctx.heap.alloc_variable(|this|Variable{
             this,
+            kind: VariableKind::Local,
             identifier: to_identifier,
             parser_type: channel_type,
             relative_pos_in_block: 0,
+            unique_id_in_scope: -1,
         });
 
         // Construct the channel
@@ -710,7 +718,7 @@ impl PassDefinitions {
             span: channel_span,
             from, to,
             relative_pos_in_block: 0,
-            next: None,
+            next: StatementId::new_invalid(),
         }))
     }
 
@@ -782,17 +790,19 @@ impl PassDefinitions {
                 consume_token(&module.source, iter, TokenKind::SemiColon)?;
 
                 // Allocate the memory statement with the variable
-                let local_id = ctx.heap.alloc_local(|this| Local{
+                let local_id = ctx.heap.alloc_variable(|this| Variable{
                     this,
+                    kind: VariableKind::Local,
                     identifier: identifier.clone(),
                     parser_type,
                     relative_pos_in_block: 0,
+                    unique_id_in_scope: -1,
                 });
                 let memory_stmt_id = ctx.heap.alloc_memory_statement(|this| MemoryStatement{
                     this,
                     span: memory_span,
                     variable: local_id,
-                    next: None
+                    next: StatementId::new_invalid()
                 });
 
                 // Allocate the initial assignment
@@ -816,7 +826,7 @@ impl PassDefinitions {
                     this,
                     span: InputSpan::from_positions(initial_expr_begin_pos, initial_expr_end_pos),
                     expression: assignment_expr_id.upcast(),
-                    next: None,
+                    next: StatementId::new_invalid(),
                 });
 
                 return Ok(Some((memory_stmt_id, assignment_stmt_id)))
@@ -841,7 +851,7 @@ impl PassDefinitions {
             this,
             span: InputSpan::from_positions(start_pos, end_pos),
             expression,
-            next: None,
+            next: StatementId::new_invalid(),
         }))
     }
 
@@ -849,6 +859,8 @@ impl PassDefinitions {
     // Expression Parsing
     //--------------------------------------------------------------------------
 
+    // TODO: @Cleanup This is fine for now. But I prefer my stacktraces not to
+    //  look like enterprise Java code...
     fn consume_expression(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<ExpressionId, ParseError> {
@@ -1077,9 +1089,9 @@ impl PassDefinitions {
     fn consume_prefix_expression(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<ExpressionId, ParseError> {
-        fn parse_prefix_token(token: Option<TokenKind>) -> Option<UnaryOperation> {
+        fn parse_prefix_token(token: Option<TokenKind>) -> Option<UnaryOperator> {
             use TokenKind as TK;
-            use UnaryOperation as UO;
+            use UnaryOperator as UO;
             match token {
                 Some(TK::Plus) => Some(UO::Positive),
                 Some(TK::Minus) => Some(UO::Negative),
@@ -1129,7 +1141,7 @@ impl PassDefinitions {
             if token == TokenKind::PlusPlus {
                 result = ctx.heap.alloc_unary_expression(|this| UnaryExpression{
                     this, span,
-                    operation: UnaryOperation::PostIncrement,
+                    operation: UnaryOperator::PostIncrement,
                     expression: result,
                     parent: ExpressionParent::None,
                     concrete_type: ConcreteType::default()
@@ -1137,7 +1149,7 @@ impl PassDefinitions {
             } else if token == TokenKind::MinusMinus {
                 result = ctx.heap.alloc_unary_expression(|this| UnaryExpression{
                     this, span,
-                    operation: UnaryOperation::PostDecrement,
+                    operation: UnaryOperator::PostDecrement,
                     expression: result,
                     parent: ExpressionParent::None,
                     concrete_type: ConcreteType::default()
@@ -1913,17 +1925,18 @@ fn consume_parameter_list(
         TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
         |source, iter, ctx| {
             let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
-            let (start_pos, _) = iter.next_positions();
             let parser_type = consume_parser_type(
                 source, iter, &ctx.symbols, &ctx.heap, poly_vars, scope,
                 definition_id, false, 0
             )?;
             let identifier = consume_ident_interned(source, iter, ctx)?;
-            let parameter_id = ctx.heap.alloc_parameter(|this| Parameter{
+            let parameter_id = ctx.heap.alloc_variable(|this| Variable{
                 this,
-                span: InputSpan::from_positions(start_pos, identifier.span.end),
+                kind: VariableKind::Parameter,
                 parser_type,
-                identifier
+                identifier,
+                relative_pos_in_block: 0,
+                unique_id_in_scope: -1,
             });
             Ok(parameter_id)
         },

@@ -1670,7 +1670,7 @@ impl PassTyping {
     }
 
     fn progress_unary_expr(&mut self, ctx: &mut Ctx, id: UnaryExpressionId) -> Result<(), ParseError> {
-        use UnaryOperation as UO;
+        use UnaryOperator as UO;
 
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];

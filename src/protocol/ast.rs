@@ -115,10 +115,7 @@ define_aliased_ast_id!(RootId, Id<Root>, index(Root, protocol_descriptions), all
 define_aliased_ast_id!(PragmaId, Id<Pragma>, index(Pragma, pragmas), alloc(alloc_pragma));
 define_aliased_ast_id!(ImportId, Id<Import>, index(Import, imports), alloc(alloc_import));
 define_aliased_ast_id!(ParserTypeId, Id<ParserType>, index(ParserType, parser_types), alloc(alloc_parser_type));
-
-define_aliased_ast_id!(VariableId, Id<Variable>, index(Variable, variables));
-define_new_ast_id!(ParameterId, VariableId, index(Parameter, Variable::Parameter, variables), alloc(alloc_parameter));
-define_new_ast_id!(LocalId, VariableId, index(Local, Variable::Local, variables), alloc(alloc_local));
+define_aliased_ast_id!(VariableId, Id<Variable>, index(Variable, variables), alloc(alloc_variable));
 
 define_aliased_ast_id!(DefinitionId, Id<Definition>, index(Definition, definitions));
 define_new_ast_id!(StructDefinitionId, DefinitionId, index(StructDefinition, Definition::Struct, definitions), alloc(alloc_struct_definition));
@@ -661,63 +658,21 @@ impl Scope {
 }
 
 #[derive(Debug, Clone)]
-pub enum Variable {
-    Parameter(Parameter),
-    Local(Local),
-}
-
-impl Variable {
-    pub fn identifier(&self) -> &Identifier {
-        match self {
-            Variable::Parameter(var) => &var.identifier,
-            Variable::Local(var) => &var.identifier,
-        }
-    }
-    pub fn is_parameter(&self) -> bool {
-        match self {
-            Variable::Parameter(_) => true,
-            _ => false,
-        }
-    }
-    pub fn as_parameter(&self) -> &Parameter {
-        match self {
-            Variable::Parameter(result) => result,
-            _ => panic!("Unable to cast `Variable` to `Parameter`"),
-        }
-    }
-    pub fn as_local(&self) -> &Local {
-        match self {
-            Variable::Local(result) => result,
-            _ => panic!("Unable to cast `Variable` to `Local`"),
-        }
-    }
-    pub fn as_local_mut(&mut self) -> &mut Local {
-        match self {
-            Variable::Local(result) => result,
-            _ => panic!("Unable to cast 'Variable' to 'Local'"),
-        }
-    }
-}
-
-/// TODO: Remove distinction between parameter/local and add an enum to indicate
-///     the distinction between the two
-#[derive(Debug, Clone)]
-pub struct Parameter {
-    pub this: ParameterId,
-    // Phase 2: parser
-    pub span: InputSpan,
-    pub parser_type: ParserType,
-    pub identifier: Identifier,
+pub enum VariableKind {
+    Parameter,
+    Local,
 }
 
 #[derive(Debug, Clone)]
-pub struct Local {
-    pub this: LocalId,
-    // Phase 1: parser
-    pub identifier: Identifier,
+pub struct Variable {
+    pub this: VariableId,
+    // Parsing
+    pub kind: VariableKind,
     pub parser_type: ParserType,
-    // Phase 2: linker
+    pub identifier: Identifier,
+    // Validator/linker
     pub relative_pos_in_block: u32,
+    pub unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
 }
 
 #[derive(Debug, Clone)]
@@ -820,6 +775,13 @@ impl Definition {
             _ => panic!("Unable to cast `Definition` to `Function`"),
         }
     }
+    pub fn parameters(&self) -> &Vec<VariableId> {
+        match self {
+            Definition::Component(def) => &def.parameters,
+            Definition::Function(def) => &def.parameters,
+            _ => panic!("Called parameters() on {:?}", self)
+        }
+    }
     pub fn defined_in(&self) -> RootId {
         match self {
             Definition::Struct(def) => def.defined_in,
@@ -836,20 +798,6 @@ impl Definition {
             Definition::Union(def) => &def.identifier,
             Definition::Component(def) => &def.identifier,
             Definition::Function(def) => &def.identifier,
-        }
-    }
-    pub fn parameters(&self) -> &Vec<ParameterId> {
-        match self {
-            Definition::Component(com) => &com.parameters,
-            Definition::Function(fun) => &fun.parameters,
-            _ => panic!("cannot retrieve parameters for {:?}", self),
-        }
-    }
-    pub fn body(&self) -> BlockStatementId {
-        match self {
-            Definition::Component(com) => com.body,
-            Definition::Function(fun) => fun.body,
-            _ => panic!("cannot retrieve body for {:?}", self),
         }
     }
     pub fn poly_vars(&self) -> &Vec<Identifier> {
@@ -974,7 +922,7 @@ pub struct ComponentDefinition {
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
     // Phase 2: parsing
-    pub parameters: Vec<ParameterId>,
+    pub parameters: Vec<VariableId>,
     pub body: BlockStatementId,
 }
 
@@ -1004,7 +952,7 @@ pub struct FunctionDefinition {
     pub poly_vars: Vec<Identifier>,
     // Phase 2: parsing
     pub return_types: Vec<ParserType>,
-    pub parameters: Vec<ParameterId>,
+    pub parameters: Vec<VariableId>,
     pub body: BlockStatementId,
 }
 
@@ -1221,14 +1169,14 @@ impl Statement {
         match self {
             Statement::Block(_) => todo!(),
             Statement::Local(stmt) => match stmt {
-                LocalStatement::Channel(stmt) => stmt.next = Some(next),
-                LocalStatement::Memory(stmt) => stmt.next = Some(next),
+                LocalStatement::Channel(stmt) => stmt.next = next,
+                LocalStatement::Memory(stmt) => stmt.next = next,
             },
-            Statement::EndIf(stmt) => stmt.next = Some(next),
-            Statement::EndWhile(stmt) => stmt.next = Some(next),
-            Statement::EndSynchronous(stmt) => stmt.next = Some(next),
-            Statement::New(stmt) => stmt.next = Some(next),
-            Statement::Expression(stmt) => stmt.next = Some(next),
+            Statement::EndIf(stmt) => stmt.next = next,
+            Statement::EndWhile(stmt) => stmt.next = next,
+            Statement::EndSynchronous(stmt) => stmt.next = next,
+            Statement::New(stmt) => stmt.next = next,
+            Statement::Expression(stmt) => stmt.next = next,
             Statement::Return(_)
             | Statement::Break(_)
             | Statement::Continue(_)
@@ -1249,7 +1197,9 @@ pub struct BlockStatement {
     pub span: InputSpan, // of the complete block
     pub statements: Vec<StatementId>,
     // Phase 2: linker
-    pub parent_scope: Option<Scope>,
+    pub parent_scope: Scope,
+    pub first_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
+    pub next_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
     pub relative_pos_in_parent: u32,
     pub locals: Vec<LocalId>,
     pub labels: Vec<LabeledStatementId>,
@@ -1315,12 +1265,6 @@ impl LocalStatement {
             LocalStatement::Memory(v) => v.span,
         }
     }
-    pub fn next(&self) -> Option<StatementId> {
-        match self {
-            LocalStatement::Memory(stmt) => stmt.next,
-            LocalStatement::Channel(stmt) => stmt.next,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1328,9 +1272,9 @@ pub struct MemoryStatement {
     pub this: MemoryStatementId,
     // Phase 1: parser
     pub span: InputSpan,
-    pub variable: LocalId,
+    pub variable: VariableId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 /// ChannelStatement is the declaration of an input and output port associated
@@ -1343,11 +1287,11 @@ pub struct ChannelStatement {
     pub this: ChannelStatementId,
     // Phase 1: parser
     pub span: InputSpan, // of the "channel" keyword
-    pub from: LocalId, // output
-    pub to: LocalId,   // input
+    pub from: VariableId, // output
+    pub to: VariableId,   // input
     // Phase 2: linker
     pub relative_pos_in_block: u32,
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1378,7 +1322,7 @@ pub struct EndIfStatement {
     pub this: EndIfStatementId,
     pub start_if: IfStatementId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1398,7 +1342,7 @@ pub struct EndWhileStatement {
     pub this: EndWhileStatementId,
     pub start_while: WhileStatementId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1437,7 +1381,7 @@ pub struct EndSynchronousStatement {
     pub this: EndSynchronousStatementId,
     pub start_sync: SynchronousStatementId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1465,7 +1409,7 @@ pub struct NewStatement {
     pub span: InputSpan, // of the "new" keyword
     pub expression: CallExpressionId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1475,7 +1419,7 @@ pub struct ExpressionStatement {
     pub span: InputSpan,
     pub expression: ExpressionId,
     // Phase 2: linker
-    pub next: Option<StatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -1669,7 +1613,7 @@ impl Expression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum AssignmentOperator {
     Set,
     Multiplied,
@@ -1687,45 +1631,45 @@ pub enum AssignmentOperator {
 #[derive(Debug, Clone)]
 pub struct AssignmentExpression {
     pub this: AssignmentExpressionId,
-    // Phase 2: parser
+    // Parsing
     pub span: InputSpan, // of the operator
     pub left: ExpressionId,
     pub operation: AssignmentOperator,
     pub right: ExpressionId,
-    // Phase 3: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 4: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct BindingExpression {
     pub this: BindingExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan,
     pub left: LiteralExpressionId,
     pub right: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConditionalExpression {
     pub this: ConditionalExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan, // of question mark operator
     pub test: ExpressionId,
     pub true_expression: ExpressionId,
     pub false_expression: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linking
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
     Concatenate,
     LogicalOr,
@@ -1751,19 +1695,19 @@ pub enum BinaryOperator {
 #[derive(Debug, Clone)]
 pub struct BinaryExpression {
     pub this: BinaryExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan, // of the operator
     pub left: ExpressionId,
     pub operation: BinaryOperator,
     pub right: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnaryOperation {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperator {
     Positive,
     Negative,
     BitwiseNot,
@@ -1777,68 +1721,68 @@ pub enum UnaryOperation {
 #[derive(Debug, Clone)]
 pub struct UnaryExpression {
     pub this: UnaryExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan, // of the operator
-    pub operation: UnaryOperation,
+    pub operation: UnaryOperator,
     pub expression: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexingExpression {
     pub this: IndexingExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan,
     pub subject: ExpressionId,
     pub index: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct SlicingExpression {
     pub this: SlicingExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan, // from '[' to ']';
     pub subject: ExpressionId,
     pub from_index: ExpressionId,
     pub to_index: ExpressionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct SelectExpression {
     pub this: SelectExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan, // of the '.'
     pub subject: ExpressionId,
     pub field: Field,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
 pub struct CallExpression {
     pub this: CallExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan,
     pub parser_type: ParserType, // of the function call, not the return type
     pub method: Method,
     pub arguments: Vec<ExpressionId>,
     pub definition: DefinitionId,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType, // of the return type
 }
 
@@ -1864,12 +1808,12 @@ pub struct MethodSymbolic {
 #[derive(Debug, Clone)]
 pub struct LiteralExpression {
     pub this: LiteralExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub span: InputSpan,
     pub value: Literal,
-    // Phase 2: linker
+    // Validator/Linker
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
 
@@ -1968,11 +1912,11 @@ pub struct LiteralUnion {
 #[derive(Debug, Clone)]
 pub struct VariableExpression {
     pub this: VariableExpressionId,
-    // Phase 1: parser
+    // Parsing
     pub identifier: Identifier,
-    // Phase 2: linker
+    // Validator/Linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,
-    // Phase 3: type checking
+    // Typing
     pub concrete_type: ConcreteType,
 }
