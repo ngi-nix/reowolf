@@ -1,11 +1,11 @@
 
+use super::store::*;
 use crate::PortId;
 use crate::protocol::ast::{
     AssignmentOperator,
     BinaryOperator,
     UnaryOperator,
 };
-use crate::protocol::eval::Store;
 
 pub type StackPos = u32;
 pub type HeapPos = u32;
@@ -16,6 +16,10 @@ pub enum ValueId {
     Heap(HeapPos, u32), // allocated region + values within that region
 }
 
+/// Represents a value stored on the stack or on the heap. Some values contain
+/// a `HeapPos`, implying that they're stored in the store's `Heap`. Clearing
+/// a `Value` with a `HeapPos` from a stack must also clear the associated
+/// region from the `Heap`.
 #[derive(Debug, Clone)]
 pub enum Value {
     // Special types, never encountered during evaluation if the compiler works correctly
@@ -141,9 +145,118 @@ impl Value {
     }
 }
 
-/// Applies the assignment operator. If a heap position is returned then that
-/// heap position should be cleared
-pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueRef, op: AssignmentOperator, rhs: Value) {
+/// When providing arguments to a new component, or when transferring values
+/// from one component's store to a newly instantiated component, one has to
+/// transfer stack and heap values. This `ValueGroup` represents such a
+/// temporary group of values with potential heap allocations.
+///
+/// Constructing such a ValueGroup manually requires some extra care to make
+/// sure all elements of `values` point to valid elements of `regions`.
+///
+/// Again: this is a temporary thing, hopefully removed once we move to a
+/// bytecode interpreter.
+pub struct ValueGroup {
+    pub(crate) values: Vec<Value>,
+    pub(crate) regions: Vec<Vec<Value>>
+}
+
+impl ValueGroup {
+    pub(crate) fn new_stack(values: Vec<Value>) -> Self {
+        debug_assert!(values.iter().all(|v| v.get_heap_pos().is_none()));
+        Self{
+            values,
+            regions: Vec::new(),
+        }
+    }
+    pub(crate) fn from_store(store: &Store, values: &[Value]) -> Self {
+        let mut group = ValueGroup{
+            values: Vec::with_capacity(values.len()),
+            regions: Vec::with_capacity(values.len()), // estimation
+        };
+
+        for value in values {
+            let transferred = group.retrieve_value(value, store);
+            group.values.push(transferred);
+        }
+
+        group
+    }
+
+    /// Transfers a provided value from a store into a local value with its
+    /// heap allocations (if any) stored in the ValueGroup. Calling this
+    /// function will not store the returned value in the `values` member.
+    fn retrieve_value(&mut self, value: &Value, from_store: &Store) -> Value {
+        if let Some(heap_pos) = value.get_heap_pos() {
+            // Value points to a heap allocation, so transfer the heap values
+            // internally.
+            let from_region = &from_store.heap_regions[heap_pos as usize].values;
+            let mut new_region = Vec::with_capacity(from_region.len());
+            for value in from_region {
+                let transferred = self.transfer_value(value, from_store);
+                new_region.push(transferred);
+            }
+
+            // Region is constructed, store internally and return the new value.
+            let new_region_idx = self.regions.len() as HeapPos;
+            self.regions.push(new_region);
+
+            return match value {
+                Value::Message(_)    => Value::Message(new_region_idx),
+                Value::String(_)     => Value::String(new_region_idx),
+                Value::Array(_)      => Value::Array(new_region_idx),
+                Value::Union(tag, _) => Value::Union(*tag, new_region_idx),
+                Value::Struct(_)     => Value::Struct(new_region_idx),
+                _ => unreachable!(),
+            };
+        } else {
+            return value.clone();
+        }
+    }
+
+    /// Transfers the heap values and the stack values into the store. Stack
+    /// values are pushed onto the Store's stack in the order in which they
+    /// appear in the value group.
+    pub fn into_store(self, store: &mut Store) {
+        for value in &self.values {
+            let transferred = self.provide_value(value, store);
+            store.stack.push(transferred);
+        }
+    }
+
+    fn provide_value(&self, value: &Value, to_store: &mut Store) -> Value {
+        if let Some(from_heap_pos) = value.get_heap_pos() {
+            let from_heap_pos = from_heap_pos as usize;
+            let to_heap_pos = to_store.alloc_heap();
+            let to_heap_pos_usize = to_heap_pos as usize;
+            to_store.heap_regions[to_heap_pos_usize].values.reserve(self.regions[from_heap_pos].len());
+
+            for value in &self.regions[from_heap_pos as usize] {
+                let transferred = self.provide_value(value, to_store);
+                to_store.heap_regions[to_heap_pos_usize].values.push(transferred);
+            }
+
+            return match value {
+                Value::Message(_)    => Value::Message(to_heap_pos),
+                Value::String(_)     => Value::String(to_heap_pos),
+                Value::Array(_)      => Value::Array(to_heap_pos),
+                Value::Union(tag, _) => Value::Union(*tag, to_heap_pos),
+                Value::Struct(_)     => Value::Struct(to_heap_pos),
+                _ => unreachable!(),
+            };
+        } else {
+            return value.clone();
+        }
+    }
+}
+
+impl Default for ValueGroup {
+    /// Returns an empty ValueGroup
+    fn default() -> Self {
+        Self { values: Vec::new(), regions: Vec::new() }
+    }
+}
+
+pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: AssignmentOperator, rhs: Value) {
     use AssignmentOperator as AO;
 
     macro_rules! apply_int_op {
@@ -165,7 +278,7 @@ pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueRef, op: As
     let lhs = store.read_mut_ref(lhs);
 
     let mut to_dealloc = None;
-    match AO {
+    match op {
         AO::Set => {
             match lhs {
                 Value::Unassigned => { *lhs = rhs; },
@@ -290,25 +403,28 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
     use UnaryOperator as UO;
 
     macro_rules! apply_int_expr_and_return {
-        ($value:ident, $apply:expr, $op:ident) => {
+        ($value:ident, $apply:tt, $op:ident) => {
             return match $value {
-                Value::UInt8(v)  => Value::UInt8($apply),
-                Value::UInt16(v) => Value::UInt16($apply),
-                Value::UInt32(v) => Value::UInt32($apply),
-                Value::UInt64(v) => Value::UInt64($apply),
-                Value::SInt8(v)  => Value::SInt8($apply),
-                Value::SInt16(v) => Value::SInt16($apply),
-                Value::SInt32(v) => Value::SInt32($apply),
-                Value::SInt64(v) => Value::SInt64($apply),
+                Value::UInt8(v)  => Value::UInt8($apply *v),
+                Value::UInt16(v) => Value::UInt16($apply *v),
+                Value::UInt32(v) => Value::UInt32($apply *v),
+                Value::UInt64(v) => Value::UInt64($apply *v),
+                Value::SInt8(v)  => Value::SInt8($apply *v),
+                Value::SInt16(v) => Value::SInt16($apply *v),
+                Value::SInt32(v) => Value::SInt32($apply *v),
+                Value::SInt64(v) => Value::SInt64($apply *v),
                 _ => unreachable!("apply_unary_operator {:?} on value {:?}", $op, $value),
             };
         }
     }
 
     match op {
-        UO::Positive   => { apply_int_expr_and_return!(value, *v, op) },
-        UO::Negative   => { apply_int_expr_and_return!(value, *v, op) },
-        UO::BitwiseNot => { apply_int_expr_and_return!(value, *v, op)},
+        UO::Positive   => {
+            debug_assert!(value.is_integer());
+            return value.clone();
+        },
+        UO::Negative   => { apply_int_expr_and_return!(value, -, op) },
+        UO::BitwiseNot => { apply_int_expr_and_return!(value, !, op)},
         UO::LogicalNot => { return Value::Bool(!value.as_bool()); },
         UO::PreIncrement => { todo!("implement") },
         UO::PreDecrement => { todo!("implement") },

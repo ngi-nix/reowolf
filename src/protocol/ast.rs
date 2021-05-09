@@ -126,6 +126,7 @@ define_new_ast_id!(FunctionDefinitionId, DefinitionId, index(FunctionDefinition,
 
 define_aliased_ast_id!(StatementId, Id<Statement>, index(Statement, statements));
 define_new_ast_id!(BlockStatementId, StatementId, index(BlockStatement, Statement::Block, statements), alloc(alloc_block_statement));
+define_new_ast_id!(EndBlockStatementId, StatementId, index(EndBlockStatement, Statement::EndBlock, statements), alloc(alloc_end_block_statement));
 define_new_ast_id!(LocalStatementId, StatementId, index(LocalStatement, Statement::Local, statements), alloc(alloc_local_statement));
 define_new_ast_id!(MemoryStatementId, LocalStatementId);
 define_new_ast_id!(ChannelStatementId, LocalStatementId);
@@ -975,6 +976,7 @@ impl FunctionDefinition {
 #[derive(Debug, Clone)]
 pub enum Statement {
     Block(BlockStatement),
+    EndBlock(EndBlockStatement),
     Local(LocalStatement),
     Labeled(LabeledStatement),
     If(IfStatement),
@@ -1162,12 +1164,13 @@ impl Statement {
             Statement::Goto(v) => v.span,
             Statement::New(v) => v.span,
             Statement::Expression(v) => v.span,
-            Statement::EndIf(_) | Statement::EndWhile(_) | Statement::EndSynchronous(_) => unreachable!(),
+            Statement::EndBlock(_) | Statement::EndIf(_) | Statement::EndWhile(_) | Statement::EndSynchronous(_) => unreachable!(),
         }
     }
     pub fn link_next(&mut self, next: StatementId) {
         match self {
             Statement::Block(_) => todo!(),
+            Statement::EndBlock(stmt) => stmt.next = next,
             Statement::Local(stmt) => match stmt {
                 LocalStatement::Channel(stmt) => stmt.next = next,
                 LocalStatement::Memory(stmt) => stmt.next = next,
@@ -1196,12 +1199,13 @@ pub struct BlockStatement {
     pub is_implicit: bool,
     pub span: InputSpan, // of the complete block
     pub statements: Vec<StatementId>,
+    pub end_block: EndBlockStatementId,
     // Phase 2: linker
     pub parent_scope: Scope,
     pub first_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
     pub next_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
     pub relative_pos_in_parent: u32,
-    pub locals: Vec<LocalId>,
+    pub locals: Vec<VariableId>,
     pub labels: Vec<LabeledStatementId>,
 }
 
@@ -1228,10 +1232,15 @@ impl BlockStatement {
             }
         }
     }
-    pub fn first(&self) -> StatementId {
-        // It is an invariant (guaranteed by the lexer) that block statements have at least one stmt
-        *self.statements.first().unwrap()
-    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EndBlockStatement {
+    pub this: EndBlockStatementId,
+    // Parser
+    pub start_block: BlockStatementId,
+    // Validation/Linking
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]
@@ -1313,15 +1322,13 @@ pub struct IfStatement {
     pub test: ExpressionId,
     pub true_body: BlockStatementId,
     pub false_body: Option<BlockStatementId>,
-    // Phase 2: linker
-    pub end_if: Option<EndIfStatementId>,
+    pub end_if: EndIfStatementId,
 }
 
 #[derive(Debug, Clone)]
 pub struct EndIfStatement {
     pub this: EndIfStatementId,
     pub start_if: IfStatementId,
-    // Phase 2: linker
     pub next: StatementId,
 }
 
@@ -1332,8 +1339,7 @@ pub struct WhileStatement {
     pub span: InputSpan, // of the "while" keyword
     pub test: ExpressionId,
     pub body: BlockStatementId,
-    // Phase 2: linker
-    pub end_while: Option<EndWhileStatementId>,
+    pub end_while: EndWhileStatementId,
     pub in_sync: Option<SynchronousStatementId>,
 }
 
@@ -1372,7 +1378,7 @@ pub struct SynchronousStatement {
     pub span: InputSpan, // of the "sync" keyword
     pub body: BlockStatementId,
     // Phase 2: linker
-    pub end_sync: Option<EndSynchronousStatementId>,
+    pub end_sync: EndSynchronousStatementId,
     pub parent_scope: Option<Scope>,
 }
 

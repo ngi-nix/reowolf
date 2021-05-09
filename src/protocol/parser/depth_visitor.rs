@@ -43,15 +43,8 @@ pub(crate) trait Visitor: Sized {
     }
 
     fn visit_variable_declaration(&mut self, h: &mut Heap, decl: VariableId) -> VisitorResult {
-        recursive_variable_declaration(self, h, decl)
-    }
-    fn visit_parameter_declaration(&mut self, _h: &mut Heap, _decl: ParameterId) -> VisitorResult {
         Ok(())
     }
-    fn visit_local_declaration(&mut self, _h: &mut Heap, _decl: LocalId) -> VisitorResult {
-        Ok(())
-    }
-
     fn visit_statement(&mut self, h: &mut Heap, stmt: StatementId) -> VisitorResult {
         recursive_statement(self, h, stmt)
     }
@@ -70,6 +63,9 @@ pub(crate) trait Visitor: Sized {
     }
     fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
         recursive_block_statement(self, h, stmt)
+    }
+    fn visit_end_block_statement(&mut self, h: &mut Heap, stmt: EndBlockStatementId) -> VisitorResult {
+        Ok(())
     }
     fn visit_labeled_statement(&mut self, h: &mut Heap, stmt: LabeledStatementId) -> VisitorResult {
         recursive_labeled_statement(self, h, stmt)
@@ -189,23 +185,6 @@ pub(crate) trait Visitor: Sized {
     }
 }
 
-// Bubble-up helpers
-fn recursive_parameter_as_variable<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    param: ParameterId,
-) -> VisitorResult {
-    this.visit_variable_declaration(h, param.upcast())
-}
-
-fn recursive_local_as_variable<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    local: LocalId,
-) -> VisitorResult {
-    this.visit_variable_declaration(h, local.upcast())
-}
-
 fn recursive_call_expression_as_expression<T: Visitor>(
     this: &mut T,
     h: &mut Heap,
@@ -266,7 +245,7 @@ fn recursive_composite_definition<T: Visitor>(
     def: ComponentDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
-        recursive_parameter_as_variable(this, h, param)?;
+        this.visit_variable_declaration(h, param)?;
     }
     this.visit_block_statement(h, h[def].body)
 }
@@ -277,7 +256,7 @@ fn recursive_primitive_definition<T: Visitor>(
     def: ComponentDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
-        recursive_parameter_as_variable(this, h, param)?;
+        this.visit_variable_declaration(h, param)?;
     }
     this.visit_block_statement(h, h[def].body)
 }
@@ -288,25 +267,15 @@ fn recursive_function_definition<T: Visitor>(
     def: FunctionDefinitionId,
 ) -> VisitorResult {
     for &param in h[def].parameters.clone().iter() {
-        recursive_parameter_as_variable(this, h, param)?;
+        this.visit_variable_declaration(h, param)?;
     }
     this.visit_block_statement(h, h[def].body)
-}
-
-fn recursive_variable_declaration<T: Visitor>(
-    this: &mut T,
-    h: &mut Heap,
-    decl: VariableId,
-) -> VisitorResult {
-    match h[decl].clone() {
-        Variable::Parameter(decl) => this.visit_parameter_declaration(h, decl.this),
-        Variable::Local(decl) => this.visit_local_declaration(h, decl.this),
-    }
 }
 
 fn recursive_statement<T: Visitor>(this: &mut T, h: &mut Heap, stmt: StatementId) -> VisitorResult {
     match h[stmt].clone() {
         Statement::Block(stmt) => this.visit_block_statement(h, stmt.this),
+        Statement::EndBlock(stmt) => this.visit_end_block_statement(h, stmt.this),
         Statement::Local(stmt) => this.visit_local_statement(h, stmt.this()),
         Statement::Labeled(stmt) => this.visit_labeled_statement(h, stmt.this),
         Statement::If(stmt) => this.visit_if_statement(h, stmt.this),
@@ -330,7 +299,7 @@ fn recursive_block_statement<T: Visitor>(
     block: BlockStatementId,
 ) -> VisitorResult {
     for &local in h[block].locals.clone().iter() {
-        recursive_local_as_variable(this, h, local)?;
+        this.visit_variable_declaration(h, local)?;
     }
     for &stmt in h[block].statements.clone().iter() {
         this.visit_statement(h, stmt)?;
@@ -548,6 +517,18 @@ impl Visitor for LinkStatements {
             h[prev].link_next(stmt);
         }
         recursive_statement(self, h, stmt)
+    }
+    fn visit_block_statement(&mut self, h: &mut Heap, stmt: BlockStatementId) -> VisitorResult {
+        if let Some(prev) = self.prev.take() {
+            h[prev.0].link_next(stmt.upcast());
+        }
+        let end_block = h[stmt].end_block;
+        recursive_block_statement(self, h, stmt)?;
+        if let Some(prev) = self.prev.take() {
+            h[prev.0].link_next(end_block.upcast());
+        }
+        self.prev = Some(UniqueStatementId(end_block.upcast()));
+        Ok(())
     }
     fn visit_local_statement(&mut self, _h: &mut Heap, stmt: LocalStatementId) -> VisitorResult {
         self.prev = Some(UniqueStatementId(stmt.upcast()));

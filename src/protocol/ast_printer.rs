@@ -22,6 +22,7 @@ const PREFIX_COMPONENT_ID: &'static str = "DefC";
 const PREFIX_FUNCTION_ID: &'static str = "DefF";
 const PREFIX_STMT_ID: &'static str = "Stmt";
 const PREFIX_BLOCK_STMT_ID: &'static str = "SBl ";
+const PREFIX_ENDBLOCK_STMT_ID: &'static str = "SEBl";
 const PREFIX_LOCAL_STMT_ID: &'static str = "SLoc";
 const PREFIX_MEM_STMT_ID: &'static str = "SMem";
 const PREFIX_CHANNEL_STMT_ID: &'static str = "SCha";
@@ -358,8 +359,8 @@ impl ASTWriter {
                 }
 
                 self.kv(indent2).with_s_key("Parameters");
-                for param_id in &def.parameters {
-                    self.write_parameter(heap, *param_id, indent3);
+                for variable_id in &def.parameters {
+                    self.write_variable(heap, *variable_id, indent3);
                 }
 
                 self.kv(indent2).with_s_key("Body");
@@ -378,24 +379,14 @@ impl ASTWriter {
                 }
 
                 self.kv(indent2).with_s_key("Parameters");
-                for param_id in &def.parameters {
-                    self.write_parameter(heap, *param_id, indent3)
+                for variable_id in &def.parameters {
+                    self.write_variable(heap, *variable_id, indent3)
                 }
 
                 self.kv(indent2).with_s_key("Body");
                 self.write_stmt(heap, def.body.upcast(), indent3);
             }
         }
-    }
-
-    fn write_parameter(&mut self, heap: &Heap, param_id: ParameterId, indent: usize) {
-        let indent2 = indent + 1;
-        let param = &heap[param_id];
-
-        self.kv(indent).with_id(PREFIX_PARAMETER_ID, param_id.0.index)
-            .with_s_key("Parameter");
-        self.kv(indent2).with_s_key("Name").with_identifier_val(&param.identifier);
-        self.kv(indent2).with_s_key("ParserType").with_custom_val(|w| write_parser_type(w, heap, &param.parser_type));
     }
 
     fn write_stmt(&mut self, heap: &Heap, stmt_id: StatementId, indent: usize) {
@@ -407,6 +398,7 @@ impl ASTWriter {
             Statement::Block(stmt) => {
                 self.kv(indent).with_id(PREFIX_BLOCK_STMT_ID, stmt.this.0.index)
                     .with_s_key("Block");
+                self.kv(indent2).with_s_key("EndBlockID").with_disp_val(&stmt.end_block.0.index);
                 self.kv(indent2).with_s_key("FirstUniqueScopeID").with_disp_val(&stmt.first_unique_id_in_scope);
                 self.kv(indent2).with_s_key("NextUniqueScopeID").with_disp_val(&stmt.next_unique_id_in_scope);
                 self.kv(indent2).with_s_key("RelativePos").with_disp_val(&stmt.relative_pos_in_parent);
@@ -416,6 +408,11 @@ impl ASTWriter {
                     self.write_stmt(heap, *stmt_id, indent3);
                 }
             },
+            Statement::EndBlock(stmt) => {
+                self.kv(indent).with_id(PREFIX_ENDBLOCK_STMT_ID, stmt.this.0.index)
+                    .with_s_key("EndBlock");
+                self.kv(indent2).with_s_key("StartBlockID").with_disp_val(&stmt.start_block.0.index);
+            }
             Statement::Local(stmt) => {
                 match stmt {
                     LocalStatement::Channel(stmt) => {

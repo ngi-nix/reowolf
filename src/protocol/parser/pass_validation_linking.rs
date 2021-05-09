@@ -12,7 +12,6 @@ use super::visitor::{
     VisitorResult
 };
 use crate::protocol::parser::ModuleCompilationPhase;
-use crossbeam_utils::thread::scope;
 
 #[derive(PartialEq, Eq)]
 enum DefinitionType {

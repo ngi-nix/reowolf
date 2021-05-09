@@ -15,7 +15,7 @@ pub(crate) struct PassDefinitions {
     struct_fields: ScopedBuffer<StructFieldDefinition>,
     enum_variants: ScopedBuffer<EnumVariantDefinition>,
     union_variants: ScopedBuffer<UnionVariantDefinition>,
-    parameters: ScopedBuffer<ParameterId>,
+    variables: ScopedBuffer<VariableId>,
     expressions: ScopedBuffer<ExpressionId>,
     statements: ScopedBuffer<StatementId>,
     parser_types: ScopedBuffer<ParserType>,
@@ -29,7 +29,7 @@ impl PassDefinitions {
             struct_fields: ScopedBuffer::new_reserved(128),
             enum_variants: ScopedBuffer::new_reserved(128),
             union_variants: ScopedBuffer::new_reserved(128),
-            parameters: ScopedBuffer::new_reserved(128),
+            variables: ScopedBuffer::new_reserved(128),
             expressions: ScopedBuffer::new_reserved(128),
             statements: ScopedBuffer::new_reserved(128),
             parser_types: ScopedBuffer::new_reserved(128),
@@ -259,7 +259,7 @@ impl PassDefinitions {
         consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
 
         // Parse function's argument list
-        let mut parameter_section = self.parameters.start_section();
+        let mut parameter_section = self.variables.start_section();
         consume_parameter_list(
             &module.source, iter, ctx, &mut parameter_section, module_scope, definition_id
         )?;
@@ -314,7 +314,7 @@ impl PassDefinitions {
         consume_polymorphic_vars_spilled(&module.source, iter, ctx)?;
 
         // Parse component's argument list
-        let mut parameter_section = self.parameters.start_section();
+        let mut parameter_section = self.variables.start_section();
         consume_parameter_list(
             &module.source, iter, ctx, &mut parameter_section, module_scope, definition_id
         )?;
@@ -350,18 +350,28 @@ impl PassDefinitions {
             debug_assert_eq!(statements.len(), 1);
             let statements = statements.into_vec();
 
-            Ok(ctx.heap.alloc_block_statement(|this| BlockStatement{
+            let id = ctx.heap.alloc_block_statement(|this| BlockStatement{
                 this,
                 is_implicit: true,
                 span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
                 statements,
+                end_block: EndBlockStatementId::new_invalid(),
                 parent_scope: Scope::Definition(DefinitionId::new_invalid()),
                 first_unique_id_in_scope: -1,
                 next_unique_id_in_scope: -1,
                 relative_pos_in_parent: 0,
                 locals: Vec::new(),
                 labels: Vec::new()
-            }))
+            });
+
+            let end_block = ctx.heap.alloc_end_block_statement(|this| EndBlockStatement{
+                this, start_block: id, next: StatementId::new_invalid()
+            });
+
+            let block_stmt = &mut ctx.heap[id];
+            block_stmt.end_block = end_block;
+
+            Ok(id)
         }
     }
 
@@ -389,7 +399,7 @@ impl PassDefinitions {
                 section.push(id.upcast());
 
                 let if_stmt = &mut ctx.heap[id];
-                if_stmt.end_if = Some(end_if);
+                if_stmt.end_if = end_if;
             } else if ident == KW_STMT_WHILE {
                 let id = self.consume_while_statement(module, iter, ctx)?;
                 section.push(id.upcast());
@@ -400,7 +410,7 @@ impl PassDefinitions {
                 section.push(id.upcast());
 
                 let while_stmt = &mut ctx.heap[id];
-                while_stmt.end_while = Some(end_while);
+                while_stmt.end_while = end_while;
             } else if ident == KW_STMT_BREAK {
                 let id = self.consume_break_statement(module, iter, ctx)?;
                 section.push(id.upcast());
@@ -416,7 +426,7 @@ impl PassDefinitions {
                 });
 
                 let sync_stmt = &mut ctx.heap[id];
-                sync_stmt.end_sync = Some(end_sync);
+                sync_stmt.end_sync = end_sync;
             } else if ident == KW_STMT_RETURN {
                 let id = self.consume_return_statement(module, iter, ctx)?;
                 section.push(id.upcast());
@@ -474,18 +484,28 @@ impl PassDefinitions {
         let mut block_span = consume_token(&module.source, iter, TokenKind::CloseCurly)?;
         block_span.begin = open_curly_pos;
 
-        Ok(ctx.heap.alloc_block_statement(|this| BlockStatement{
+        let id = ctx.heap.alloc_block_statement(|this| BlockStatement{
             this,
             is_implicit: false,
             span: block_span,
             statements,
+            end_block: EndBlockStatementId::new_invalid(),
             parent_scope: Scope::Definition(DefinitionId::new_invalid()),
             first_unique_id_in_scope: -1,
             next_unique_id_in_scope: -1,
             relative_pos_in_parent: 0,
             locals: Vec::new(),
             labels: Vec::new(),
-        }))
+        });
+
+        let end_block = ctx.heap.alloc_end_block_statement(|this| EndBlockStatement{
+            this, start_block: id, next: StatementId::new_invalid()
+        });
+
+        let block_stmt = &mut ctx.heap[id];
+        block_stmt.end_block = end_block;
+
+        Ok(id)
     }
 
     fn consume_if_statement(
@@ -511,7 +531,7 @@ impl PassDefinitions {
             test,
             true_body,
             false_body,
-            end_if: None,
+            end_if: EndIfStatementId::new_invalid(),
         }))
     }
 
@@ -529,7 +549,7 @@ impl PassDefinitions {
             span: while_span,
             test,
             body,
-            end_while: None,
+            end_while: EndWhileStatementId::new_invalid(),
             in_sync: None,
         }))
     }
@@ -582,7 +602,7 @@ impl PassDefinitions {
             this,
             span: synchronous_span,
             body,
-            end_sync: None,
+            end_sync: EndSynchronousStatementId::new_invalid(),
             parent_scope: None,
         }))
     }
@@ -1919,7 +1939,7 @@ fn consume_polymorphic_vars_spilled(source: &InputSource, iter: &mut TokenIter, 
 /// Consumes the parameter list to functions/components
 fn consume_parameter_list(
     source: &InputSource, iter: &mut TokenIter, ctx: &mut PassCtx,
-    target: &mut ScopedSection<ParameterId>, scope: SymbolScope, definition_id: DefinitionId
+    target: &mut ScopedSection<VariableId>, scope: SymbolScope, definition_id: DefinitionId
 ) -> Result<(), ParseError> {
     consume_comma_separated(
         TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,

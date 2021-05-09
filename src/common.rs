@@ -57,7 +57,7 @@ pub struct PortId(Id);
 
 /// A safely aliasable heap-allocated payload of message bytes
 #[derive(Default, Eq, PartialEq, Clone, Ord, PartialOrd)]
-pub struct Payload(Arc<Vec<u8>>);
+pub struct Payload(pub Arc<Vec<u8>>);
 #[derive(Debug, Eq, PartialEq, Clone, Hash, Copy, Ord, PartialOrd)]
 
 /// "Orientation" of a port, determining whether they can send or receive messages with `put` and `get` respectively.

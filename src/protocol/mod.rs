@@ -20,7 +20,7 @@ pub struct ProtocolDescription {
     source: InputSource,
     root: RootId,
 }
-#[derive(Debug, Clone)]
+// #[derive(Debug, Clone)]
 pub(crate) struct ComponentState {
     prompt: Prompt,
 }
@@ -102,14 +102,14 @@ impl ProtocolDescription {
         let mut args = Vec::new();
         for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {
             match y {
-                Polarity::Getter => args.push(Value::Input(InputValue(x))),
-                Polarity::Putter => args.push(Value::Output(OutputValue(x))),
+                Polarity::Getter => args.push(Value::Input(x)),
+                Polarity::Putter => args.push(Value::Output(x)),
             }
         }
         let h = &self.heap;
         let root = &h[self.root];
         let def = root.get_definition_ident(h, identifier).unwrap();
-        ComponentState { prompt: Prompt::new(h, def, &args) }
+        ComponentState { prompt: Prompt::new(h, def, ValueGroup::new_stack(args)) }
     }
 }
 impl ComponentState {
@@ -133,9 +133,30 @@ impl ComponentState {
                     EvalContinuation::SyncBlockEnd => unreachable!(),
                     EvalContinuation::NewComponent(definition_id, args) => {
                         // Look up definition (TODO for now, assume it is a definition)
+                        let mut moved_ports = HashSet::new();
+                        for arg in args.values.iter() {
+                            match arg {
+                                Value::Output(port) => {
+                                    moved_ports.insert(*port);
+                                }
+                                Value::Input(port) => {
+                                    moved_ports.insert(*port);
+                                }
+                                _ => {}
+                            }
+                        }
+                        for region in args.regions.iter() {
+                            for arg in region {
+                                match arg {
+                                    Value::Output(port) => { moved_ports.insert(*port); },
+                                    Value::Input(port) => { moved_ports.insert(*port); },
+                                    _ => {},
+                                }
+                            }
+                        }
                         let h = &pd.heap;
-                        let init_state = ComponentState { prompt: Prompt::new(h, definition_id, &args) };
-                        context.new_component(&args, init_state);
+                        let init_state = ComponentState { prompt: Prompt::new(h, definition_id, args) };
+                        context.new_component(moved_ports, init_state);
                         // Continue stepping
                         continue;
                     }
@@ -170,19 +191,19 @@ impl ComponentState {
                     // Not possible to create component in sync block
                     EvalContinuation::NewComponent(_, _) => unreachable!(),
                     EvalContinuation::BlockFires(port) => match port {
-                        Value::Output(OutputValue(port)) => {
+                        Value::Output(port) => {
                             return SyncBlocker::CouldntCheckFiring(port);
                         }
-                        Value::Input(InputValue(port)) => {
+                        Value::Input(port) => {
                             return SyncBlocker::CouldntCheckFiring(port);
                         }
                         _ => unreachable!(),
                     },
                     EvalContinuation::BlockGet(port) => match port {
-                        Value::Output(OutputValue(port)) => {
+                        Value::Output(port) => {
                             return SyncBlocker::CouldntReadMsg(port);
                         }
-                        Value::Input(InputValue(port)) => {
+                        Value::Input(port) => {
                             return SyncBlocker::CouldntReadMsg(port);
                         }
                         _ => unreachable!(),
@@ -190,23 +211,27 @@ impl ComponentState {
                     EvalContinuation::Put(port, message) => {
                         let value;
                         match port {
-                            Value::Output(OutputValue(port_value)) => {
+                            Value::Output(port_value) => {
                                 value = port_value;
                             }
-                            Value::Input(InputValue(port_value)) => {
+                            Value::Input(port_value) => {
                                 value = port_value;
                             }
                             _ => unreachable!(),
                         }
                         let payload;
                         match message {
-                            Value::Message(MessageValue(None)) => {
-                                // Putting a null message is inconsistent
+                            Value::Null => {
                                 return SyncBlocker::Inconsistent;
-                            }
-                            Value::Message(MessageValue(Some(buffer))) => {
+                            },
+                            Value::Message(heap_pos) => {
                                 // Create a copy of the payload
-                                payload = buffer;
+                                let values = &self.prompt.store.heap_regions[heap_pos as usize].values;
+                                let mut bytes = Vec::with_capacity(values.len());
+                                for value in values {
+                                    bytes.push(value.as_uint8());
+                                }
+                                payload = Payload(Arc::new(bytes));
                             }
                             _ => unreachable!(),
                         }
@@ -225,22 +250,10 @@ impl EvalContext<'_> {
     //         EvalContext::Sync(_) => unreachable!(),
     //     }
     // }
-    fn new_component(&mut self, args: &[Value], init_state: ComponentState) -> () {
+    fn new_component(&mut self, moved_ports: HashSet<PortId>, init_state: ComponentState) -> () {
         match self {
             // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
-                let mut moved_ports = HashSet::new();
-                for arg in args.iter() {
-                    match arg {
-                        Value::Output(OutputValue(port)) => {
-                            moved_ports.insert(*port);
-                        }
-                        Value::Input(InputValue(port)) => {
-                            moved_ports.insert(*port);
-                        }
-                        _ => {}
-                    }
-                }
                 context.new_component(moved_ports, init_state)
             }
             EvalContext::Sync(_) => unreachable!(),
@@ -251,8 +264,8 @@ impl EvalContext<'_> {
             // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
                 let [from, to] = context.new_port_pair();
-                let from = Value::Output(OutputValue(from));
-                let to = Value::Input(InputValue(to));
+                let from = Value::Output(from);
+                let to = Value::Input(to);
                 return [from, to];
             }
             EvalContext::Sync(_) => unreachable!(),
@@ -263,8 +276,8 @@ impl EvalContext<'_> {
             // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
-                Value::Output(OutputValue(port)) => context.is_firing(port).map(Value::from),
-                Value::Input(InputValue(port)) => context.is_firing(port).map(Value::from),
+                Value::Output(port) => context.is_firing(port).map(Value::Bool),
+                Value::Input(port) => context.is_firing(port).map(Value::Bool),
                 _ => unreachable!(),
             },
         }
@@ -274,10 +287,11 @@ impl EvalContext<'_> {
             // EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
-                Value::Output(OutputValue(port)) => {
+                Value::Output(port) => {
+                    debug_assert!(false, "Getting from an output port? Am I mad?");
                     context.read_msg(port).map(Value::receive_message)
                 }
-                Value::Input(InputValue(port)) => {
+                Value::Input(port) => {
                     context.read_msg(port).map(Value::receive_message)
                 }
                 _ => unreachable!(),
@@ -288,7 +302,7 @@ impl EvalContext<'_> {
         match self {
             EvalContext::Nonsync(_) => unreachable!("did_put in nonsync context"),
             EvalContext::Sync(context) => match port {
-                Value::Output(OutputValue(port)) => {
+                Value::Output(port) => {
                     context.did_put_or_get(port)
                 },
                 Value::Input(_) => unreachable!("did_put on input port"),
