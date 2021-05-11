@@ -320,7 +320,7 @@ impl<'a> TokenIter<'a> {
 
     /// Advances the iterator to the next (meaningful) token.
     pub(crate) fn consume(&mut self) {
-        if let Some(kind) = self.next() {
+        if let Some(kind) = self.next_including_comments() {
             if kind.has_span_end() {
                 self.cur += 2;
             } else {

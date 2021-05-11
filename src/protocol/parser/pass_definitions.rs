@@ -453,7 +453,10 @@ impl PassDefinitions {
                     section.push(id.upcast());
                 }
             }
-        };
+        } else {
+            let id = self.consume_expression_statement(module, iter, ctx)?;
+            section.push(id.upcast());
+        }
 
         return Ok(());
     }

@@ -423,8 +423,7 @@ impl ASTWriter {
                         self.write_variable(heap, stmt.from, indent3);
                         self.kv(indent2).with_s_key("To");
                         self.write_variable(heap, stmt.to, indent3);
-                        self.kv(indent2).with_s_key("Next")
-                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                        self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
                     },
                     LocalStatement::Memory(stmt) => {
                         self.kv(indent).with_id(PREFIX_MEM_STMT_ID, stmt.this.0.0.index)
@@ -432,8 +431,7 @@ impl ASTWriter {
 
                         self.kv(indent2).with_s_key("Variable");
                         self.write_variable(heap, stmt.variable, indent3);
-                        self.kv(indent2).with_s_key("Next")
-                            .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                        self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
                     }
                 }
             },
@@ -449,8 +447,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_IF_STMT_ID, stmt.this.0.index)
                     .with_s_key("If");
 
-                self.kv(indent2).with_s_key("EndIf")
-                    .with_opt_disp_val(stmt.end_if.as_ref().map(|v| &v.0.index));
+                self.kv(indent2).with_s_key("EndIf").with_disp_val(&stmt.end_if.0.index);
 
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, stmt.test, indent3);
@@ -467,15 +464,13 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_ENDIF_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndIf");
                 self.kv(indent2).with_s_key("StartIf").with_disp_val(&stmt.start_if.0.index);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
             },
             Statement::While(stmt) => {
                 self.kv(indent).with_id(PREFIX_WHILE_STMT_ID, stmt.this.0.index)
                     .with_s_key("While");
 
-                self.kv(indent2).with_s_key("EndWhile")
-                    .with_opt_disp_val(stmt.end_while.as_ref().map(|v| &v.0.index));
+                self.kv(indent2).with_s_key("EndWhile").with_disp_val(&stmt.end_while.0.index);
                 self.kv(indent2).with_s_key("InSync")
                     .with_opt_disp_val(stmt.in_sync.as_ref().map(|v| &v.0.index));
                 self.kv(indent2).with_s_key("Condition");
@@ -487,8 +482,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_ENDWHILE_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndWhile");
                 self.kv(indent2).with_s_key("StartWhile").with_disp_val(&stmt.start_while.0.index);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
             },
             Statement::Break(stmt) => {
                 self.kv(indent).with_id(PREFIX_BREAK_STMT_ID, stmt.this.0.index)
@@ -509,8 +503,7 @@ impl ASTWriter {
             Statement::Synchronous(stmt) => {
                 self.kv(indent).with_id(PREFIX_SYNC_STMT_ID, stmt.this.0.index)
                     .with_s_key("Synchronous");
-                self.kv(indent2).with_s_key("EndSync")
-                    .with_opt_disp_val(stmt.end_sync.as_ref().map(|v| &v.0.index));
+                self.kv(indent2).with_s_key("EndSync").with_disp_val(&stmt.end_sync.0.index);
                 self.kv(indent2).with_s_key("Body");
                 self.write_stmt(heap, stmt.body.upcast(), indent3);
             },
@@ -518,8 +511,7 @@ impl ASTWriter {
                 self.kv(indent).with_id(PREFIX_ENDSYNC_STMT_ID, stmt.this.0.index)
                     .with_s_key("EndSynchronous");
                 self.kv(indent2).with_s_key("StartSync").with_disp_val(&stmt.start_sync.0.index);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
             },
             Statement::Return(stmt) => {
                 self.kv(indent).with_id(PREFIX_RETURN_STMT_ID, stmt.this.0.index)
@@ -541,15 +533,13 @@ impl ASTWriter {
                     .with_s_key("New");
                 self.kv(indent2).with_s_key("Expression");
                 self.write_expr(heap, stmt.expression.upcast(), indent3);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
             },
             Statement::Expression(stmt) => {
                 self.kv(indent).with_id(PREFIX_EXPR_STMT_ID, stmt.this.0.index)
                     .with_s_key("ExpressionStatement");
                 self.write_expr(heap, stmt.expression, indent2);
-                self.kv(indent2).with_s_key("Next")
-                    .with_opt_disp_val(stmt.next.as_ref().map(|v| &v.index));
+                self.kv(indent2).with_s_key("Next").with_disp_val(&stmt.next.index);
             }
         }
     }
@@ -791,7 +781,7 @@ impl ASTWriter {
         let var = &heap[variable_id];
         let indent2 = indent + 1;
 
-        self.kv(indent).with_id(PREFIX_VARIABLE_ID, variable_id.0.index)
+        self.kv(indent).with_id(PREFIX_VARIABLE_ID, variable_id.index)
             .with_s_key("Variable");
 
         self.kv(indent2).with_s_key("Name").with_identifier_val(&var.identifier);
@@ -827,39 +817,46 @@ fn write_option<V: Display>(target: &mut String, value: Option<V>) {
 fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
     use ParserTypeVariant as PTV;
 
-    fn push_bytes(target: &mut String, msg: &[u8]) {
-        target.push_str(&String::from_utf8_lossy(msg));
-    }
-
     fn write_element(target: &mut String, heap: &Heap, t: &ParserType, mut element_idx: usize) -> usize {
         let element = &t.elements[element_idx];
         match &element.variant {
-            PTV::Message => { push_bytes(target, KW_TYPE_MESSAGE); },
-            PTV::Bool => { push_bytes(target, KW_TYPE_BOOL); },
-            PTV::UInt8 => { push_bytes(target, KW_TYPE_UINT8); },
-            PTV::UInt16 => { push_bytes(target, KW_TYPE_UINT16); },
-            PTV::UInt32 => { push_bytes(target, KW_TYPE_UINT32); },
-            PTV::UInt64 => { push_bytes(target, KW_TYPE_UINT64); },
-            PTV::SInt8 => { push_bytes(target, KW_TYPE_SINT8); },
-            PTV::SInt16 => { push_bytes(target, KW_TYPE_SINT16); },
-            PTV::SInt32 => { push_bytes(target, KW_TYPE_SINT32); },
-            PTV::SInt64 => { push_bytes(target, KW_TYPE_SINT64); },
-            PTV::Character => { push_bytes(target, KW_TYPE_CHAR); },
-            PTV::String => { push_bytes(target, KW_TYPE_STRING); },
+            PTV::Void => target.push_str("void"),
+            PTV::InputOrOutput => {
+                target.push_str("portlike<");
+                element_idx = write_element(target, heap, t, element_idx + 1);
+                target.push('>');
+            },
+            PTV::ArrayLike => {
+                element_idx = write_element(target, heap, t, element_idx + 1);
+                target.push_str("[???]");
+            },
+            PTV::IntegerLike => target.push_str("integerlike"),
+            PTV::Message => { target.push_str(KW_TYPE_MESSAGE_STR); },
+            PTV::Bool => { target.push_str(KW_TYPE_BOOL_STR); },
+            PTV::UInt8 => { target.push_str(KW_TYPE_UINT8_STR); },
+            PTV::UInt16 => { target.push_str(KW_TYPE_UINT16_STR); },
+            PTV::UInt32 => { target.push_str(KW_TYPE_UINT32_STR); },
+            PTV::UInt64 => { target.push_str(KW_TYPE_UINT64_STR); },
+            PTV::SInt8 => { target.push_str(KW_TYPE_SINT8_STR); },
+            PTV::SInt16 => { target.push_str(KW_TYPE_SINT16_STR); },
+            PTV::SInt32 => { target.push_str(KW_TYPE_SINT32_STR); },
+            PTV::SInt64 => { target.push_str(KW_TYPE_SINT64_STR); },
+            PTV::Character => { target.push_str(KW_TYPE_CHAR_STR); },
+            PTV::String => { target.push_str(KW_TYPE_STRING_STR); },
             PTV::IntegerLiteral => { target.push_str("int_literal"); },
-            PTV::Inferred => { push_bytes(target, KW_TYPE_INFERRED); },
+            PTV::Inferred => { target.push_str(KW_TYPE_INFERRED_STR); },
             PTV::Array => {
                 element_idx = write_element(target, heap, t, element_idx + 1);
                 target.push_str("[]");
             },
             PTV::Input => {
-                push_bytes(target, KW_TYPE_IN_PORT);
+                target.push_str(KW_TYPE_IN_PORT_STR);
                 target.push('<');
                 element_idx = write_element(target, heap, t, element_idx + 1);
                 target.push('>');
             },
             PTV::Output => {
-                push_bytes(target, KW_TYPE_OUT_PORT);
+                target.push_str(KW_TYPE_OUT_PORT_STR);
                 target.push('<');
                 element_idx = write_element(target, heap, t, element_idx + 1);
                 target.push('>');

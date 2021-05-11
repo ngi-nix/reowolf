@@ -239,8 +239,9 @@ impl Visitor2 for PassValidationLinking {
             let stmt = &ctx.heap[id];
             let target_while_id = self.resolve_break_or_continue_target(ctx, stmt.span, &stmt.label)?;
             let target_while = &ctx.heap[target_while_id];
-            debug_assert!(target_while.end_while.is_some());
-            target_while.end_while.unwrap()
+            debug_assert!(!target_while.end_while.is_invalid());
+
+            target_while.end_while
         };
 
         let stmt = &mut ctx.heap[id];
@@ -980,8 +981,7 @@ impl PassValidationLinking {
             }
 
             // Current scope is fine, move to parent scope if any
-            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
-            scope = block.parent_scope.as_ref().unwrap();
+            scope = &block.parent_scope;
             if let Scope::Definition(definition_id) = scope {
                 // At outer scope, check parameters of function/component
                 for parameter_id in ctx.heap[*definition_id].parameters() {
@@ -1034,12 +1034,11 @@ impl PassValidationLinking {
                 let local = &ctx.heap[*local_id];
                 
                 if local.relative_pos_in_block < relative_pos && identifier == &local.identifier {
-                    return Ok(local_id.upcast());
+                    return Ok(*local_id);
                 }
             }
 
-            debug_assert!(block.parent_scope.is_some());
-            scope = block.parent_scope.as_ref().unwrap();
+            scope = &block.parent_scope;
             if !scope.is_block() {
                 // Definition scope, need to check arguments to definition
                 match scope {
@@ -1048,7 +1047,7 @@ impl PassValidationLinking {
                         for parameter_id in definition.parameters() {
                             let parameter = &ctx.heap[*parameter_id];
                             if identifier == &parameter.identifier {
-                                return Ok(parameter_id.upcast());
+                                return Ok(*parameter_id);
                             }
                         }
                     },
@@ -1094,15 +1093,14 @@ impl PassValidationLinking {
                 }
             }
 
-            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
-            scope = block.parent_scope.as_ref().unwrap();
+            scope = &block.parent_scope;
             if !scope.is_block() {
                 break;
             }
         }
 
         // No collisions
-        let block = &mut ctx.heap[self.cur_scope.as_ref().unwrap().to_block()];
+        let block = &mut ctx.heap[self.cur_scope.to_block()];
         block.labels.push(id);
 
         Ok(())
@@ -1141,8 +1139,7 @@ impl PassValidationLinking {
                 }
             }
 
-            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
-            scope = block.parent_scope.as_ref().unwrap();
+            scope = &block.parent_scope;
             if !scope.is_block() {
                 return Err(ParseError::new_error_str_at_span(
                     &ctx.module.source, identifier.span, "could not find this label"
@@ -1155,7 +1152,6 @@ impl PassValidationLinking {
     /// This function will check if the provided while statement ID has a block
     /// statement that is one of our current parents.
     fn has_parent_while_scope(&self, ctx: &Ctx, id: WhileStatementId) -> bool {
-        debug_assert!(self.cur_scope.is_some());
         let mut scope = &self.cur_scope;
         let while_stmt = &ctx.heap[id];
         loop {
@@ -1166,7 +1162,6 @@ impl PassValidationLinking {
             }
 
             let block = &ctx.heap[block];
-            debug_assert!(block.parent_scope.is_some(), "block scope does not have a parent");
             scope = &block.parent_scope;
             if !scope.is_block() {
                 return false;

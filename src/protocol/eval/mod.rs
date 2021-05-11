@@ -25,5 +25,6 @@ mod store;
 mod executor;
 
 pub use value::{Value, ValueGroup};
+pub(crate) use store::{Store};
 pub use executor::{EvalContinuation, Prompt};
 

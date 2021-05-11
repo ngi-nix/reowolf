@@ -357,6 +357,12 @@ impl Display for Identifier {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParserTypeVariant {
+    // Special builtin, only usable by the compiler and not constructable by the
+    // programmer
+    Void,
+    InputOrOutput,
+    ArrayLike,
+    IntegerLike,
     // Basic builtin
     Message,
     Bool,
@@ -381,13 +387,14 @@ impl ParserTypeVariant {
         use ParserTypeVariant::*;
 
         match self {
+            Void | IntegerLike |
             Message | Bool |
             UInt8 | UInt16 | UInt32 | UInt64 |
             SInt8 | SInt16 | SInt32 | SInt64 |
             Character | String | IntegerLiteral |
             Inferred | PolymorphicArgument(_, _) =>
                 0,
-            Array | Input | Output =>
+            ArrayLike | InputOrOutput | Array | Input | Output =>
                 1,
             Definition(_, num) => *num,
         }
@@ -1207,31 +1214,6 @@ pub struct BlockStatement {
     pub relative_pos_in_parent: u32,
     pub locals: Vec<VariableId>,
     pub labels: Vec<LabeledStatementId>,
-}
-
-impl BlockStatement {
-    pub fn parent_block(&self, h: &Heap) -> Option<BlockStatementId> {
-        let parent = self.parent_scope.unwrap();
-        match parent {
-            Scope::Definition(_) => {
-                // If the parent scope is a definition, then there is no
-                // parent block.
-                None
-            }
-            Scope::Synchronous((parent, _)) => {
-                // It is always the case that when this function is called,
-                // the parent of a synchronous statement is a block statement:
-                // nested synchronous statements are flagged illegal,
-                // and that happens before resolving variables that
-                // creates the parent_scope references in the first place.
-                Some(h[parent].parent_scope.unwrap().to_block())
-            }
-            Scope::Regular(parent) => {
-                // A variable scope is either a definition, sync, or block.
-                Some(parent)
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -86,6 +86,7 @@ pub(crate) trait Visitor2 {
                 let this = stmt.this;
                 self.visit_block_stmt(ctx, this)
             },
+            Statement::EndBlock(_stmt) => Ok(()),
             Statement::Local(stmt) => {
                 let this = stmt.this();
                 self.visit_local_stmt(ctx, this)

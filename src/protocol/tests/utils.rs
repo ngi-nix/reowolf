@@ -8,6 +8,7 @@ use crate::protocol::{
         symbol_table::SymbolTable,
         token_parsing::*,
     },
+    eval::*,
 };
 
 // Carries information about the test into utility structures for builder-like
@@ -572,6 +573,24 @@ impl<'a> FunctionTester<'a> {
         self
     }
 
+    pub(crate) fn call(self, expected_result: Option<Value>) -> Self {
+        use crate::protocol::*;
+        use crate::runtime::*;
+
+        let mut prompt = Prompt::new(&self.ctx.heap, self.def.this.upcast(), ValueGroup::new_stack(Vec::new()));
+        let mut call_context = EvalContext::None;
+        loop {
+            let result = prompt.step(&self.ctx.heap, &mut call_context).unwrap();
+            match result {
+                EvalContinuation::Stepping => {},
+                _ => break,
+            }
+        }
+
+
+        self
+    }
+
     fn assert_postfix(&self) -> String {
         format!("Function{{ name: {} }}", self.def.identifier.value.as_str())
     }
@@ -580,20 +599,20 @@ impl<'a> FunctionTester<'a> {
 pub(crate) struct VariableTester<'a> {
     ctx: TestCtx<'a>,
     definition_id: DefinitionId,
-    local: &'a Local,
+    variable: &'a Variable,
     assignment: &'a AssignmentExpression,
 }
 
 impl<'a> VariableTester<'a> {
     fn new(
-        ctx: TestCtx<'a>, definition_id: DefinitionId, local: &'a Local, assignment: &'a AssignmentExpression
+        ctx: TestCtx<'a>, definition_id: DefinitionId, variable: &'a Variable, assignment: &'a AssignmentExpression
     ) -> Self {
-        Self{ ctx, definition_id, local, assignment }
+        Self{ ctx, definition_id, variable, assignment }
     }
 
     pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
         let mut serialized = String::new();
-        serialize_parser_type(&mut serialized, self.ctx.heap, &self.local.parser_type);
+        serialize_parser_type(&mut serialized, self.ctx.heap, &self.variable.parser_type);
 
         assert_eq!(
             expected, &serialized,
@@ -619,7 +638,7 @@ impl<'a> VariableTester<'a> {
     }
 
     fn assert_postfix(&self) -> String {
-        format!("Variable{{ name: {} }}", self.local.identifier.value.as_str())
+        format!("Variable{{ name: {} }}", self.variable.identifier.value.as_str())
     }
 }
 
@@ -826,32 +845,43 @@ fn serialize_parser_type(buffer: &mut String, heap: &Heap, parser_type: &ParserT
 
     fn serialize_variant(buffer: &mut String, heap: &Heap, parser_type: &ParserType, mut idx: usize) -> usize {
         match &parser_type.elements[idx].variant {
-            PTV::Message => write_bytes(buffer, KW_TYPE_MESSAGE),
-            PTV::Bool => write_bytes(buffer, KW_TYPE_BOOL),
-            PTV::UInt8 => write_bytes(buffer, KW_TYPE_UINT8),
-            PTV::UInt16 => write_bytes(buffer, KW_TYPE_UINT16),
-            PTV::UInt32 => write_bytes(buffer, KW_TYPE_UINT32),
-            PTV::UInt64 => write_bytes(buffer, KW_TYPE_UINT64),
-            PTV::SInt8 => write_bytes(buffer, KW_TYPE_SINT8),
-            PTV::SInt16 => write_bytes(buffer, KW_TYPE_SINT16),
-            PTV::SInt32 => write_bytes(buffer, KW_TYPE_SINT32),
-            PTV::SInt64 => write_bytes(buffer, KW_TYPE_SINT64),
-            PTV::Character => write_bytes(buffer, KW_TYPE_CHAR),
-            PTV::String => write_bytes(buffer, KW_TYPE_STRING),
+            PTV::Void => buffer.push_str("void"),
+            PTV::InputOrOutput => {
+                buffer.push_str("portlike<");
+                idx = serialize_variant(buffer, heap, parser_type, idx + 1);
+                buffer.push('>');
+            },
+            PTV::ArrayLike => {
+                idx = serialize_variant(buffer, heap, parser_type, idx + 1);
+                buffer.push_str("[???]");
+            },
+            PTV::IntegerLike => buffer.push_str("integerlike"),
+            PTV::Message => buffer.push_str(KW_TYPE_MESSAGE_STR),
+            PTV::Bool => buffer.push_str(KW_TYPE_BOOL_STR),
+            PTV::UInt8 => buffer.push_str(KW_TYPE_UINT8_STR),
+            PTV::UInt16 => buffer.push_str(KW_TYPE_UINT16_STR),
+            PTV::UInt32 => buffer.push_str(KW_TYPE_UINT32_STR),
+            PTV::UInt64 => buffer.push_str(KW_TYPE_UINT64_STR),
+            PTV::SInt8 => buffer.push_str(KW_TYPE_SINT8_STR),
+            PTV::SInt16 => buffer.push_str(KW_TYPE_SINT16_STR),
+            PTV::SInt32 => buffer.push_str(KW_TYPE_SINT32_STR),
+            PTV::SInt64 => buffer.push_str(KW_TYPE_SINT64_STR),
+            PTV::Character => buffer.push_str(KW_TYPE_CHAR_STR),
+            PTV::String => buffer.push_str(KW_TYPE_STRING_STR),
             PTV::IntegerLiteral => buffer.push_str("int_literal"),
-            PTV::Inferred => write_bytes(buffer, KW_TYPE_INFERRED),
+            PTV::Inferred => buffer.push_str(KW_TYPE_INFERRED_STR),
             PTV::Array => {
                 idx = serialize_variant(buffer, heap, parser_type, idx + 1);
                 buffer.push_str("[]");
             },
             PTV::Input => {
-                write_bytes(buffer, KW_TYPE_IN_PORT);
+                buffer.push_str(KW_TYPE_IN_PORT_STR);
                 buffer.push('<');
                 idx = serialize_variant(buffer, heap, parser_type, idx + 1);
                 buffer.push('>');
             },
             PTV::Output => {
-                write_bytes(buffer, KW_TYPE_OUT_PORT);
+                buffer.push_str(KW_TYPE_OUT_PORT_STR);
                 buffer.push('<');
                 idx = serialize_variant(buffer, heap, parser_type, idx + 1);
                 buffer.push('>');

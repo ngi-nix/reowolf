@@ -3,10 +3,12 @@ use std::collections::VecDeque;
 
 use super::value::{Value, ValueId, HeapPos};
 
+#[derive(Debug, Clone)]
 pub(crate) struct HeapAllocation {
     pub values: Vec<Value>,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct Store {
     // The stack where variables/parameters are stored. Note that this is a
     // non-shrinking stack. So it may be filled with garbage.
@@ -50,7 +52,7 @@ impl Store {
     pub(crate) fn clear_stack(&mut self, unique_stack_idx: usize) {
         let new_size = self.cur_stack_boundary + unique_stack_idx + 1;
         for idx in new_size..self.stack.len() {
-            self.drop_value(&self.stack[idx]);
+            self.drop_value(self.stack[idx].get_heap_pos());
             self.stack[idx] = Value::Unassigned;
         }
     }
@@ -62,16 +64,27 @@ impl Store {
         match address {
             ValueId::Stack(pos) => {
                 let cur_pos = self.cur_stack_boundary + 1 + pos as usize;
-                return self.clone_value(&self.stack[cur_pos]);
+                return self.clone_value(self.stack[cur_pos].clone());
             },
             ValueId::Heap(heap_pos, region_idx) => {
-                return self.clone_value(&self.heap_regions[heap_pos as usize].values[region_idx as usize])
+                return self.clone_value(self.heap_regions[heap_pos as usize].values[region_idx as usize].clone())
             }
         }
     }
 
+    /// Potentially reads a reference value. The supplied `Value` might not
+    /// actually live in the store's stack or heap, but live on the expression
+    /// stack. Generally speaking you only want to call this if the value comes
+    /// from the expression stack due to borrowing issues.
+    pub(crate) fn maybe_read_ref<'a>(&'a self, value: &'a Value) -> &'a Value {
+        match value {
+            Value::Ref(value_id) => self.read_ref(*value_id),
+            _ => value,
+        }
+    }
+
     /// Returns an immutable reference to the value pointed to by an address
-    pub(crate) fn read_ref(&mut self, address: ValueId) -> &Value {
+    pub(crate) fn read_ref(&self, address: ValueId) -> &Value {
         match address {
             ValueId::Stack(pos) => {
                 let cur_pos = self.cur_stack_boundary + 1 + pos as usize;
@@ -101,24 +114,28 @@ impl Store {
         match address {
             ValueId::Stack(pos) => {
                 let cur_pos = self.cur_stack_boundary + 1 + pos as usize;
-                self.drop_value(&self.stack[cur_pos]);
+                self.drop_value(self.stack[cur_pos].get_heap_pos());
                 self.stack[cur_pos] = value;
             },
             ValueId::Heap(heap_pos, region_idx) => {
                 let heap_pos = heap_pos as usize;
                 let region_idx = region_idx as usize;
-                self.drop_value(&self.heap_regions[heap_pos].values[region_idx]);
+                self.drop_value(self.heap_regions[heap_pos].values[region_idx].get_heap_pos());
                 self.heap_regions[heap_pos].values[region_idx] = value
             }
         }
     }
 
-    fn clone_value(&mut self, value: &Value) -> Value {
+    /// This thing takes a cloned Value, because of borrowing issues (which is
+    /// either a direct value, or might contain an index to a heap value), but
+    /// should be treated by the programmer as a reference (i.e. don't call
+    /// `drop_value(thing)` after calling `clone_value(thing.clone())`.
+    fn clone_value(&mut self, value: Value) -> Value {
         // Quickly check if the value is not on the heap
         let source_heap_pos = value.get_heap_pos();
         if source_heap_pos.is_none() {
             // We can do a trivial copy
-            return value.clone();
+            return value;
         }
 
         // Value does live on heap, copy it
@@ -128,21 +145,21 @@ impl Store {
 
         let num_values = self.heap_regions[source_heap_pos].values.len();
         for value_idx in 0..num_values {
-            let cloned = self.clone_value(&self.heap_regions[source_heap_pos].values[value_idx]);
+            let cloned = self.clone_value(self.heap_regions[source_heap_pos].values[value_idx].clone());
             self.heap_regions[target_heap_pos_usize].values.push(cloned);
         }
 
         match value {
             Value::Message(_) => Value::Message(target_heap_pos),
             Value::Array(_) => Value::Array(target_heap_pos),
-            Value::Union(tag, _) => Value::Union(*tag, target_heap_pos),
+            Value::Union(tag, _) => Value::Union(tag, target_heap_pos),
             Value::Struct(_) => Value::Struct(target_heap_pos),
             _ => unreachable!("performed clone_value on heap, but {:?} is not a heap value", value),
         }
     }
 
-    pub(crate) fn drop_value(&mut self, value: &Value) {
-        if let Some(heap_pos) = value.get_heap_pos() {
+    pub(crate) fn drop_value(&mut self, value: Option<HeapPos>) {
+        if let Some(heap_pos) = value {
             self.drop_heap_pos(heap_pos);
         }
     }

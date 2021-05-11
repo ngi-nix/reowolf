@@ -20,14 +20,14 @@ pub struct ProtocolDescription {
     source: InputSource,
     root: RootId,
 }
-// #[derive(Debug, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct ComponentState {
     prompt: Prompt,
 }
 pub(crate) enum EvalContext<'a> {
     Nonsync(&'a mut NonsyncProtoContext<'a>),
     Sync(&'a mut SyncProtoContext<'a>),
-    // None,
+    None,
 }
 //////////////////////////////////////////////
 
@@ -122,9 +122,8 @@ impl ComponentState {
         loop {
             let result = self.prompt.step(&pd.heap, &mut context);
             match result {
-                // In component definitions, there are no return statements
-                Ok(_) => unreachable!(),
-                Err(cont) => match cont {
+                Err(_) => todo!("error handling"),
+                Ok(cont) => match cont {
                     EvalContinuation::Stepping => continue,
                     EvalContinuation::Inconsistent => return NonsyncBlocker::Inconsistent,
                     EvalContinuation::Terminal => return NonsyncBlocker::ComponentExit,
@@ -178,9 +177,8 @@ impl ComponentState {
         loop {
             let result = self.prompt.step(&pd.heap, &mut context);
             match result {
-                // Inside synchronous blocks, there are no return statements
-                Ok(_) => unreachable!(),
-                Err(cont) => match cont {
+                Err(_) => todo!("error handling"),
+                Ok(cont) => match cont {
                     EvalContinuation::Stepping => continue,
                     EvalContinuation::Inconsistent => return SyncBlocker::Inconsistent,
                     // First need to exit synchronous block before definition may end
@@ -252,7 +250,7 @@ impl EvalContext<'_> {
     // }
     fn new_component(&mut self, moved_ports: HashSet<PortId>, init_state: ComponentState) -> () {
         match self {
-            // EvalContext::None => unreachable!(),
+            EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
                 context.new_component(moved_ports, init_state)
             }
@@ -261,7 +259,7 @@ impl EvalContext<'_> {
     }
     fn new_channel(&mut self) -> [Value; 2] {
         match self {
-            // EvalContext::None => unreachable!(),
+            EvalContext::None => unreachable!(),
             EvalContext::Nonsync(context) => {
                 let [from, to] = context.new_port_pair();
                 let from = Value::Output(from);
@@ -273,7 +271,7 @@ impl EvalContext<'_> {
     }
     fn fires(&mut self, port: Value) -> Option<Value> {
         match self {
-            // EvalContext::None => unreachable!(),
+            EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
                 Value::Output(port) => context.is_firing(port).map(Value::Bool),
@@ -282,17 +280,29 @@ impl EvalContext<'_> {
             },
         }
     }
-    fn get(&mut self, port: Value) -> Option<Value> {
+    fn get(&mut self, port: Value, store: &mut Store) -> Option<Value> {
         match self {
-            // EvalContext::None => unreachable!(),
+            EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
                 Value::Output(port) => {
                     debug_assert!(false, "Getting from an output port? Am I mad?");
-                    context.read_msg(port).map(Value::receive_message)
+                    unreachable!();
                 }
                 Value::Input(port) => {
-                    context.read_msg(port).map(Value::receive_message)
+                    let heap_pos = store.alloc_heap();
+                    let heap_pos_usize = heap_pos as usize;
+
+                    let payload = context.read_msg(port);
+                    if payload.is_none() { return None; }
+
+                    let payload = payload.unwrap();
+                    store.heap_regions[heap_pos_usize].values.reserve(payload.0.len());
+                    for value in payload.0.iter() {
+                        store.heap_regions[heap_pos_usize].values.push(Value::UInt8(*value));
+                    }
+
+                    return Some(Value::Message(heap_pos));
                 }
                 _ => unreachable!(),
             },
@@ -300,6 +310,7 @@ impl EvalContext<'_> {
     }
     fn did_put(&mut self, port: Value) -> bool {
         match self {
+            EvalContext::None => unreachable!("did_put in None context"),
             EvalContext::Nonsync(_) => unreachable!("did_put in nonsync context"),
             EvalContext::Sync(context) => match port {
                 Value::Output(port) => {

@@ -275,7 +275,7 @@ impl TypeTable {
             }
         }
 
-        debug_assert_eq!(self.lookup.len(), reserve_size, "mismatch in reserved size of type table");
+        debug_assert_eq!(self.lookup.len() + 6, reserve_size, "mismatch in reserved size of type table"); // NOTE: Temp fix for builtin functions
         for module in modules {
             module.phase = ModuleCompilationPhase::TypesAddedToTable;
         }
@@ -727,6 +727,9 @@ impl TypeTable {
 
         for element in parser_type.elements.iter() {
             match element.variant {
+                PTV::Void | PTV::InputOrOutput | PTV::ArrayLike | PTV::IntegerLike => {
+                    unreachable!("compiler-only ParserTypeVariant within type definition");
+                },
                 PTV::Message | PTV::Bool |
                 PTV::UInt8 | PTV::UInt16 | PTV::UInt32 | PTV::UInt64 |
                 PTV::SInt8 | PTV::SInt16 | PTV::SInt32 | PTV::SInt64 |

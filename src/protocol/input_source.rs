@@ -21,6 +21,12 @@ pub struct InputSpan {
 }
 
 impl InputSpan {
+    // This will only be used for builtin functions
+    #[inline]
+    pub fn new() -> InputSpan {
+        InputSpan{ begin: InputPosition{ line: 0, offset: 0 }, end: InputPosition{ line: 0, offset: 0 }}
+    }
+
     #[inline]
     pub fn from_positions(begin: InputPosition, end: InputPosition) -> Self {
         Self { begin, end }

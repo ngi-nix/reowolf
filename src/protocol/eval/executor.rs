@@ -6,12 +6,14 @@ use super::store::*;
 use crate::protocol::*;
 use crate::protocol::ast::*;
 
-enum ExprInstruction {
+#[derive(Debug, Clone)]
+pub(crate) enum ExprInstruction {
     EvalExpr(ExpressionId),
     PushValToFront,
 }
 
-struct Frame {
+#[derive(Debug, Clone)]
+pub(crate) struct Frame {
     definition: DefinitionId,
     position: StatementId,
     expr_stack: VecDeque<ExprInstruction>, // hack for expression evaluation, evaluated by popping from back
@@ -138,7 +140,7 @@ impl Frame {
     }
 }
 
-type EvalResult = Result<(), EvalContinuation>;
+type EvalResult = Result<EvalContinuation, ()>;
 pub enum EvalContinuation {
     Stepping,
     Inconsistent,
@@ -151,6 +153,9 @@ pub enum EvalContinuation {
     Put(Value, Value),
 }
 
+// Note: cloning is fine, methinks. cloning all values and the heap regions then
+// we end up with valid "pointers" to heap regions.
+#[derive(Debug, Clone)]
 pub struct Prompt {
     pub(crate) frames: Vec<Frame>,
     pub(crate) store: Store,
@@ -169,13 +174,13 @@ impl Prompt {
         prompt
     }
 
-    pub fn step(&mut self, heap: &Heap, ctx: &mut EvalContext) -> EvalResult {
+    pub(crate) fn step(&mut self, heap: &Heap, ctx: &mut EvalContext) -> EvalResult {
         let cur_frame = self.frames.last_mut().unwrap();
         if cur_frame.position.is_invalid() {
             if heap[cur_frame.definition].is_function() {
                 todo!("End of function without return, return an evaluation error");
             }
-            return Err(EvalContinuation::Terminal);
+            return Ok(EvalContinuation::Terminal);
         }
 
         while !cur_frame.expr_stack.is_empty() {
@@ -190,9 +195,10 @@ impl Prompt {
                         Expression::Assignment(expr) => {
                             let to = cur_frame.expr_values.pop_back().unwrap().as_ref();
                             let rhs = cur_frame.expr_values.pop_back().unwrap();
+                            let rhs_heap_pos = rhs.get_heap_pos();
                             apply_assignment_operator(&mut self.store, to, expr.operation, rhs);
                             cur_frame.expr_values.push_back(self.store.read_copy(to));
-                            self.store.drop_value(&rhs);
+                            self.store.drop_value(rhs_heap_pos);
                         },
                         Expression::Binding(_expr) => {
                             todo!("Binding expression");
@@ -212,24 +218,22 @@ impl Prompt {
                             let rhs = cur_frame.expr_values.pop_back().unwrap();
                             let result = apply_binary_operator(&mut self.store, &lhs, expr.operation, &rhs);
                             cur_frame.expr_values.push_back(result);
-                            self.store.drop_value(&lhs);
-                            self.store.drop_value(&rhs);
+                            self.store.drop_value(lhs.get_heap_pos());
+                            self.store.drop_value(rhs.get_heap_pos());
                         },
                         Expression::Unary(expr) => {
                             let val = cur_frame.expr_values.pop_back().unwrap();
                             let result = apply_unary_operator(&mut self.store, expr.operation, &val);
                             cur_frame.expr_values.push_back(result);
-                            self.store.drop_value(&val);
+                            self.store.drop_value(val.get_heap_pos());
                         },
                         Expression::Indexing(expr) => {
                             // TODO: Out of bounds checking
                             // Evaluate index. Never heap allocated so we do
                             // not have to drop it.
                             let index = cur_frame.expr_values.pop_back().unwrap();
-                            let index = match &index {
-                                Value::Ref(value_ref) => self.store.read_ref(*value_ref),
-                                index => index,
-                            };
+                            let index = self.store.maybe_read_ref(&index);
+
                             debug_assert!(index.is_integer());
                             let index = if index.is_signed_integer() {
                                 index.as_signed_integer() as u32
@@ -237,14 +241,17 @@ impl Prompt {
                                 index.as_unsigned_integer() as u32
                             };
 
+                            // TODO: This is probably wrong, we're dropping the
+                            //  heap while refering to an element...
                             let subject = cur_frame.expr_values.pop_back().unwrap();
+                            let subject_heap_pos = subject.get_heap_pos();
                             let heap_pos = match subject {
                                 Value::Ref(value_ref) => self.store.read_ref(value_ref).as_array(),
                                 val => val.as_array(),
                             };
 
                             cur_frame.expr_values.push_back(Value::Ref(ValueId::Heap(heap_pos, index)));
-                            self.store.drop_value(&subject);
+                            self.store.drop_value(subject_heap_pos);
                         },
                         Expression::Slicing(expr) => {
                             // TODO: Out of bounds checking
@@ -258,7 +265,7 @@ impl Prompt {
                             };
 
                             cur_frame.expr_values.push_back(Value::Ref(ValueId::Heap(heap_pos, expr.field.as_symbolic().field_idx as u32)));
-                            self.store.drop_value(&subject);
+                            self.store.drop_value(subject.get_heap_pos());
                         },
                         Expression::Literal(expr) => {
                             let value = match &expr.value {
@@ -305,7 +312,7 @@ impl Prompt {
                                     Value::Struct(heap_pos)
                                 }
                                 Literal::Enum(lit_value) => {
-                                    Value::Enum(lit_value.variant_idx as i64);
+                                    Value::Enum(lit_value.variant_idx as i64)
                                 }
                                 Literal::Union(lit_value) => {
                                     let heap_pos = self.store.alloc_heap();
@@ -327,6 +334,7 @@ impl Prompt {
                                     for _ in 0..num_values {
                                         values.push(cur_frame.expr_values.pop_front().unwrap())
                                     }
+                                    Value::Array(heap_pos)
                                 }
                             };
 
@@ -351,7 +359,7 @@ impl Prompt {
 
                             // To simplify the logic a little bit we will now
                             // return and ask our caller to call us again
-                            return Err(EvalContinuation::Stepping);
+                            return Ok(EvalContinuation::Stepping);
                         },
                         Expression::Variable(expr) => {
                             let variable = &heap[expr.declaration.unwrap()];
@@ -373,14 +381,14 @@ impl Prompt {
                 self.store.reserve_stack(stmt.next_unique_id_in_scope as usize);
                 cur_frame.position = stmt.statements[0];
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::EndBlock(stmt) => {
                 let block = &heap[stmt.start_block];
-                self.store.clear_stack(stmt.first_unique_id_in_scope as usize);
+                self.store.clear_stack(block.first_unique_id_in_scope as usize);
                 cur_frame.position = stmt.next;
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::Local(stmt) => {
                 match stmt {
@@ -399,12 +407,12 @@ impl Prompt {
                     }
                 }
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::Labeled(stmt) => {
                 cur_frame.position = stmt.body;
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::If(stmt) => {
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for if statement");
@@ -415,14 +423,14 @@ impl Prompt {
                     cur_frame.position = false_body.upcast();
                 } else {
                     // Not true, and no false body
-                    cur_frame.position = stmt.end_if.unwrap().upcast();
+                    cur_frame.position = stmt.end_if.upcast();
                 }
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::EndIf(stmt) => {
                 cur_frame.position = stmt.next;
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::While(stmt) => {
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for while statement");
@@ -430,61 +438,75 @@ impl Prompt {
                 if test_value {
                     cur_frame.position = stmt.body.upcast();
                 } else {
-                    cur_frame.position = stmt.end_while.unwrap().upcast();
+                    cur_frame.position = stmt.end_while.upcast();
                 }
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::EndWhile(stmt) => {
                 cur_frame.position = stmt.next;
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::Break(stmt) => {
                 cur_frame.position = stmt.target.unwrap().upcast();
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::Continue(stmt) => {
                 cur_frame.position = stmt.target.unwrap().upcast();
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::Synchronous(stmt) => {
                 cur_frame.position = stmt.body.upcast();
 
-                Err(EvalContinuation::SyncBlockStart)
+                Ok(EvalContinuation::SyncBlockStart)
             },
             Statement::EndSynchronous(stmt) => {
                 cur_frame.position = stmt.next;
 
-                Err(EvalContinuation::SyncBlockEnd)
+                Ok(EvalContinuation::SyncBlockEnd)
             },
             Statement::Return(stmt) => {
                 debug_assert!(heap[cur_frame.definition].is_function());
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for return statement");
 
-                // Clear any values in the current stack frame
-                self.store.clear_stack(0);
 
                 // The preceding frame has executed a call, so is expecting the
-                // return expression on its expression value stack.
+                // return expression on its expression value stack. Note that
+                // we may be returning a reference to something on our stack,
+                // so we need to read that value and clone it.
                 let return_value = cur_frame.expr_values.pop_back().unwrap();
+                let return_value = match return_value {
+                    Value::Ref(value_id) => self.store.read_copy(value_id),
+                    _ => return_value,
+                };
+
                 let prev_stack_idx = self.store.stack[self.store.cur_stack_boundary].as_stack_boundary();
+                self.frames.pop();
+                self.store.clear_stack(0);
+
+                // TODO: Temporary hack for testing, remove at some point
+                if self.frames.is_empty() {
+                    debug_assert!(prev_stack_idx == -1);
+                    self.store.stack[0] = return_value;
+                    return Ok(EvalContinuation::Terminal);
+                }
+
                 debug_assert!(prev_stack_idx >= 0);
                 self.store.cur_stack_boundary = prev_stack_idx as usize;
-                self.frames.pop();
                 let cur_frame = self.frames.last_mut().unwrap();
                 cur_frame.expr_values.push_back(return_value);
 
                 // Immediately return, we don't care about the current frame
                 // anymore and there is nothing left to evaluate
-                return Ok(());
+                return Ok(EvalContinuation::Stepping);
             },
             Statement::Goto(stmt) => {
                 cur_frame.position = stmt.target.unwrap().upcast();
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
             Statement::New(stmt) => {
                 let call_expr = &heap[stmt.expression];
@@ -502,10 +524,18 @@ impl Prompt {
                     args.push(value);
                 }
 
+                // Construct argument group, thereby copying heap regions
+                let argument_group = ValueGroup::from_store(&self.store, &args);
+
+                // Clear any heap regions
+                for arg in &args {
+                    self.store.drop_value(arg.get_heap_pos());
+                }
+
                 cur_frame.position = stmt.next;
 
                 todo!("Make sure this is handled correctly, transfer 'heap' values to another Prompt");
-                Err(EvalContinuation::NewComponent(call_expr.definition, args))
+                Ok(EvalContinuation::NewComponent(call_expr.definition, argument_group))
             },
             Statement::Expression(stmt) => {
                 // The expression has just been completely evaluated. Some
@@ -513,7 +543,7 @@ impl Prompt {
                 cur_frame.expr_values.clear();
                 cur_frame.position = stmt.next;
 
-                Ok(())
+                Ok(EvalContinuation::Stepping)
             },
         };
 

@@ -992,7 +992,7 @@ impl Visitor2 for PassTyping {
             let param = &ctx.heap[param_id];
             let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
             debug_assert!(var_type.is_done, "expected component arguments to be concrete types");
-            self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
+            self.var_types.insert(param_id, VarData::new_local(var_type));
         }
 
         let body_stmt_id = ctx.heap[id].body;
@@ -1013,7 +1013,7 @@ impl Visitor2 for PassTyping {
             let param = &ctx.heap[param_id];
             let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
             debug_assert!(var_type.is_done, "expected function arguments to be concrete types");
-            self.var_types.insert(param_id.upcast(), VarData::new_local(var_type));
+            self.var_types.insert(param_id, VarData::new_local(var_type));
         }
 
         let body_stmt_id = ctx.heap[id].body;
@@ -1038,7 +1038,7 @@ impl Visitor2 for PassTyping {
 
         let local = &ctx.heap[memory_stmt.variable];
         let var_type = self.determine_inference_type_from_parser_type_elements(&local.parser_type.elements, true);
-        self.var_types.insert(memory_stmt.variable.upcast(), VarData::new_local(var_type));
+        self.var_types.insert(memory_stmt.variable, VarData::new_local(var_type));
 
         Ok(())
     }
@@ -1048,11 +1048,11 @@ impl Visitor2 for PassTyping {
 
         let from_local = &ctx.heap[channel_stmt.from];
         let from_var_type = self.determine_inference_type_from_parser_type_elements(&from_local.parser_type.elements, true);
-        self.var_types.insert(from_local.this.upcast(), VarData::new_channel(from_var_type, channel_stmt.to.upcast()));
+        self.var_types.insert(from_local.this, VarData::new_channel(from_var_type, channel_stmt.to));
 
         let to_local = &ctx.heap[channel_stmt.to];
         let to_var_type = self.determine_inference_type_from_parser_type_elements(&to_local.parser_type.elements, true);
-        self.var_types.insert(to_local.this.upcast(), VarData::new_channel(to_var_type, channel_stmt.from.upcast()));
+        self.var_types.insert(to_local.this, VarData::new_channel(to_var_type, channel_stmt.from));
 
         Ok(())
     }
@@ -2373,7 +2373,7 @@ impl PassTyping {
         if infer_res == DualInferenceResult::Incompatible {
             let var_decl = &ctx.heap[var_id];
             return Err(ParseError::new_error_at_span(
-                &ctx.module.source, var_decl.identifier().span, format!(
+                &ctx.module.source, var_decl.identifier.span, format!(
                     "Conflicting types for this variable, previously assigned the type '{}'",
                     var_data.var_type.display_name(&ctx.heap)
                 )
@@ -2425,12 +2425,12 @@ impl PassTyping {
                         let link_decl = &ctx.heap[linked_id];
 
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, var_decl.identifier().span, format!(
+                            &ctx.module.source, var_decl.identifier.span, format!(
                                 "Conflicting types for this variable, assigned the type '{}'",
                                 var_data.var_type.display_name(&ctx.heap)
                             )
                         ).with_info_at_span(
-                            &ctx.module.source, link_decl.identifier().span, format!(
+                            &ctx.module.source, link_decl.identifier.span, format!(
                                 "Because it is incompatible with this variable, assigned the type '{}'",
                                 link_data.var_type.display_name(&ctx.heap)
                             )
@@ -3099,6 +3099,12 @@ impl PassTyping {
 
         for element in elements {
             match &element.variant {
+                // Compiler-only types
+                PTV::Void => { infer_type.push(ITP::Void); },
+                PTV::InputOrOutput => { infer_type.push(ITP::PortLike); },
+                PTV::ArrayLike => { infer_type.push(ITP::ArrayLike); },
+                PTV::IntegerLike => { infer_type.push(ITP::IntegerLike); },
+                // Builtins
                 PTV::Message => {
                     // TODO: @types Remove the Message -> Byte hack at some point...
                     infer_type.push(ITP::Message);
@@ -3115,11 +3121,13 @@ impl PassTyping {
                 PTV::SInt64 => { infer_type.push(ITP::SInt64); },
                 PTV::Character => { infer_type.push(ITP::Character); },
                 PTV::String => { infer_type.push(ITP::String); },
+                // Special markers
                 PTV::IntegerLiteral => { unreachable!("integer literal type on variable type"); },
                 PTV::Inferred => {
                     infer_type.push(ITP::Unknown);
                     has_inferred = true;
                 },
+                // With nested types
                 PTV::Array => { infer_type.push(ITP::Array); },
                 PTV::Input => { infer_type.push(ITP::Input); },
                 PTV::Output => { infer_type.push(ITP::Output); },

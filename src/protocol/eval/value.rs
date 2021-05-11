@@ -10,7 +10,7 @@ use crate::protocol::ast::{
 pub type StackPos = u32;
 pub type HeapPos = u32;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ValueId {
     Stack(StackPos), // place on stack
     Heap(HeapPos, u32), // allocated region + values within that region
@@ -192,7 +192,7 @@ impl ValueGroup {
             let from_region = &from_store.heap_regions[heap_pos as usize].values;
             let mut new_region = Vec::with_capacity(from_region.len());
             for value in from_region {
-                let transferred = self.transfer_value(value, from_store);
+                let transferred = self.retrieve_value(value, from_store);
                 new_region.push(transferred);
             }
 
@@ -216,7 +216,7 @@ impl ValueGroup {
     /// Transfers the heap values and the stack values into the store. Stack
     /// values are pushed onto the Store's stack in the order in which they
     /// appear in the value group.
-    pub fn into_store(self, store: &mut Store) {
+    pub(crate) fn into_store(self, store: &mut Store) {
         for value in &self.values {
             let transferred = self.provide_value(value, store);
             store.stack.push(transferred);
@@ -328,74 +328,120 @@ pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: Ass
 pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOperator, rhs: &Value) -> Value {
     use BinaryOperator as BO;
 
-    macro_rules! apply_int_op_and_return {
+    macro_rules! apply_int_op_and_return_self {
         ($lhs:ident, $operator_tokens:tt, $operator:ident, $rhs:ident) => {
             return match $lhs {
-                Value::UInt8(v)  => { Value::UInt8( *v $operator_tokens $rhs.as_uint8() ); },
-                Value::UInt16(v) => { Value::UInt16(*v $operator_tokens $rhs.as_uint16()); },
-                Value::UInt32(v) => { Value::UInt32(*v $operator_tokens $rhs.as_uint32()); },
-                Value::UInt64(v) => { Value::UInt64(*v $operator_tokens $rhs.as_uint64()); },
-                Value::SInt8(v)  => { Value::SInt8( *v $operator_tokens $rhs.as_sint8() ); },
-                Value::SInt16(v) => { Value::SInt16(*v $operator_tokens $rhs.as_sint16()); },
-                Value::SInt32(v) => { Value::SInt32(*v $operator_tokens $rhs.as_sint32()); },
-                Value::SInt64(v) => { Value::SInt64(*v $operator_tokens $rhs.as_sint64()); },
+                Value::UInt8(v)  => { Value::UInt8( *v $operator_tokens $rhs.as_uint8() ) },
+                Value::UInt16(v) => { Value::UInt16(*v $operator_tokens $rhs.as_uint16()) },
+                Value::UInt32(v) => { Value::UInt32(*v $operator_tokens $rhs.as_uint32()) },
+                Value::UInt64(v) => { Value::UInt64(*v $operator_tokens $rhs.as_uint64()) },
+                Value::SInt8(v)  => { Value::SInt8( *v $operator_tokens $rhs.as_sint8() ) },
+                Value::SInt16(v) => { Value::SInt16(*v $operator_tokens $rhs.as_sint16()) },
+                Value::SInt32(v) => { Value::SInt32(*v $operator_tokens $rhs.as_sint32()) },
+                Value::SInt64(v) => { Value::SInt64(*v $operator_tokens $rhs.as_sint64()) },
                 _ => unreachable!("apply_binary_operator {:?} on lhs {:?} and rhs {:?}", $operator, $lhs, $rhs)
             };
         }
     }
 
-    match op {
-        BO::Concatenate => {
-            let lhs_heap_pos;
-            let rhs_heap_pos;
-            let construct_fn;
-            match lhs {
-                Value::Message(lhs_pos) => {
-                    lhs_heap_pos = *lhs_pos;
-                    rhs_heap_pos = rhs.as_message();
-                    construct_fn = |pos: HeapPos| Value::Message(pos);
-                },
-                Value::String(lhs_pos) => {
-                    lhs_heap_pos = *lhs_pos;
-                    rhs_heap_pos = rhs.as_string();
-                    construct_fn = |pos: HeapPos| Value::String(pos);
-                },
-                Value::Array(lhs_pos) => {
-                    lhs_heap_pos = *lhs_pos;
-                    rhs_heap_pos = *rhs.as_array();
-                    construct_fn = |pos: HeapPos| Value::Array(pos);
-                },
-                _ => unreachable!("apply_binary_operator {:?} on lhs {:?} and rhs {:?}", op, lhs, rhs)
-            }
+    macro_rules! apply_int_op_and_return_bool {
+        ($lhs:ident, $operator_tokens:tt, $operator:ident, $rhs:ident) => {
+            return match $lhs {
+                Value::UInt8(v)  => { Value::Bool(*v $operator_tokens $rhs.as_uint8() ) },
+                Value::UInt16(v) => { Value::Bool(*v $operator_tokens $rhs.as_uint16()) },
+                Value::UInt32(v) => { Value::Bool(*v $operator_tokens $rhs.as_uint32()) },
+                Value::UInt64(v) => { Value::Bool(*v $operator_tokens $rhs.as_uint64()) },
+                Value::SInt8(v)  => { Value::Bool(*v $operator_tokens $rhs.as_sint8() ) },
+                Value::SInt16(v) => { Value::Bool(*v $operator_tokens $rhs.as_sint16()) },
+                Value::SInt32(v) => { Value::Bool(*v $operator_tokens $rhs.as_sint32()) },
+                Value::SInt64(v) => { Value::Bool(*v $operator_tokens $rhs.as_sint64()) },
+                _ => unreachable!("apply_binary_operator {:?} on lhs {:?} and rhs {:?}", $operator, $lhs, $rhs)
+            };
+        }
+    }
 
-            let target_heap_pos = store.alloc_heap();
-            let target = &mut store.heap_regions[target_heap_pos as usize].values;
-            target.extend(&store.heap_regions[lhs_heap_pos as usize].values);
-            target.extend(&store.heap_regions[rhs_heap_pos as usize].values);
-            return construct_fn(target_heap_pos);
-        },
+    // We need to handle concatenate in a special way because it needs the store
+    // mutably.
+    if op == BO::Concatenate {
+        let target_heap_pos = store.alloc_heap();
+        let lhs_heap_pos;
+        let rhs_heap_pos;
+
+        let lhs = store.maybe_read_ref(lhs);
+        let rhs = store.maybe_read_ref(rhs);
+
+        enum ValueKind { Message, String, Array };
+        let value_kind;
+
+        match lhs {
+            Value::Message(lhs_pos) => {
+                lhs_heap_pos = *lhs_pos;
+                rhs_heap_pos = rhs.as_message();
+                value_kind = ValueKind::Message;
+            },
+            Value::String(lhs_pos) => {
+                lhs_heap_pos = *lhs_pos;
+                rhs_heap_pos = rhs.as_string();
+                value_kind = ValueKind::String;
+            },
+            Value::Array(lhs_pos) => {
+                lhs_heap_pos = *lhs_pos;
+                rhs_heap_pos = rhs.as_array();
+                value_kind = ValueKind::Array;
+            },
+            _ => unreachable!("apply_binary_operator {:?} on lhs {:?} and rhs {:?}", op, lhs, rhs)
+        }
+
+        // TODO: I hate this, but fine...
+        let mut concatenated = Vec::new();
+        concatenated.extend_from_slice(&store.heap_regions[lhs_heap_pos as usize].values);
+        concatenated.extend_from_slice(&store.heap_regions[rhs_heap_pos as usize].values);
+
+        store.heap_regions[target_heap_pos as usize].values = concatenated;
+
+        return match value_kind{
+            ValueKind::Message => Value::Message(target_heap_pos),
+            ValueKind::String => Value::String(target_heap_pos),
+            ValueKind::Array => Value::Array(target_heap_pos),
+        };
+    }
+
+    // If any of the values are references, retrieve the thing they're referring
+    // to.
+    let lhs = match lhs {
+        Value::Ref(value_id) => store.read_ref(*value_id),
+        _ => lhs,
+    };
+
+    let rhs = match rhs {
+        Value::Ref(value_id) => store.read_ref(*value_id),
+        _ => rhs,
+    };
+
+    match op {
+        BO::Concatenate => unreachable!(),
         BO::LogicalOr => {
             return Value::Bool(lhs.as_bool() || rhs.as_bool());
         },
         BO::LogicalAnd => {
             return Value::Bool(lhs.as_bool() && rhs.as_bool());
         },
-        BO::BitwiseOr        => { apply_int_op_and_return!(lhs, |,  op, rhs); },
-        BO::BitwiseXor       => { apply_int_op_and_return!(lhs, ^,  op, rhs); },
-        BO::BitwiseAnd       => { apply_int_op_and_return!(lhs, &,  op, rhs); },
+        BO::BitwiseOr        => { apply_int_op_and_return_self!(lhs, |,  op, rhs); },
+        BO::BitwiseXor       => { apply_int_op_and_return_self!(lhs, ^,  op, rhs); },
+        BO::BitwiseAnd       => { apply_int_op_and_return_self!(lhs, &,  op, rhs); },
         BO::Equality => { todo!("implement") },
         BO::Inequality =>  { todo!("implement") },
-        BO::LessThan         => { apply_int_op_and_return!(lhs, <,  op, rhs); },
-        BO::GreaterThan      => { apply_int_op_and_return!(lhs, >,  op, rhs); },
-        BO::LessThanEqual    => { apply_int_op_and_return!(lhs, <=, op, rhs); },
-        BO::GreaterThanEqual => { apply_int_op_and_return!(lhs, >=, op, rhs); },
-        BO::ShiftLeft        => { apply_int_op_and_return!(lhs, <<, op, rhs); },
-        BO::ShiftRight       => { apply_int_op_and_return!(lhs, >>, op, rhs); },
-        BO::Add              => { apply_int_op_and_return!(lhs, +,  op, rhs); },
-        BO::Subtract         => { apply_int_op_and_return!(lhs, -,  op, rhs); },
-        BO::Multiply         => { apply_int_op_and_return!(lhs, *,  op, rhs); },
-        BO::Divide           => { apply_int_op_and_return!(lhs, /,  op, rhs); },
-        BO::Remainder        => { apply_int_op_and_return!(lhs, %,  op, rhs); }
+        BO::LessThan         => { apply_int_op_and_return_bool!(lhs, <,  op, rhs); },
+        BO::GreaterThan      => { apply_int_op_and_return_bool!(lhs, >,  op, rhs); },
+        BO::LessThanEqual    => { apply_int_op_and_return_bool!(lhs, <=, op, rhs); },
+        BO::GreaterThanEqual => { apply_int_op_and_return_bool!(lhs, >=, op, rhs); },
+        BO::ShiftLeft        => { apply_int_op_and_return_self!(lhs, <<, op, rhs); },
+        BO::ShiftRight       => { apply_int_op_and_return_self!(lhs, >>, op, rhs); },
+        BO::Add              => { apply_int_op_and_return_self!(lhs, +,  op, rhs); },
+        BO::Subtract         => { apply_int_op_and_return_self!(lhs, -,  op, rhs); },
+        BO::Multiply         => { apply_int_op_and_return_self!(lhs, *,  op, rhs); },
+        BO::Divide           => { apply_int_op_and_return_self!(lhs, /,  op, rhs); },
+        BO::Remainder        => { apply_int_op_and_return_self!(lhs, %,  op, rhs); }
     }
 }
 
@@ -418,12 +464,24 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
         }
     }
 
+    // If the value is a reference, retrieve the thing it is referring to
+    let value = store.maybe_read_ref(value);
+
     match op {
-        UO::Positive   => {
+        UO::Positive => {
             debug_assert!(value.is_integer());
             return value.clone();
         },
-        UO::Negative   => { apply_int_expr_and_return!(value, -, op) },
+        UO::Negative => {
+            // TODO: Error on negating unsigned integers
+            return match value {
+                Value::SInt8(v) => Value::SInt8(-*v),
+                Value::SInt16(v) => Value::SInt16(-*v),
+                Value::SInt32(v) => Value::SInt32(-*v),
+                Value::SInt64(v) => Value::SInt64(-*v),
+                _ => unreachable!("apply_unary_operator {:?} on value {:?}", op, value),
+            }
+        },
         UO::BitwiseNot => { apply_int_expr_and_return!(value, !, op)},
         UO::LogicalNot => { return Value::Bool(!value.as_bool()); },
         UO::PreIncrement => { todo!("implement") },
@@ -431,4 +489,8 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
         UO::PostIncrement => { todo!("implement") },
         UO::PostDecrement => { todo!("implement") },
     }
+}
+
+pub(crate) fn apply_equality_operator(store: &Store, lhs: &Value, rhs: &Value) -> bool {
+
 }

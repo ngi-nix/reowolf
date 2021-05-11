@@ -540,8 +540,7 @@ impl Visitor for LinkStatements {
     fn visit_if_statement(&mut self, h: &mut Heap, stmt: IfStatementId) -> VisitorResult {
         // Link the two branches to the corresponding EndIf pseudo-statement
         let end_if_id = h[stmt].end_if;
-        assert!(end_if_id.is_some());
-        let end_if_id = end_if_id.unwrap();
+        assert!(!end_if_id.is_invalid());
 
         assert!(self.prev.is_none());
         self.visit_block_statement(h, h[stmt].true_body)?;
@@ -570,8 +569,7 @@ impl Visitor for LinkStatements {
         // We allocate a pseudo-statement, to which the break statement finds its target
         // Update the while's next statement to point to the pseudo-statement
         let end_while_id = h[stmt].end_while;
-        assert!(end_while_id.is_some());
-        // let end_while_id = end_while_id.unwrap();
+        assert!(!end_while_id.is_invalid());
 
         assert!(self.prev.is_none());
         self.visit_block_statement(h, h[stmt].body)?;
@@ -608,8 +606,7 @@ impl Visitor for LinkStatements {
         // that marks the end of the synchronous block. Every evaluation has to pause at this
         // point, only to resume later when the thread is selected as unique thread to continue.
         let end_sync_id = h[stmt].end_sync;
-        assert!(end_sync_id.is_some());
-        let end_sync_id = end_sync_id.unwrap();
+        assert!(!end_sync_id.is_invalid());
 
         assert!(self.prev.is_none());
         self.visit_block_statement(h, h[stmt].body)?;

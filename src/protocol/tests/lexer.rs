@@ -9,7 +9,7 @@ use super::*;
 fn test_disallowed_inference() {
     Tester::new_single_source_expect_err(
         "argument auto inference",
-            "s32 func(auto arg) { return 0; }"
+            "func thing(auto arg) -> s32 { return 0; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
         .assert_occurs_at(0, "auto arg");
@@ -17,15 +17,15 @@ fn test_disallowed_inference() {
 
     Tester::new_single_source_expect_err(
         "return type auto inference",
-        "auto func(s32 arg) { return 0; }"
+        "func thing(s32 arg) -> auto { return 0; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
-        .assert_occurs_at(0, "auto func");
+        .assert_occurs_at(0, "auto {");
     });
 
     Tester::new_single_source_expect_err(
         "implicit polymorph argument auto inference",
-        "s32 func(in port) { return port; }"
+        "func thing(in port) -> s32 { return port; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
         .assert_occurs_at(0, "in port");
@@ -33,7 +33,7 @@ fn test_disallowed_inference() {
 
     Tester::new_single_source_expect_err(
         "explicit polymorph argument auto inference",
-        "s32 func(in<auto> port) { return port; }"
+        "func thing(in<auto> port) -> s32 { return port; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
         .assert_occurs_at(0, "auto> port");
@@ -41,18 +41,18 @@ fn test_disallowed_inference() {
 
     Tester::new_single_source_expect_err(
         "implicit polymorph return type auto inference",
-        "in func(in<msg> a, in<msg> b) { return a; }"
+        "func thing(in<msg> a, in<msg> b) -> in { return a; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
-        .assert_occurs_at(0, "in func");
+        .assert_occurs_at(0, "in {");
     });
 
     Tester::new_single_source_expect_err(
         "explicit polymorph return type auto inference",
-        "in<auto> func(in<msg> a) { return a; }"
+        "func thing(in<msg> a) -> in<auto> { return a; }"
     ).error(|e| { e
         .assert_msg_has(0, "inference is not allowed")
-        .assert_occurs_at(0, "auto> func");
+        .assert_occurs_at(0, "auto> {");
     });
 }
 

@@ -14,7 +14,6 @@ mod visitor;
 use depth_visitor::*;
 use tokens::*;
 use crate::collections::*;
-use symbol_table::SymbolTable;
 use visitor::Visitor2;
 use pass_tokenizer::PassTokenizer;
 use pass_symbols::PassSymbols;
@@ -22,12 +21,14 @@ use pass_imports::PassImport;
 use pass_definitions::PassDefinitions;
 use pass_validation_linking::PassValidationLinking;
 use pass_typing::{PassTyping, ResolveQueue};
+use symbol_table::*;
 use type_table::TypeTable;
 
 use crate::protocol::ast::*;
 use crate::protocol::input_source::*;
 
 use crate::protocol::ast_printer::ASTWriter;
+use crate::protocol::parser::type_table::PolymorphicVariable;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModuleCompilationPhase {
@@ -75,7 +76,7 @@ pub struct Parser {
 
 impl Parser {
     pub fn new() -> Self {
-        Parser{
+        let mut parser = Parser{
             heap: Heap::new(),
             string_pool: StringPool::new(),
             modules: Vec::new(),
@@ -87,7 +88,58 @@ impl Parser {
             pass_definitions: PassDefinitions::new(),
             pass_validation: PassValidationLinking::new(),
             pass_typing: PassTyping::new(),
+        };
+
+        parser.symbol_table.insert_scope(None, SymbolScope::Global);
+
+        fn quick_type(variants: &[ParserTypeVariant]) -> ParserType {
+            let mut t = ParserType{ elements: Vec::with_capacity(variants.len()) };
+            for variant in variants {
+                t.elements.push(ParserTypeElement{ full_span: InputSpan::new(), variant: variant.clone() });
+            }
+            t
         }
+
+        use ParserTypeVariant as PTV;
+        insert_builtin_function(&mut parser, "get", &["T"], |id| (
+            vec![
+                ("input", quick_type(&[PTV::Input, PTV::PolymorphicArgument(id.upcast(), 0)]))
+            ],
+            quick_type(&[PTV::PolymorphicArgument(id.upcast(), 0)])
+        ));
+        insert_builtin_function(&mut parser, "put", &["T"], |id| (
+            vec![
+                ("output", quick_type(&[PTV::Output, PTV::PolymorphicArgument(id.upcast(), 0)])),
+                ("value", quick_type(&[PTV::PolymorphicArgument(id.upcast(), 0)])),
+            ],
+            quick_type(&[PTV::Void])
+        ));
+        insert_builtin_function(&mut parser, "fires", &["T"], |id| (
+            vec![
+                ("port", quick_type(&[PTV::InputOrOutput, PTV::PolymorphicArgument(id.upcast(), 0)]))
+            ],
+            quick_type(&[PTV::Bool])
+        ));
+        insert_builtin_function(&mut parser, "create", &["T"], |id| (
+            vec![
+                ("length", quick_type(&[PTV::IntegerLike]))
+            ],
+            quick_type(&[PTV::ArrayLike, PTV::PolymorphicArgument(id.upcast(), 0)])
+        ));
+        insert_builtin_function(&mut parser, "length", &["T"], |id| (
+            vec![
+                ("array", quick_type(&[PTV::ArrayLike, PTV::PolymorphicArgument(id.upcast(), 0)]))
+            ],
+            quick_type(&[PTV::IntegerLike])
+        ));
+        insert_builtin_function(&mut parser, "assert", &[], |id| (
+            vec![
+                ("condition", quick_type(&[PTV::Bool])),
+            ],
+            quick_type(&[PTV::Void])
+        ));
+
+        parser
     }
 
     pub fn feed(&mut self, mut source: InputSource) -> Result<(), ParseError> {
@@ -176,9 +228,9 @@ impl Parser {
             }
         }
 
-        // let mut writer = ASTWriter::new();
-        // let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
-        // writer.write_ast(&mut file, &self.heap);
+        let mut writer = ASTWriter::new();
+        let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
+        writer.write_ast(&mut file, &self.heap);
 
         Ok(())
     }
@@ -203,4 +255,60 @@ impl Parser {
 
         Ok(())
     }
+}
+
+// Note: args and return type need to be a function because we need to know the function ID.
+fn insert_builtin_function<T: Fn(FunctionDefinitionId) -> (Vec<(&'static str, ParserType)>, ParserType)> (
+    p: &mut Parser, func_name: &str, polymorphic: &[&str], arg_and_return_fn: T) {
+
+    let mut poly_vars = Vec::with_capacity(polymorphic.len());
+    for poly_var in polymorphic {
+        poly_vars.push(Identifier{ span: InputSpan::new(), value: p.string_pool.intern(poly_var.as_bytes()) });
+    }
+
+    let func_ident_ref = p.string_pool.intern(func_name.as_bytes());
+    let func_id = p.heap.alloc_function_definition(|this| FunctionDefinition{
+        this,
+        defined_in: RootId::new_invalid(),
+        builtin: true,
+        span: InputSpan::new(),
+        identifier: Identifier{ span: InputSpan::new(), value: func_ident_ref.clone() },
+        poly_vars,
+        return_types: Vec::new(),
+        parameters: Vec::new(),
+        body: BlockStatementId::new_invalid(),
+    });
+
+    let (args, ret) = arg_and_return_fn(func_id);
+
+    let mut parameters = Vec::with_capacity(args.len());
+    for (arg_name, arg_type) in args {
+        let identifier = Identifier{ span: InputSpan::new(), value: p.string_pool.intern(arg_name.as_bytes()) };
+        let param_id = p.heap.alloc_variable(|this| Variable{
+            this,
+            kind: VariableKind::Parameter,
+            parser_type: arg_type.clone(),
+            identifier,
+            relative_pos_in_block: 0,
+            unique_id_in_scope: 0
+        });
+        parameters.push(param_id);
+    }
+
+    let func = &mut p.heap[func_id];
+    func.parameters = parameters;
+    func.return_types.push(ret);
+
+    p.symbol_table.insert_symbol(SymbolScope::Global, Symbol{
+        name: func_ident_ref,
+        variant: SymbolVariant::Definition(SymbolDefinition{
+            defined_in_module: RootId::new_invalid(),
+            defined_in_scope: SymbolScope::Global,
+            definition_span: InputSpan::new(),
+            identifier_span: InputSpan::new(),
+            imported_at: None,
+            class: DefinitionClass::Function,
+            definition_id: func_id.upcast(),
+        })
+    }).unwrap();
 }
