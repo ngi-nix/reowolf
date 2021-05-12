@@ -1,7 +1,8 @@
 use super::*;
+use crate::protocol::eval::*;
 
 #[test]
-fn test_assignment() {
+fn test_assignment_operators() {
     fn construct_source(value_type: &str, value_initial: &str, value_op: &str) -> String {
         return format!(
             "func foo() -> {} {{
@@ -12,59 +13,184 @@ fn test_assignment() {
             value_type, value_type, value_initial, value_op
         );
     }
-    Tester::new_single_source_expect_ok(
-        "set", construct_source("u32", "1", "= 5")
-    ).for_function("foo", |f| { f.call(); });
 
-    Tester::new_single_source_expect_ok(
-        "multiplied", construct_source("u32", "2", "*= 4")
-    ).for_function("foo", |f| { f.call(); });
+    fn perform_test(name: &str, source: String, expected_value: Value) {
+        Tester::new_single_source_expect_ok(name, source)
+            .for_function("foo", move |f| {
+                f.call(Some(expected_value));
+            });
+    }
 
-    Tester::new_single_source_expect_ok(
-        "divided", construct_source("u32", "8", "/= 4")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "set",
+        construct_source("u32", "1", "= 5"),
+        Value::UInt32(5)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "remained", construct_source("u32", "8", "%= 3")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "multiplied",
+        construct_source("u32", "2", "*= 4"),
+        Value::UInt32(8)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "added", construct_source("u32", "2", "+= 4")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "divided",
+        construct_source("u32", "8", "/= 4"),
+        Value::UInt32(2)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "subtracted", construct_source("u32", "6", "-= 4")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "remained",
+        construct_source("u32", "8", "%= 3"),
+        Value::UInt32(2)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "shifted left", construct_source("u32", "2", "<<= 2")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "added",
+        construct_source("u32", "2", "+= 4"),
+        Value::UInt32(6)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "shifted right", construct_source("u32", "8", ">>= 2")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "subtracted",
+        construct_source("u32", "6", "-= 4"),
+        Value::UInt32(2)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "bitwise and", construct_source("u32", "3", "&= 2")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "shifted left",
+        construct_source("u32", "2", "<<= 2"),
+        Value::UInt32(8)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "bitwise xor", construct_source("u32", "3", "^= 7")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "shifted right",
+        construct_source("u32", "8", ">>= 2"),
+        Value::UInt32(2)
+    );
 
-    Tester::new_single_source_expect_ok(
-        "bitwise or", construct_source("u32", "12", "|= 3")
-    ).for_function("foo", |f| { f.call(); });
+    perform_test(
+        "bitwise and",
+        construct_source("u32", "15", "&= 35"),
+        Value::UInt32(3)
+    );
+
+    perform_test(
+        "bitwise xor",
+        construct_source("u32", "3", "^= 7"),
+        Value::UInt32(4)
+    );
+
+    perform_test(
+        "bitwise or",
+        construct_source("u32", "12", "|= 3"),
+        Value::UInt32(15)
+    );
 }
 
 #[test]
-fn test_function_call() {
-    Tester::new_single_source_expect_ok("calling", "
-    func add_two(u32 value) -> u32 {
-        return value + 2;
+fn test_concatenate_operator() {
+    Tester::new_single_source_expect_ok(
+        "concatenate and check pairs",
+        "
+        func check_pair<T>(T[] arr, u32 idx) -> bool {
+            return arr[idx] == arr[idx + 1];
+        }
+
+        struct Point2D {
+            u32 x,
+            u32 y,
+        }
+
+        func create_point(u32 x, u32 y) -> Point2D {
+            return Point2D{ x: x, y: y };
+        }
+
+        func create_array() -> Point2D[] {
+            return {
+                create_point(1, 2),
+                create_point(1, 2),
+                create_point(3, 4),
+                create_point(3, 4)
+            };
+        }
+
+        func foo() -> bool {
+            auto lhs = create_array();
+            auto rhs = create_array();
+            auto total = lhs @ rhs;
+            auto is_equal =
+                check_pair(total, 0) &&
+                check_pair(total, 2) &&
+                check_pair(total, 4) &&
+                check_pair(total, 6);
+            auto is_not_equal =
+                !check_pair(total, 0) ||
+                !check_pair(total, 2) ||
+                !check_pair(total, 4) ||
+                !check_pair(total, 6);
+            return is_equal && !is_not_equal;
+        }
+        "
+    ).for_function("foo", |f| {
+        f.call(Some(Value::Bool(true)));
+    });
+}
+#[test]
+fn test_binary_integer_operators() {
+    fn construct_source(value_type: &str, code: &str) -> String {
+        format!("
+        func foo() -> {} {{
+            {}
+        }}
+        ", value_type, code)
     }
-    func foo() -> u32 {
-        return add_two(5);
+
+    fn perform_test(test_name: &str, value_type: &str, code: &str, expected_value: Value) {
+        Tester::new_single_source_expect_ok(test_name, construct_source(value_type, code))
+            .for_function("foo", move |f| {
+                f.call(Some(expected_value));
+            });
     }
-    ").for_function("foo", |f| { f.call(); });
+
+    perform_test(
+        "bitwise_or", "u16",
+        "auto a = 3; return a | 4;", Value::UInt16(7)
+    );
+    perform_test(
+        "bitwise_xor", "u16",
+        "auto a = 3; return a ^ 7;", Value::UInt16(4)
+    );
+    perform_test(
+        "bitwise and", "u16",
+        "auto a = 0b110011; return a & 0b011110;", Value::UInt16(0b010010)
+    );
+    perform_test(
+        "shift left", "u16",
+        "auto a = 0x0F; return a << 4;", Value::UInt16(0xF0)
+    );
+    perform_test(
+        "shift right", "u64",
+        "auto a = 0xF0; return a >> 4;", Value::UInt64(0x0F)
+    );
+    perform_test(
+        "add", "u32",
+        "auto a = 5; return a + 5;", Value::UInt32(10)
+    );
+    perform_test(
+        "subtract", "u32",
+        "auto a = 3; return a - 3;", Value::UInt32(0)
+    );
+    perform_test(
+        "multiply", "u8",
+        "auto a = 2 * 2; return a * 2 * 2;", Value::UInt8(16)
+    );
+    perform_test(
+        "divide", "u8",
+        "auto a = 32 / 2; return a / 2 / 2;", Value::UInt8(4)
+    );
+    perform_test(
+        "remainder", "u16",
+        "auto a = 29; return a % 3;", Value::UInt16(2)
+    );
 }

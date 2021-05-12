@@ -6,6 +6,16 @@ use super::store::*;
 use crate::protocol::*;
 use crate::protocol::ast::*;
 
+macro_rules! debug_enabled { () => { true }; }
+macro_rules! debug_log {
+    ($format:literal) => {
+        enabled_debug_print!(true, "exec", $format);
+    };
+    ($format:literal, $($args:expr),*) => {
+        enabled_debug_print!(true, "exec", $format, $($args),*);
+    };
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ExprInstruction {
     EvalExpr(ExpressionId),
@@ -175,6 +185,28 @@ impl Prompt {
     }
 
     pub(crate) fn step(&mut self, heap: &Heap, ctx: &mut EvalContext) -> EvalResult {
+        // Helper function to transfer multiple values from the expression value
+        // array into a heap region (e.g. constructing arrays or structs).
+        fn transfer_expression_values_front_into_heap(cur_frame: &mut Frame, store: &mut Store, num_values: usize) -> HeapPos {
+            let heap_pos = store.alloc_heap();
+
+            // Do the transformation first (because Rust...)
+            for val_idx in 0..num_values {
+                cur_frame.expr_values[val_idx] = store.read_take_ownership(cur_frame.expr_values[val_idx].clone());
+            }
+
+            // And now transfer to the heap region
+            let values = &mut store.heap_regions[heap_pos as usize].values;
+            debug_assert!(values.is_empty());
+            values.reserve(num_values);
+            for _ in 0..num_values {
+                values.push(cur_frame.expr_values.pop_front().unwrap());
+            }
+
+            heap_pos
+        }
+
+        // Checking if we're at the end of execution
         let cur_frame = self.frames.last_mut().unwrap();
         if cur_frame.position.is_invalid() {
             if heap[cur_frame.definition].is_function() {
@@ -183,8 +215,12 @@ impl Prompt {
             return Ok(EvalContinuation::Terminal);
         }
 
+        debug_log!("Taking step in '{}'", heap[cur_frame.definition].identifier().value.as_str());
+
+        // Execute all pending expressions
         while !cur_frame.expr_stack.is_empty() {
             let next = cur_frame.expr_stack.pop_back().unwrap();
+            debug_log!("Expr stack: {:?}", next);
             match next {
                 ExprInstruction::PushValToFront => {
                     cur_frame.expr_values.rotate_right(1);
@@ -193,12 +229,15 @@ impl Prompt {
                     let expr = &heap[expr_id];
                     match expr {
                         Expression::Assignment(expr) => {
+                            // TODO: Stuff goes wrong here, either make these
+                            //  utilities do the alloc/dealloc, or let it all be
+                            //  done here.
                             let to = cur_frame.expr_values.pop_back().unwrap().as_ref();
                             let rhs = cur_frame.expr_values.pop_back().unwrap();
-                            let rhs_heap_pos = rhs.get_heap_pos();
+                            // let rhs_heap_pos = rhs.get_heap_pos();
                             apply_assignment_operator(&mut self.store, to, expr.operation, rhs);
                             cur_frame.expr_values.push_back(self.store.read_copy(to));
-                            self.store.drop_value(rhs_heap_pos);
+                            // self.store.drop_value(rhs_heap_pos);
                         },
                         Expression::Binding(_expr) => {
                             todo!("Binding expression");
@@ -245,8 +284,14 @@ impl Prompt {
                             //  heap while refering to an element...
                             let subject = cur_frame.expr_values.pop_back().unwrap();
                             let subject_heap_pos = subject.get_heap_pos();
+
                             let heap_pos = match subject {
-                                Value::Ref(value_ref) => self.store.read_ref(value_ref).as_array(),
+                                Value::Ref(value_ref) => {
+                                    println!("DEBUG: Called with {:?}", subject);
+                                    let result = self.store.read_ref(value_ref);
+                                    println!("DEBUG: And got {:?}", result);
+                                    result.as_array()
+                                },
                                 val => val.as_array(),
                             };
 
@@ -301,39 +346,24 @@ impl Prompt {
                                     }
                                 }
                                 Literal::Struct(lit_value) => {
-                                    let heap_pos = self.store.alloc_heap();
-                                    let num_fields = lit_value.fields.len();
-                                    let values = &mut self.store.heap_regions[heap_pos as usize].values;
-                                    debug_assert!(values.is_empty());
-                                    values.reserve(num_fields);
-                                    for _ in 0..num_fields {
-                                        values.push(cur_frame.expr_values.pop_front().unwrap());
-                                    }
+                                    let heap_pos = transfer_expression_values_front_into_heap(
+                                        cur_frame, &mut self.store, lit_value.fields.len()
+                                    );
                                     Value::Struct(heap_pos)
                                 }
                                 Literal::Enum(lit_value) => {
                                     Value::Enum(lit_value.variant_idx as i64)
                                 }
                                 Literal::Union(lit_value) => {
-                                    let heap_pos = self.store.alloc_heap();
-                                    let num_values = lit_value.values.len();
-                                    let values = &mut self.store.heap_regions[heap_pos as usize].values;
-                                    debug_assert!(values.is_empty());
-                                    values.reserve(num_values);
-                                    for _ in 0..num_values {
-                                        values.push(cur_frame.expr_values.pop_front().unwrap());
-                                    }
+                                    let heap_pos = transfer_expression_values_front_into_heap(
+                                        cur_frame, &mut self.store, lit_value.values.len()
+                                    );
                                     Value::Union(lit_value.variant_idx as i64, heap_pos)
                                 }
                                 Literal::Array(lit_value) => {
-                                    let heap_pos = self.store.alloc_heap();
-                                    let num_values = lit_value.len();
-                                    let values = &mut self.store.heap_regions[heap_pos as usize].values;
-                                    debug_assert!(values.is_empty());
-                                    values.reserve(num_values);
-                                    for _ in 0..num_values {
-                                        values.push(cur_frame.expr_values.pop_front().unwrap())
-                                    }
+                                    let heap_pos = transfer_expression_values_front_into_heap(
+                                        cur_frame, &mut self.store, lit_value.len()
+                                    );
                                     Value::Array(heap_pos)
                                 }
                             };
@@ -346,16 +376,20 @@ impl Prompt {
                             // of the definition.
                             let num_args = expr.arguments.len();
 
-                            // Prepare stack for a new frame
+                            // Determine stack boundaries
                             let cur_stack_boundary = self.store.cur_stack_boundary;
-                            self.store.cur_stack_boundary = self.store.stack.len();
+                            let new_stack_boundary = self.store.stack.len();
+
+                            // Push new boundary and function arguments for new frame
                             self.store.stack.push(Value::PrevStackBoundary(cur_stack_boundary as isize));
                             for _ in 0..num_args {
-                                self.store.stack.push(cur_frame.expr_values.pop_front().unwrap());
+                                let argument = self.store.read_take_ownership(cur_frame.expr_values.pop_front().unwrap());
+                                self.store.stack.push(argument);
                             }
 
                             // Push the new frame
                             self.frames.push(Frame::new(heap, expr.definition));
+                            self.store.cur_stack_boundary = new_stack_boundary;
 
                             // To simplify the logic a little bit we will now
                             // return and ask our caller to call us again
@@ -370,6 +404,19 @@ impl Prompt {
             }
         }
 
+        debug_log!("Frame [{:?}] at {:?}, stack size = {}", cur_frame.definition, cur_frame.position, self.store.stack.len());
+        if debug_enabled!() {
+            debug_log!("Stack:");
+            for (stack_idx, stack_val) in self.store.stack.iter().enumerate() {
+                debug_log!("  [{:03}] {:?}", stack_idx, stack_val);
+            }
+
+            debug_log!("Heap:");
+            for (heap_idx, heap_region) in self.store.heap_regions.iter().enumerate() {
+                let is_free = self.store.free_regions.iter().any(|idx| *idx as usize == heap_idx);
+                debug_log!("  [{:03}] in_use: {}, len: {}, vals: {:?}", heap_idx, !is_free, heap_region.values.len(), &heap_region.values);
+            }
+        }
         // No (more) expressions to evaluate. So evaluate statement (that may
         // depend on the result on the last evaluated expression(s))
         let stmt = &heap[cur_frame.position];
@@ -472,29 +519,35 @@ impl Prompt {
                 debug_assert!(heap[cur_frame.definition].is_function());
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for return statement");
 
-
                 // The preceding frame has executed a call, so is expecting the
                 // return expression on its expression value stack. Note that
                 // we may be returning a reference to something on our stack,
                 // so we need to read that value and clone it.
                 let return_value = cur_frame.expr_values.pop_back().unwrap();
+                println!("DEBUG: Pre-ret val {:?}", &return_value);
                 let return_value = match return_value {
                     Value::Ref(value_id) => self.store.read_copy(value_id),
                     _ => return_value,
                 };
+                println!("DEBUG: Pos-ret val {:?}", &return_value);
 
-                let prev_stack_idx = self.store.stack[self.store.cur_stack_boundary].as_stack_boundary();
+                // Pre-emptively pop our stack frame
                 self.frames.pop();
+
+                // Clean up our section of the stack
                 self.store.clear_stack(0);
+                let prev_stack_idx = self.store.stack.pop().unwrap().as_stack_boundary();
 
                 // TODO: Temporary hack for testing, remove at some point
                 if self.frames.is_empty() {
                     debug_assert!(prev_stack_idx == -1);
-                    self.store.stack[0] = return_value;
+                    debug_assert!(self.store.stack.len() == 0);
+                    self.store.stack.push(return_value);
                     return Ok(EvalContinuation::Terminal);
                 }
 
                 debug_assert!(prev_stack_idx >= 0);
+                // Return to original state of stack frame
                 self.store.cur_stack_boundary = prev_stack_idx as usize;
                 let cur_frame = self.frames.last_mut().unwrap();
                 cur_frame.expr_values.push_back(return_value);

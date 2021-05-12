@@ -408,15 +408,8 @@ pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOp
 
     // If any of the values are references, retrieve the thing they're referring
     // to.
-    let lhs = match lhs {
-        Value::Ref(value_id) => store.read_ref(*value_id),
-        _ => lhs,
-    };
-
-    let rhs = match rhs {
-        Value::Ref(value_id) => store.read_ref(*value_id),
-        _ => rhs,
-    };
+    let lhs = store.maybe_read_ref(lhs);
+    let rhs = store.maybe_read_ref(rhs);
 
     match op {
         BO::Concatenate => unreachable!(),
@@ -429,8 +422,8 @@ pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOp
         BO::BitwiseOr        => { apply_int_op_and_return_self!(lhs, |,  op, rhs); },
         BO::BitwiseXor       => { apply_int_op_and_return_self!(lhs, ^,  op, rhs); },
         BO::BitwiseAnd       => { apply_int_op_and_return_self!(lhs, &,  op, rhs); },
-        BO::Equality => { todo!("implement") },
-        BO::Inequality =>  { todo!("implement") },
+        BO::Equality         => { Value::Bool(apply_equality_operator(store, lhs, rhs)) },
+        BO::Inequality       => { Value::Bool(apply_inequality_operator(store, lhs, rhs)) },
         BO::LessThan         => { apply_int_op_and_return_bool!(lhs, <,  op, rhs); },
         BO::GreaterThan      => { apply_int_op_and_return_bool!(lhs, >,  op, rhs); },
         BO::LessThanEqual    => { apply_int_op_and_return_bool!(lhs, <=, op, rhs); },
@@ -492,5 +485,105 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
 }
 
 pub(crate) fn apply_equality_operator(store: &Store, lhs: &Value, rhs: &Value) -> bool {
+    let lhs = store.maybe_read_ref(lhs);
+    let rhs = store.maybe_read_ref(rhs);
 
+    fn eval_equality_heap(store: &Store, lhs_pos: HeapPos, rhs_pos: HeapPos) -> bool {
+        let lhs_vals = &store.heap_regions[lhs_pos as usize].values;
+        let rhs_vals = &store.heap_regions[rhs_pos as usize].values;
+        let lhs_len = lhs_vals.len();
+        if lhs_len != rhs_vals.len() {
+            return false;
+        }
+
+        for idx in 0..lhs_len {
+            let lhs_val = &lhs_vals[idx];
+            let rhs_val = &rhs_vals[idx];
+            if !apply_equality_operator(store, lhs_val, rhs_val) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    match lhs {
+        Value::Input(v) => *v == rhs.as_input(),
+        Value::Output(v) => *v == rhs.as_output(),
+        Value::Message(lhs_pos) => eval_equality_heap(store, *lhs_pos, rhs.as_message()),
+        Value::Null => todo!("remove null"),
+        Value::Bool(v) => *v == rhs.as_bool(),
+        Value::Char(v) => *v == rhs.as_char(),
+        Value::String(lhs_pos) => eval_equality_heap(store, *lhs_pos, rhs.as_string()),
+        Value::UInt8(v) => *v == rhs.as_uint8(),
+        Value::UInt16(v) => *v == rhs.as_uint16(),
+        Value::UInt32(v) => *v == rhs.as_uint32(),
+        Value::UInt64(v) => *v == rhs.as_uint64(),
+        Value::SInt8(v) => *v == rhs.as_sint8(),
+        Value::SInt16(v) => *v == rhs.as_sint16(),
+        Value::SInt32(v) => *v == rhs.as_sint32(),
+        Value::SInt64(v) => *v == rhs.as_sint64(),
+        Value::Enum(v) => *v == rhs.as_enum(),
+        Value::Union(lhs_tag, lhs_pos) => {
+            let (rhs_tag, rhs_pos) = rhs.as_union();
+            if *lhs_tag != rhs_tag {
+                return false;
+            }
+            eval_equality_heap(store, *lhs_pos, rhs_pos)
+        },
+        Value::Struct(lhs_pos) => eval_equality_heap(store, *lhs_pos, rhs.as_struct()),
+        _ => unreachable!("apply_equality_operator to lhs {:?}", lhs),
+    }
+}
+
+pub(crate) fn apply_inequality_operator(store: &Store, lhs: &Value, rhs: &Value) -> bool {
+    let lhs = store.maybe_read_ref(lhs);
+    let rhs = store.maybe_read_ref(rhs);
+
+    fn eval_inequality_heap(store: &Store, lhs_pos: HeapPos, rhs_pos: HeapPos) -> bool {
+        let lhs_vals = &store.heap_regions[lhs_pos as usize].values;
+        let rhs_vals = &store.heap_regions[rhs_pos as usize].values;
+        let lhs_len = lhs_vals.len();
+        if lhs_len != rhs_vals.len() {
+            return true;
+        }
+
+        for idx in 0..lhs_len {
+            let lhs_val = &lhs_vals[idx];
+            let rhs_val = &rhs_vals[idx];
+            if apply_inequality_operator(store, lhs_val, rhs_val) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    match lhs {
+        Value::Input(v) => *v != rhs.as_input(),
+        Value::Output(v) => *v != rhs.as_output(),
+        Value::Message(lhs_pos) => eval_inequality_heap(store, *lhs_pos, rhs.as_message()),
+        Value::Null => todo!("remove null"),
+        Value::Bool(v) => *v != rhs.as_bool(),
+        Value::Char(v) => *v != rhs.as_char(),
+        Value::String(lhs_pos) => eval_inequality_heap(store, *lhs_pos, rhs.as_string()),
+        Value::UInt8(v) => *v != rhs.as_uint8(),
+        Value::UInt16(v) => *v != rhs.as_uint16(),
+        Value::UInt32(v) => *v != rhs.as_uint32(),
+        Value::UInt64(v) => *v != rhs.as_uint64(),
+        Value::SInt8(v) => *v != rhs.as_sint8(),
+        Value::SInt16(v) => *v != rhs.as_sint16(),
+        Value::SInt32(v) => *v != rhs.as_sint32(),
+        Value::SInt64(v) => *v != rhs.as_sint64(),
+        Value::Enum(v) => *v != rhs.as_enum(),
+        Value::Union(lhs_tag, lhs_pos) => {
+            let (rhs_tag, rhs_pos) = rhs.as_union();
+            if *lhs_tag != rhs_tag {
+                return true;
+            }
+            eval_inequality_heap(store, *lhs_pos, rhs_pos)
+        },
+        Value::String(lhs_pos) => eval_inequality_heap(store, *lhs_pos, rhs.as_struct()),
+        _ => unreachable!("apply_inequality_operator to lhs {:?}", lhs)
+    }
 }

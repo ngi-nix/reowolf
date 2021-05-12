@@ -209,7 +209,7 @@ impl AstOkTester {
         self
     }
 
-    pub(crate) fn for_function<F: Fn(FunctionTester)>(self, name: &str, f: F) -> Self {
+    pub(crate) fn for_function<F: FnOnce(FunctionTester)>(self, name: &str, f: F) -> Self {
         let mut found = false;
         for definition in self.heap.definitions.iter() {
             if let Definition::Function(definition) = definition {
@@ -587,6 +587,20 @@ impl<'a> FunctionTester<'a> {
             }
         }
 
+        assert!(
+            prompt.store.stack.len() > 0, // note: stack never shrinks
+            "[{}] No value on stack after calling function for {}",
+            self.ctx.test_name, self.assert_postfix()
+        );
+
+        if let Some(expected_result) = expected_result {
+            debug_assert!(expected_result.get_heap_pos().is_none(), "comparing against heap thingamajigs is not yet implemented");
+            assert!(
+                value::apply_equality_operator(&prompt.store, &prompt.store.stack[0], &expected_result),
+                "[{}] Result from call was {:?}, but expected {:?} for {}",
+                self.ctx.test_name, &prompt.store.stack[0], &expected_result, self.assert_postfix()
+            )
+        }
 
         self
     }

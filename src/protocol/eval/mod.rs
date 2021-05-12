@@ -20,9 +20,9 @@
 /// implementation would fully fill out the type table with alignment/size/
 /// offset information and lay out bytecode.
 
-mod value;
-mod store;
-mod executor;
+pub(crate) mod value;
+pub(crate) mod store;
+pub(crate) mod executor;
 
 pub use value::{Value, ValueGroup};
 pub(crate) use store::{Store};

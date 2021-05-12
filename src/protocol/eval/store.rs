@@ -53,7 +53,25 @@ impl Store {
         let new_size = self.cur_stack_boundary + unique_stack_idx + 1;
         for idx in new_size..self.stack.len() {
             self.drop_value(self.stack[idx].get_heap_pos());
-            self.stack[idx] = Value::Unassigned;
+        }
+        self.stack.truncate(new_size);
+    }
+
+    /// Reads a value and takes ownership. This is different from a move because
+    /// the value might indirectly reference stack/heap values. For these kinds
+    /// values we will actually return a cloned value.
+    pub(crate) fn read_take_ownership(&mut self, value: Value) -> Value {
+        match value {
+            Value::Ref(ValueId::Stack(pos)) => {
+                let abs_pos = self.cur_stack_boundary + 1 + pos as usize;
+                return self.clone_value(self.stack[abs_pos].clone());
+            },
+            Value::Ref(ValueId::Heap(heap_pos, value_idx)) => {
+                let heap_pos = heap_pos as usize;
+                let value_idx = value_idx as usize;
+                return self.clone_value(self.heap_regions[heap_pos].values[value_idx].clone());
+            },
+            _ => value
         }
     }
 
@@ -133,9 +151,20 @@ impl Store {
     fn clone_value(&mut self, value: Value) -> Value {
         // Quickly check if the value is not on the heap
         let source_heap_pos = value.get_heap_pos();
+        println!("DEBUG: Cloning {:?}", value);
         if source_heap_pos.is_none() {
-            // We can do a trivial copy
-            return value;
+            // We can do a trivial copy, unless we're dealing with a value
+            // reference
+            return match value {
+                Value::Ref(ValueId::Stack(stack_pos)) => {
+                    let abs_stack_pos = self.cur_stack_boundary + stack_pos as usize + 1;
+                    self.clone_value(self.stack[abs_stack_pos].clone())
+                },
+                Value::Ref(ValueId::Heap(heap_pos, val_idx)) => {
+                    self.clone_value(self.heap_regions[heap_pos as usize].values[val_idx as usize].clone())
+                },
+                _ => value,
+            };
         }
 
         // Value does live on heap, copy it
