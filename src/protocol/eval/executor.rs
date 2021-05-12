@@ -229,15 +229,14 @@ impl Prompt {
                     let expr = &heap[expr_id];
                     match expr {
                         Expression::Assignment(expr) => {
-                            // TODO: Stuff goes wrong here, either make these
-                            //  utilities do the alloc/dealloc, or let it all be
-                            //  done here.
                             let to = cur_frame.expr_values.pop_back().unwrap().as_ref();
                             let rhs = cur_frame.expr_values.pop_back().unwrap();
-                            // let rhs_heap_pos = rhs.get_heap_pos();
+
+                            // Note: although not pretty, the assignment operator takes ownership
+                            // of the right-hand side value when possible. So we do not drop the
+                            // rhs's optionally owned heap data.
+                            let rhs = self.store.read_take_ownership(rhs);
                             apply_assignment_operator(&mut self.store, to, expr.operation, rhs);
-                            cur_frame.expr_values.push_back(self.store.read_copy(to));
-                            // self.store.drop_value(rhs_heap_pos);
                         },
                         Expression::Binding(_expr) => {
                             todo!("Binding expression");
@@ -280,23 +279,29 @@ impl Prompt {
                                 index.as_unsigned_integer() as u32
                             };
 
-                            // TODO: This is probably wrong, we're dropping the
-                            //  heap while refering to an element...
                             let subject = cur_frame.expr_values.pop_back().unwrap();
-                            let subject_heap_pos = subject.get_heap_pos();
 
-                            let heap_pos = match subject {
+                            let (deallocate_heap_pos, value_to_push) = match subject {
                                 Value::Ref(value_ref) => {
-                                    println!("DEBUG: Called with {:?}", subject);
-                                    let result = self.store.read_ref(value_ref);
-                                    println!("DEBUG: And got {:?}", result);
-                                    result.as_array()
+                                    // Our expression stack value is a reference to something that
+                                    // exists in the normal stack/heap. We don't want to deallocate
+                                    // this thing. Rather we want to return a reference to it.
+                                    let subject = self.store.read_ref(value_ref);
+                                    let subject_heap_pos = subject.as_array();
+
+                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, index)))
                                 },
-                                val => val.as_array(),
+                                _ => {
+                                    // Our value lives on the expression stack, hence we need to
+                                    // clone whatever we're referring to. Then drop the subject.
+                                    let subject_heap_pos = subject.as_array();
+                                    let subject_indexed = Value::Ref(ValueId::Heap(subject_heap_pos, index));
+                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed))
+                                },
                             };
 
-                            cur_frame.expr_values.push_back(Value::Ref(ValueId::Heap(heap_pos, index)));
-                            self.store.drop_value(subject_heap_pos);
+                            cur_frame.expr_values.push_back(value_to_push);
+                            self.store.drop_value(deallocate_heap_pos);
                         },
                         Expression::Slicing(expr) => {
                             // TODO: Out of bounds checking
@@ -304,13 +309,25 @@ impl Prompt {
                         },
                         Expression::Select(expr) => {
                             let subject= cur_frame.expr_values.pop_back().unwrap();
-                            let heap_pos = match &subject {
-                                Value::Ref(value_ref) => self.store.read_ref(*value_ref).as_struct(),
-                                subject => subject.as_struct(),
+                            let field_idx = expr.field.as_symbolic().field_idx as u32;
+                            // Note: same as above: clone if value lives on expr stack, simply
+                            // refer to it if it already lives on the stack/heap.
+                            let (deallocate_heap_pos, value_to_push) = match subject {
+                                Value::Ref(value_ref) => {
+                                    let subject = self.store.read_ref(value_ref);
+                                    let subject_heap_pos = subject.as_struct();
+
+                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, field_idx)))
+                                },
+                                _ => {
+                                    let subject_heap_pos = subject.as_struct();
+                                    let subject_indexed = Value::Ref(ValueId::Heap(subject_heap_pos, field_idx));
+                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed))
+                                },
                             };
 
-                            cur_frame.expr_values.push_back(Value::Ref(ValueId::Heap(heap_pos, expr.field.as_symbolic().field_idx as u32)));
-                            self.store.drop_value(subject.get_heap_pos());
+                            cur_frame.expr_values.push_back(value_to_push);
+                            self.store.drop_value(deallocate_heap_pos);
                         },
                         Expression::Literal(expr) => {
                             let value = match &expr.value {
@@ -524,12 +541,10 @@ impl Prompt {
                 // we may be returning a reference to something on our stack,
                 // so we need to read that value and clone it.
                 let return_value = cur_frame.expr_values.pop_back().unwrap();
-                println!("DEBUG: Pre-ret val {:?}", &return_value);
                 let return_value = match return_value {
                     Value::Ref(value_id) => self.store.read_copy(value_id),
                     _ => return_value,
                 };
-                println!("DEBUG: Pos-ret val {:?}", &return_value);
 
                 // Pre-emptively pop our stack frame
                 self.frames.pop();
@@ -552,8 +567,9 @@ impl Prompt {
                 let cur_frame = self.frames.last_mut().unwrap();
                 cur_frame.expr_values.push_back(return_value);
 
-                // Immediately return, we don't care about the current frame
-                // anymore and there is nothing left to evaluate
+                // We just returned to the previous frame, which might be in
+                // the middle of evaluating expressions for a particular
+                // statement. So we don't want to enter the code below.
                 return Ok(EvalContinuation::Stepping);
             },
             Statement::Goto(stmt) => {
@@ -599,6 +615,14 @@ impl Prompt {
                 Ok(EvalContinuation::Stepping)
             },
         };
+
+        assert!(
+            cur_frame.expr_values.is_empty(),
+            "This is a debugging assertion that will fail if you perform expressions without \
+            assigning to anything. This should be completely valid, and this assertions should be \
+            replaced by something that clears the expression values if needed, but I'll keep this \
+            in for now for debugging purposes."
+        );
 
         // If the next statement requires evaluating expressions then we push
         // these onto the expression stack. This way we will evaluate this

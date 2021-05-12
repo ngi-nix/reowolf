@@ -638,9 +638,10 @@ impl<'a> VariableTester<'a> {
 
     pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
         let mut serialized = String::new();
+        let lhs = self.ctx.heap[self.assignment.left].as_variable();
         serialize_concrete_type(
             &mut serialized, self.ctx.heap, self.definition_id, 
-            &self.assignment.concrete_type
+            &lhs.concrete_type
         );
 
         assert_eq!(

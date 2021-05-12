@@ -275,6 +275,7 @@ pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: Ass
         }
     }
 
+    // let rhs = store.maybe_read_ref(&rhs).clone(); // we don't own this thing, so don't drop it
     let lhs = store.read_mut_ref(lhs);
 
     let mut to_dealloc = None;
@@ -392,10 +393,20 @@ pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOp
             _ => unreachable!("apply_binary_operator {:?} on lhs {:?} and rhs {:?}", op, lhs, rhs)
         }
 
+        let lhs_heap_pos = lhs_heap_pos as usize;
+        let rhs_heap_pos = rhs_heap_pos as usize;
+
         // TODO: I hate this, but fine...
         let mut concatenated = Vec::new();
-        concatenated.extend_from_slice(&store.heap_regions[lhs_heap_pos as usize].values);
-        concatenated.extend_from_slice(&store.heap_regions[rhs_heap_pos as usize].values);
+        let lhs_len = store.heap_regions[lhs_heap_pos].values.len();
+        let rhs_len = store.heap_regions[rhs_heap_pos].values.len();
+        concatenated.reserve(lhs_len + rhs_len);
+        for idx in 0..lhs_len {
+            concatenated.push(store.clone_value(store.heap_regions[lhs_heap_pos].values[idx].clone()));
+        }
+        for idx in 0..rhs_len {
+            concatenated.push(store.clone_value(store.heap_regions[rhs_heap_pos].values[idx].clone()));
+        }
 
         store.heap_regions[target_heap_pos as usize].values = concatenated;
 

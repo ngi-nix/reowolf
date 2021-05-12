@@ -1,5 +1,4 @@
 use super::*;
-use crate::protocol::eval::*;
 
 #[test]
 fn test_function_call() {

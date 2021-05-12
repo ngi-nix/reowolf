@@ -637,6 +637,8 @@ pub struct FieldSymbolic {
     // Phase 1: Parser
     pub(crate) identifier: Identifier,
     // Phase 3: Typing
+    // TODO: @Monomorph These fields cannot be trusted because the last time it
+    //  was typed it may refer to a different monomorph.
     pub(crate) definition: Option<DefinitionId>,
     pub(crate) field_idx: usize,
 }

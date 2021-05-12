@@ -148,10 +148,9 @@ impl Store {
     /// either a direct value, or might contain an index to a heap value), but
     /// should be treated by the programmer as a reference (i.e. don't call
     /// `drop_value(thing)` after calling `clone_value(thing.clone())`.
-    fn clone_value(&mut self, value: Value) -> Value {
+    pub(crate) fn clone_value(&mut self, value: Value) -> Value {
         // Quickly check if the value is not on the heap
         let source_heap_pos = value.get_heap_pos();
-        println!("DEBUG: Cloning {:?}", value);
         if source_heap_pos.is_none() {
             // We can do a trivial copy, unless we're dealing with a value
             // reference

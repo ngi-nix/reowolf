@@ -70,6 +70,7 @@ use super::visitor::{
 };
 use std::collections::hash_map::Entry;
 
+const VOID_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Void ];
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
 const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
@@ -1210,6 +1211,13 @@ impl Visitor2 for PassTyping {
     }
 
     fn visit_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> VisitorResult {
+        // TODO: @Monomorph, this is a temporary hack, see other comments
+        let expr = &mut ctx.heap[id];
+        if let Field::Symbolic(field) = &mut expr.field {
+            field.definition = None;
+            field.field_idx = 0;
+        }
+
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
@@ -1347,6 +1355,9 @@ impl PassTyping {
         // the AST and have now performed typechecking for a different 
         // monomorph. In that case we just need to perform typechecking, no need
         // to annotate the AST again.
+        // TODO: @Monomorph, this is completely wrong. It seemed okay, but it
+        //  isn't. Each monomorph might result in completely different internal
+        //  types.
         let definition_id = match &self.definition_type {
             DefinitionType::Component(id) => id.upcast(),
             DefinitionType::Function(id) => id.upcast(),
@@ -1517,8 +1528,11 @@ impl PassTyping {
     fn progress_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> Result<(), ParseError> {
         use AssignmentOperator as AO;
 
-        // TODO: Assignable check
         let upcast_id = id.upcast();
+
+        // Assignment does not return anything (it operates like a statement)
+        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &VOID_TEMPLATE)?;
+
         let expr = &ctx.heap[id];
         let arg1_expr_id = expr.left;
         let arg2_expr_id = expr.right;
@@ -1529,28 +1543,30 @@ impl PassTyping {
         debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
         debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
-        let progress_base = match expr.operation {
+        // Apply forced constraint to LHS value
+        let progress_forced = match expr.operation {
             AO::Set =>
                 false,
             AO::Multiplied | AO::Divided | AO::Added | AO::Subtracted =>
-                self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?,
+                self.apply_forced_constraint(ctx, arg1_expr_id, &NUMBERLIKE_TEMPLATE)?,
             AO::Remained | AO::ShiftedLeft | AO::ShiftedRight |
             AO::BitwiseAnded | AO::BitwiseXored | AO::BitwiseOred =>
-                self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?,
+                self.apply_forced_constraint(ctx, arg1_expr_id, &INTEGERLIKE_TEMPLATE)?,
         };
 
-        let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
-            ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
+        let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(
+            ctx, upcast_id, arg1_expr_id, 0, arg2_expr_id, 0
         )?;
+        debug_assert!(if progress_forced { progress_arg2 } else { true });
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
         debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_base || progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
 
-        if progress_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_arg1 { self.queue_expr(arg1_expr_id); }
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_forced || progress_arg1 { self.queue_expr(arg1_expr_id); }
         if progress_arg2 { self.queue_expr(arg2_expr_id); }
 
         Ok(())
@@ -2358,7 +2374,7 @@ impl PassTyping {
         let var_expr = &ctx.heap[id];
         let var_id = var_expr.declaration.unwrap();
 
-        debug_log!("Variable expr '{}': {}", ctx.heap[var_id].identifier().value.as_str(), upcast_id.index);
+        debug_log!("Variable expr '{}': {}", ctx.heap[var_id].identifier.value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
         debug_log!("   - Var  type: {}", self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
         debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
@@ -2619,7 +2635,6 @@ impl PassTyping {
             // if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
                 let polymorph_type = &polymorph_data.poly_vars[poly_idx];
-                debug_log!("   - DEBUG: Applying {} to '{}' from '{}'", polymorph_type.display_name(heap), InferenceType::partial_display_name(heap, &signature_type.parts[start_idx..]), signature_type.display_name(heap));
                 let modified_at_marker = Self::apply_forced_constraint_types(
                     signature_type, start_idx, 
                     &polymorph_type.parts, 0

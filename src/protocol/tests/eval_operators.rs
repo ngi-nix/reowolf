@@ -1,5 +1,4 @@
 use super::*;
-use crate::protocol::eval::*;
 
 #[test]
 fn test_assignment_operators() {
@@ -88,54 +87,6 @@ fn test_assignment_operators() {
     );
 }
 
-#[test]
-fn test_concatenate_operator() {
-    Tester::new_single_source_expect_ok(
-        "concatenate and check pairs",
-        "
-        func check_pair<T>(T[] arr, u32 idx) -> bool {
-            return arr[idx] == arr[idx + 1];
-        }
-
-        struct Point2D {
-            u32 x,
-            u32 y,
-        }
-
-        func create_point(u32 x, u32 y) -> Point2D {
-            return Point2D{ x: x, y: y };
-        }
-
-        func create_array() -> Point2D[] {
-            return {
-                create_point(1, 2),
-                create_point(1, 2),
-                create_point(3, 4),
-                create_point(3, 4)
-            };
-        }
-
-        func foo() -> bool {
-            auto lhs = create_array();
-            auto rhs = create_array();
-            auto total = lhs @ rhs;
-            auto is_equal =
-                check_pair(total, 0) &&
-                check_pair(total, 2) &&
-                check_pair(total, 4) &&
-                check_pair(total, 6);
-            auto is_not_equal =
-                !check_pair(total, 0) ||
-                !check_pair(total, 2) ||
-                !check_pair(total, 4) ||
-                !check_pair(total, 6);
-            return is_equal && !is_not_equal;
-        }
-        "
-    ).for_function("foo", |f| {
-        f.call(Some(Value::Bool(true)));
-    });
-}
 #[test]
 fn test_binary_integer_operators() {
     fn construct_source(value_type: &str, code: &str) -> String {
