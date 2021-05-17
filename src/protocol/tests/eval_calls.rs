@@ -10,7 +10,7 @@ fn test_function_call() {
         return add_two(5);
     }
     ").for_function("foo", |f| {
-        f.call(Some(Value::UInt32(7)));
+        f.call_ok(Some(Value::UInt32(7)));
     });
 
     println!("\n\n\n\n\n\n\n");
@@ -25,6 +25,6 @@ fn test_function_call() {
         auto result = add_two(initial);
         return initial == 5 && result == 7;
     }").for_function("foo", |f| {
-        f.call(Some(Value::Bool(true)));
+        f.call_ok(Some(Value::Bool(true)));
     });
 }

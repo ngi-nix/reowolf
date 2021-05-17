@@ -654,6 +654,7 @@ impl Connector {
     /// This function panics if the connector's (large) component id space is exhausted.
     pub fn add_component(
         &mut self,
+        module_name: &[u8],
         identifier: &[u8],
         ports: &[PortId],
     ) -> Result<(), AddComponentError> {
@@ -663,7 +664,7 @@ impl Connector {
         if let Some(port) = duplicate_port(ports) {
             return Err(Ace::DuplicatePort(port));
         }
-        let expected_polarities = cu.proto_description.component_polarities(identifier)?;
+        let expected_polarities = cu.proto_description.component_polarities(module_name, identifier)?;
         if expected_polarities.len() != ports.len() {
             return Err(Ace::WrongNumberOfParamaters { expected: expected_polarities.len() });
         }
@@ -680,7 +681,7 @@ impl Connector {
         // create a new component and identifier
         let Connector { phased, unphased: cu } = self;
         let new_cid = cu.ips.id_manager.new_component_id();
-        cu.proto_components.insert(new_cid, cu.proto_description.new_component(identifier, ports));
+        cu.proto_components.insert(new_cid, cu.proto_description.new_component(module_name, identifier, ports));
         // update the ownership of moved ports
         for port in ports.iter() {
             match cu.ips.port_info.map.get_mut(port) {

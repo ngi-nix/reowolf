@@ -213,7 +213,7 @@ pub enum ContextKind {
 }
 
 #[derive(Debug)]
-pub struct ParseErrorStatement {
+pub struct ErrorStatement {
     pub(crate) statement_kind: StatementKind,
     pub(crate) context_kind: ContextKind,
     pub(crate) start_line: u32,
@@ -225,7 +225,7 @@ pub struct ParseErrorStatement {
     pub(crate) message: String,
 }
 
-impl ParseErrorStatement {
+impl ErrorStatement {
     fn from_source_at_pos(statement_kind: StatementKind, source: &InputSource, position: InputPosition, message: String) -> Self {
         // Seek line start and end
         let line_start = source.lookup_line_start_offset(position.line);
@@ -247,7 +247,7 @@ impl ParseErrorStatement {
         }
     }
 
-    fn from_source_at_span(statement_kind: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
+    pub(crate) fn from_source_at_span(statement_kind: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
         debug_assert!(span.end.line >= span.begin.line);
         debug_assert!(span.end.offset >= span.begin.offset);
 
@@ -285,7 +285,7 @@ impl ParseErrorStatement {
     }
 }
 
-impl fmt::Display for ParseErrorStatement {
+impl fmt::Display for ErrorStatement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Write kind of statement and message
         match self.statement_kind {
@@ -402,7 +402,7 @@ impl fmt::Display for ParseErrorStatement {
 
 #[derive(Debug)]
 pub struct ParseError {
-    pub(crate) statements: Vec<ParseErrorStatement>
+    pub(crate) statements: Vec<ErrorStatement>
 }
 
 impl fmt::Display for ParseError {
@@ -423,36 +423,36 @@ impl fmt::Display for ParseError {
 
 impl ParseError {
     pub fn new_error_at_pos(source: &InputSource, position: InputPosition, message: String) -> Self {
-        Self{ statements: vec!(ParseErrorStatement::from_source_at_pos(
+        Self{ statements: vec!(ErrorStatement::from_source_at_pos(
             StatementKind::Error, source, position, message
         )) }
     }
 
     pub fn new_error_str_at_pos(source: &InputSource, position: InputPosition, message: &str) -> Self {
-        Self{ statements: vec!(ParseErrorStatement::from_source_at_pos(
+        Self{ statements: vec!(ErrorStatement::from_source_at_pos(
             StatementKind::Error, source, position, message.to_string()
         )) }
     }
 
     pub fn new_error_at_span(source: &InputSource, span: InputSpan, message: String) -> Self {
-        Self{ statements: vec!(ParseErrorStatement::from_source_at_span(
+        Self{ statements: vec!(ErrorStatement::from_source_at_span(
             StatementKind::Error, source, span, message
         )) }
     }
 
     pub fn new_error_str_at_span(source: &InputSource, span: InputSpan, message: &str) -> Self {
-        Self{ statements: vec!(ParseErrorStatement::from_source_at_span(
+        Self{ statements: vec!(ErrorStatement::from_source_at_span(
             StatementKind::Error, source, span, message.to_string()
         )) }
     }
 
     pub fn with_at_pos(mut self, error_type: StatementKind, source: &InputSource, position: InputPosition, message: String) -> Self {
-        self.statements.push(ParseErrorStatement::from_source_at_pos(error_type, source, position, message));
+        self.statements.push(ErrorStatement::from_source_at_pos(error_type, source, position, message));
         self
     }
 
     pub fn with_at_span(mut self, error_type: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
-        self.statements.push(ParseErrorStatement::from_source_at_span(error_type, source, span, message.to_string()));
+        self.statements.push(ErrorStatement::from_source_at_span(error_type, source, span, message.to_string()));
         self
     }
 

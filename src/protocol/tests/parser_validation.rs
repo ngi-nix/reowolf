@@ -1,7 +1,6 @@
 /// parser_validation.rs
 ///
 /// Simple tests for the validation phase
-/// TODO: If semicolon behind struct definition: should be fine...
 
 use super::*;
 

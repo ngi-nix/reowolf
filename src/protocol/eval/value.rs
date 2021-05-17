@@ -534,6 +534,7 @@ pub(crate) fn apply_equality_operator(store: &Store, lhs: &Value, rhs: &Value) -
         Value::SInt16(v) => *v == rhs.as_sint16(),
         Value::SInt32(v) => *v == rhs.as_sint32(),
         Value::SInt64(v) => *v == rhs.as_sint64(),
+        Value::Array(lhs_pos) => eval_equality_heap(store, *lhs_pos, rhs.as_array()),
         Value::Enum(v) => *v == rhs.as_enum(),
         Value::Union(lhs_tag, lhs_pos) => {
             let (rhs_tag, rhs_pos) = rhs.as_union();

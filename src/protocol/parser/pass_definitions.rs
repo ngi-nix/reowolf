@@ -396,7 +396,7 @@ impl PassDefinitions {
                 let end_if = ctx.heap.alloc_end_if_statement(|this| EndIfStatement{
                     this, start_if: id, next: StatementId::new_invalid()
                 });
-                section.push(id.upcast());
+                section.push(end_if.upcast());
 
                 let if_stmt = &mut ctx.heap[id];
                 if_stmt.end_if = end_if;
@@ -407,7 +407,7 @@ impl PassDefinitions {
                 let end_while = ctx.heap.alloc_end_while_statement(|this| EndWhileStatement{
                     this, start_while: id, next: StatementId::new_invalid()
                 });
-                section.push(id.upcast());
+                section.push(end_while.upcast());
 
                 let while_stmt = &mut ctx.heap[id];
                 while_stmt.end_while = end_while;
@@ -424,6 +424,7 @@ impl PassDefinitions {
                 let end_sync = ctx.heap.alloc_end_synchronous_statement(|this| EndSynchronousStatement{
                     this, start_sync: id, next: StatementId::new_invalid()
                 });
+                section.push(end_sync.upcast());
 
                 let sync_stmt = &mut ctx.heap[id];
                 sync_stmt.end_sync = end_sync;

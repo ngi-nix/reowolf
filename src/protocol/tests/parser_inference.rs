@@ -391,7 +391,7 @@ fn test_failed_polymorph_inference() {
         .assert_msg_has(2, "inferred it to 's32'");
     });
 
-    // TODO: Needs better error messages anyway, but this failed before
+    // Silly regression test
     Tester::new_single_source_expect_err(
         "nested field access inference mismatch",
         "

@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 
 use super::value::*;
 use super::store::*;
+use super::error::*;
 use crate::protocol::*;
 use crate::protocol::ast::*;
 
@@ -24,10 +25,10 @@ pub(crate) enum ExprInstruction {
 
 #[derive(Debug, Clone)]
 pub(crate) struct Frame {
-    definition: DefinitionId,
-    position: StatementId,
-    expr_stack: VecDeque<ExprInstruction>, // hack for expression evaluation, evaluated by popping from back
-    expr_values: VecDeque<Value>, // hack for expression results, evaluated by popping from front/back
+    pub(crate) definition: DefinitionId,
+    pub(crate) position: StatementId,
+    pub(crate) expr_stack: VecDeque<ExprInstruction>, // hack for expression evaluation, evaluated by popping from back
+    pub(crate) expr_values: VecDeque<Value>, // hack for expression results, evaluated by popping from front/back
 }
 
 impl Frame {
@@ -150,7 +151,8 @@ impl Frame {
     }
 }
 
-type EvalResult = Result<EvalContinuation, ()>;
+type EvalResult = Result<EvalContinuation, EvalError>;
+
 pub enum EvalContinuation {
     Stepping,
     Inconsistent,
@@ -184,7 +186,7 @@ impl Prompt {
         prompt
     }
 
-    pub(crate) fn step(&mut self, heap: &Heap, ctx: &mut EvalContext) -> EvalResult {
+    pub(crate) fn step(&mut self, heap: &Heap, modules: &[Module], ctx: &mut EvalContext) -> EvalResult {
         // Helper function to transfer multiple values from the expression value
         // array into a heap region (e.g. constructing arrays or structs).
         fn transfer_expression_values_front_into_heap(cur_frame: &mut Frame, store: &mut Store, num_values: usize) -> HeapPos {
@@ -204,6 +206,25 @@ impl Prompt {
             }
 
             heap_pos
+        }
+
+        // Helper function to make sure that an index into an aray is valid.
+        fn array_inclusive_index_is_invalid(store: &Store, array_heap_pos: u32, idx: i64) -> bool {
+            let array_len = store.heap_regions[array_heap_pos as usize].values.len();
+            return idx < 0 || idx >= array_len as i64;
+        }
+
+        fn array_exclusive_index_is_invalid(store: &Store, array_heap_pos: u32, idx: i64) -> bool {
+            let array_len = store.heap_regions[array_heap_pos as usize].values.len();
+            return idx < 0 || idx > array_len as i64;
+        }
+
+        fn construct_array_error(prompt: &Prompt, modules: &[Module], heap: &Heap, expr_id: ExpressionId, heap_pos: u32, idx: i64) -> EvalError {
+            let array_len = prompt.store.heap_regions[heap_pos as usize].values.len();
+            return EvalError::new_error_at_expr(
+                prompt, modules, heap, expr_id,
+                format!("index {} is out of bounds: array length is {}", idx, array_len)
+            )
         }
 
         // Checking if we're at the end of execution
@@ -266,7 +287,6 @@ impl Prompt {
                             self.store.drop_value(val.get_heap_pos());
                         },
                         Expression::Indexing(expr) => {
-                            // TODO: Out of bounds checking
                             // Evaluate index. Never heap allocated so we do
                             // not have to drop it.
                             let index = cur_frame.expr_values.pop_back().unwrap();
@@ -274,14 +294,14 @@ impl Prompt {
 
                             debug_assert!(index.is_integer());
                             let index = if index.is_signed_integer() {
-                                index.as_signed_integer() as u32
+                                index.as_signed_integer() as i64
                             } else {
-                                index.as_unsigned_integer() as u32
+                                index.as_unsigned_integer() as i64
                             };
 
                             let subject = cur_frame.expr_values.pop_back().unwrap();
 
-                            let (deallocate_heap_pos, value_to_push) = match subject {
+                            let (deallocate_heap_pos, value_to_push, subject_heap_pos) = match subject {
                                 Value::Ref(value_ref) => {
                                     // Our expression stack value is a reference to something that
                                     // exists in the normal stack/heap. We don't want to deallocate
@@ -289,14 +309,23 @@ impl Prompt {
                                     let subject = self.store.read_ref(value_ref);
                                     let subject_heap_pos = subject.as_array();
 
-                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, index)))
+                                    if array_inclusive_index_is_invalid(&self.store, subject_heap_pos, index) {
+                                        return Err(construct_array_error(self, modules, heap, expr_id, subject_heap_pos, index));
+                                    }
+
+                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, index as u32)), subject_heap_pos)
                                 },
                                 _ => {
                                     // Our value lives on the expression stack, hence we need to
                                     // clone whatever we're referring to. Then drop the subject.
                                     let subject_heap_pos = subject.as_array();
-                                    let subject_indexed = Value::Ref(ValueId::Heap(subject_heap_pos, index));
-                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed))
+
+                                    if array_inclusive_index_is_invalid(&self.store, subject_heap_pos, index) {
+                                        return Err(construct_array_error(self, modules, heap, expr_id, subject_heap_pos, index));
+                                    }
+
+                                    let subject_indexed = Value::Ref(ValueId::Heap(subject_heap_pos, index as u32));
+                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed), subject_heap_pos)
                                 },
                             };
 
@@ -304,8 +333,59 @@ impl Prompt {
                             self.store.drop_value(deallocate_heap_pos);
                         },
                         Expression::Slicing(expr) => {
-                            // TODO: Out of bounds checking
-                            todo!("implement slicing")
+                            // Evaluate indices
+                            let from_index = cur_frame.expr_values.pop_back().unwrap();
+                            let from_index = self.store.maybe_read_ref(&from_index);
+                            let to_index = cur_frame.expr_values.pop_back().unwrap();
+                            let to_index = self.store.maybe_read_ref(&to_index);
+
+                            debug_assert!(from_index.is_integer() && to_index.is_integer());
+                            let from_index = if from_index.is_signed_integer() {
+                                from_index.as_signed_integer()
+                            } else {
+                                from_index.as_unsigned_integer() as i64
+                            };
+                            let to_index = if to_index.is_signed_integer() {
+                                to_index.as_signed_integer()
+                            } else {
+                                to_index.as_unsigned_integer() as i64
+                            };
+
+                            // Dereference subject if needed
+                            let subject = cur_frame.expr_values.pop_back().unwrap();
+                            let deref_subject = self.store.maybe_read_ref(&subject);
+
+                            // Slicing needs to produce a copy anyway (with the
+                            // current evaluator implementation)
+                            let array_heap_pos = deref_subject.as_array();
+                            if array_inclusive_index_is_invalid(&self.store, array_heap_pos, from_index) {
+                                return Err(construct_array_error(self, modules, heap, expr.from_index, array_heap_pos, from_index));
+                            }
+                            if array_exclusive_index_is_invalid(&self.store, array_heap_pos, to_index) {
+                                return Err(construct_array_error(self, modules, heap, expr.to_index, array_heap_pos, to_index));
+                            }
+
+                            // Again: would love to push directly, but rust...
+                            let new_heap_pos = self.store.alloc_heap();
+                            debug_assert!(self.store.heap_regions[new_heap_pos as usize].values.is_empty());
+                            if to_index > from_index {
+                                let from_index = from_index as usize;
+                                let to_index = to_index as usize;
+                                let mut values = Vec::with_capacity(to_index - from_index);
+                                for idx in from_index..to_index {
+                                    let value = self.store.heap_regions[array_heap_pos as usize].values[idx].clone();
+                                    values.push(self.store.clone_value(value));
+                                }
+
+                                self.store.heap_regions[new_heap_pos as usize].values = values;
+
+                            } // else: empty range
+
+                            cur_frame.expr_values.push_back(Value::Array(new_heap_pos));
+
+                            // Dropping the original subject, because we don't
+                            // want to drop something on the stack
+                            self.store.drop_value(subject.get_heap_pos());
                         },
                         Expression::Select(expr) => {
                             let subject= cur_frame.expr_values.pop_back().unwrap();
@@ -359,7 +439,7 @@ impl Prompt {
                                         CTP::SInt16 => Value::SInt16(lit_value.unsigned_value as i16),
                                         CTP::SInt32 => Value::SInt32(lit_value.unsigned_value as i32),
                                         CTP::SInt64 => Value::SInt64(lit_value.unsigned_value as i64),
-                                        _ => unreachable!(),
+                                        _ => unreachable!("got concrete type {:?} for integer literal at expr {:?}", &expr.concrete_type, expr_id),
                                     }
                                 }
                                 Literal::Struct(lit_value) => {
@@ -619,7 +699,7 @@ impl Prompt {
         assert!(
             cur_frame.expr_values.is_empty(),
             "This is a debugging assertion that will fail if you perform expressions without \
-            assigning to anything. This should be completely valid, and this assertions should be \
+            assigning to anything. This should be completely valid, and this assertion should be \
             replaced by something that clears the expression values if needed, but I'll keep this \
             in for now for debugging purposes."
         );

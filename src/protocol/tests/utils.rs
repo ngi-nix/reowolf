@@ -1,9 +1,10 @@
 use crate::collections::StringPool;
 use crate::protocol::{
+    Module,
     ast::*,
     input_source::*,
     parser::{
-        *,
+        Parser,
         type_table::TypeTable,
         symbol_table::SymbolTable,
         token_parsing::*,
@@ -132,7 +133,11 @@ impl AstOkTester {
     fn new(test_name: String, parser: Parser) -> Self {
         Self {
             test_name,
-            modules: parser.modules,
+            modules: parser.modules.into_iter().map(|module| Module{
+                source: module.source,
+                root_id: module.root_id,
+                name: module.name.map(|(_, name)| name)
+            }).collect(),
             heap: parser.heap,
             symbols: parser.symbol_table,
             types: parser.type_table,
@@ -573,25 +578,27 @@ impl<'a> FunctionTester<'a> {
         self
     }
 
-    pub(crate) fn call(self, expected_result: Option<Value>) -> Self {
+    pub(crate) fn call_ok(self, expected_result: Option<Value>) -> Self {
         use crate::protocol::*;
         use crate::runtime::*;
 
-        let mut prompt = Prompt::new(&self.ctx.heap, self.def.this.upcast(), ValueGroup::new_stack(Vec::new()));
-        let mut call_context = EvalContext::None;
-        loop {
-            let result = prompt.step(&self.ctx.heap, &mut call_context).unwrap();
-            match result {
-                EvalContinuation::Stepping => {},
-                _ => break,
+        let (prompt, result) = self.eval_until_end();
+        match result {
+            Ok(_) => {
+                assert!(
+                    prompt.store.stack.len() > 0, // note: stack never shrinks
+                    "[{}] No value on stack after calling function for {}",
+                    self.ctx.test_name, self.assert_postfix()
+                );
+            },
+            Err(err) => {
+                assert!(
+                    false,
+                    "[{}] Expected call to succeed, but got {:?} for {}",
+                    self.ctx.test_name, err, self.assert_postfix()
+                )
             }
         }
-
-        assert!(
-            prompt.store.stack.len() > 0, // note: stack never shrinks
-            "[{}] No value on stack after calling function for {}",
-            self.ctx.test_name, self.assert_postfix()
-        );
 
         if let Some(expected_result) = expected_result {
             debug_assert!(expected_result.get_heap_pos().is_none(), "comparing against heap thingamajigs is not yet implemented");
@@ -603,6 +610,49 @@ impl<'a> FunctionTester<'a> {
         }
 
         self
+    }
+
+    // Keeping this simple for now, will likely change
+    pub(crate) fn call_err(self, expected_result: &str) -> Self {
+        use crate::protocol::*;
+        use crate::runtime::*;
+
+        let (_, result) = self.eval_until_end();
+        match result {
+            Ok(_) => {
+                assert!(
+                    false,
+                    "[{}] Expected an error, but evaluation finished successfully for {}",
+                    self.ctx.test_name, self.assert_postfix()
+                );
+            },
+            Err(err) => {
+                println!("DEBUG: Got evaluation error:\n{}", err);
+                debug_assert_eq!(err.statements.len(), 1);
+                assert!(
+                    err.statements[0].message.contains(&expected_result),
+                    "[{}] Expected error message to contain '{}', but it was '{}' for {}",
+                    self.ctx.test_name, expected_result, err.statements[0].message, self.assert_postfix()
+                );
+            }
+        }
+
+        self
+    }
+
+    fn eval_until_end(&self) -> (Prompt, Result<EvalContinuation, EvalError>) {
+        use crate::protocol::*;
+        use crate::runtime::*;
+
+        let mut prompt = Prompt::new(&self.ctx.heap, self.def.this.upcast(), ValueGroup::new_stack(Vec::new()));
+        let mut call_context = EvalContext::None;
+        loop {
+            let result = prompt.step(&self.ctx.heap, &self.ctx.modules, &mut call_context);
+            match result {
+                Ok(EvalContinuation::Stepping) => {},
+                _ => return (prompt, result),
+            }
+        }
     }
 
     fn assert_postfix(&self) -> String {

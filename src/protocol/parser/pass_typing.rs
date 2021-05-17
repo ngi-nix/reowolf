@@ -45,6 +45,10 @@
 ///  6. Investigate different ways of performing the type-on-type inference,
 ///     maybe there is a better way then flattened trees + markers?
 
+macro_rules! debug_log_enabled {
+    () => { false };
+}
+
 macro_rules! debug_log {
     ($format:literal) => {
         enabled_debug_print!(false, "types", $format);
@@ -146,7 +150,6 @@ impl InferenceTypePart {
     }
 
     fn is_concrete_number(&self) -> bool {
-        // TODO: @float
         use InferenceTypePart as ITP;
         match self {
             ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
@@ -612,7 +615,7 @@ impl InferenceType {
     /// Performs the conversion of the inference type into a concrete type.
     /// By calling this function you must make sure that no unspecified types
     /// (e.g. Unknown or IntegerLike) exist in the type.
-    fn write_concrete_type(&self, concrete_type: &mut ConcreteType) {
+    fn write_concrete_type(&self, concrete_type: &mut ConcreteType, discard_marked_types: bool) {
         use InferenceTypePart as ITP;
         use ConcreteTypePart as CTP;
 
@@ -626,10 +629,15 @@ impl InferenceType {
             let part = &self.parts[idx];
             let converted_part = match part {
                 ITP::MarkerDefinition(marker) => {
-                    // Outer markers are converted to regular markers, we
-                    // completely remove the type subtree that follows it
-                    idx = InferenceType::find_subtree_end_idx(&self.parts, idx + 1);
-                    concrete_type.parts.push(CTP::Marker(*marker));
+                    // When annotating the AST we keep the markers. When
+                    // determining types for monomorphs we instead want to
+                    // keep the type (not the markers)
+                    if discard_marked_types {
+                        idx = InferenceType::find_subtree_end_idx(&self.parts, idx + 1);
+                        concrete_type.parts.push(CTP::Marker(*marker));
+                    } else {
+                        idx += 1;
+                    }
                     continue;
                 },
                 ITP::MarkerBody(_) => {
@@ -875,7 +883,8 @@ pub(crate) struct PassTyping {
     expr_queued: HashSet<ExpressionId>,
 }
 
-// TODO: @rename used for calls and struct literals, maybe union literals?
+// TODO: @Rename, this is used for a lot of type inferencing. It seems like
+//  there is a different underlying architecture waiting to surface.
 struct ExtraData {
     /// Progression of polymorphic variables (if any)
     poly_vars: Vec<InferenceType>,
@@ -1008,6 +1017,17 @@ impl Visitor2 for PassTyping {
 
         debug_log!("{}", "-".repeat(50));
         debug_log!("Visiting function '{}': {}", func_def.identifier.value.as_str(), id.0.index);
+        if debug_log_enabled!() {
+            debug_log!("Polymorphic variables:");
+            for (idx, poly_var) in self.poly_vars.iter().enumerate() {
+                let mut infer_type_parts = Vec::new();
+                for concrete_part in &poly_var.parts {
+                    infer_type_parts.push(InferenceTypePart::from(*concrete_part));
+                }
+                let infer_type = InferenceType::new(false, true, infer_type_parts);
+                debug_log!(" - [{:03}] {:?}", idx, infer_type.display_name(&ctx.heap));
+            }
+        }
         debug_log!("{}", "-".repeat(50));
 
         for param_id in func_def.parameters.clone() {
@@ -1382,11 +1402,11 @@ impl PassTyping {
 
             if !already_checked {
                 let concrete_type = ctx.heap[*expr_id].get_type_mut();
-                expr_type.write_concrete_type(concrete_type);
+                expr_type.write_concrete_type(concrete_type, true);
             } else {
                 if cfg!(debug_assertions) {
                     let mut concrete_type = ConcreteType::default();
-                    expr_type.write_concrete_type(&mut concrete_type);
+                    expr_type.write_concrete_type(&mut concrete_type, true);
                     debug_assert_eq!(*ctx.heap[*expr_id].get_type(), concrete_type);
                 }
             }
@@ -1427,7 +1447,7 @@ impl PassTyping {
                     }
 
                     let mut concrete_type = ConcreteType::default();
-                    poly_type.write_concrete_type(&mut concrete_type);
+                    poly_type.write_concrete_type(&mut concrete_type, false);
                     monomorph_types.insert(poly_idx, concrete_type);
                 }
 
@@ -1463,7 +1483,7 @@ impl PassTyping {
                             Literal::Struct(literal) => &literal.definition,
                             Literal::Enum(literal) => &literal.definition,
                             Literal::Union(literal) => &literal.definition,
-                            _ => unreachable!("post-inference monomorph for non-struct, non-enum literal")
+                            _ => unreachable!("post-inference monomorph for non-struct, non-enum, non-union literal")
                         };
                         if !ctx.types.has_monomorph(definition_id, &monomorph_types) {
                             ctx.types.add_monomorph(definition_id, monomorph_types);
@@ -1785,7 +1805,7 @@ impl PassTyping {
 
         // Make sure if output is of T then subject is Array<T>
         let (progress_expr, progress_subject) =
-            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
+            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 0)?;
 
 
         debug_log!(" * After:");
@@ -2816,8 +2836,6 @@ impl PassTyping {
                 // We already have an entry, this happens if our parent fixed
                 // our type (e.g. we're used in a conditional expression's test)
                 // but we have a different type.
-                // TODO: Is this ever called? Seems like it can't
-                debug_assert!(false, "I am actually called, my ID is {}", expr_id.index);
                 let old_type = preexisting.get_mut();
                 if let SingleInferenceResult::Incompatible = InferenceType::infer_subtree_for_single_type(
                     old_type, 0, &inference_type.parts, 0

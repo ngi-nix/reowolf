@@ -7,18 +7,27 @@ mod parser;
 pub(crate) mod ast;
 pub(crate) mod ast_printer;
 
+use std::sync::Mutex;
+
+use crate::collections::{StringPool, StringRef};
 use crate::common::*;
 use crate::protocol::ast::*;
 use crate::protocol::eval::*;
 use crate::protocol::input_source::*;
 use crate::protocol::parser::*;
 
+/// A protocol description module
+pub struct Module {
+    pub(crate) source: InputSource,
+    pub(crate) root_id: RootId,
+    pub(crate) name: Option<StringRef<'static>>,
+}
 /// Description of a protocol object, used to configure new connectors.
 #[repr(C)]
 pub struct ProtocolDescription {
+    modules: Vec<Module>,
     heap: Heap,
-    source: InputSource,
-    root: RootId,
+    pool: Mutex<StringPool>,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentState {
@@ -51,28 +60,46 @@ impl ProtocolDescription {
         }
 
         debug_assert_eq!(parser.modules.len(), 1, "only supporting one module here for now");
-        let module = parser.modules.remove(0);
-        let root = module.root_id;
-        let source = module.source;
-        return Ok(ProtocolDescription { heap: parser.heap, source, root });
+        let modules: Vec<Module> = parser.modules.into_iter()
+            .map(|module| Module{
+                source: module.source,
+                root_id: module.root_id,
+                name: module.name.map(|(_, name)| name)
+            })
+            .collect();
+
+        return Ok(ProtocolDescription {
+            modules,
+            heap: parser.heap,
+            pool: Mutex::new(parser.string_pool),
+        });
     }
     pub(crate) fn component_polarities(
         &self,
+        module_name: &[u8],
         identifier: &[u8],
     ) -> Result<Vec<Polarity>, AddComponentError> {
         use AddComponentError::*;
-        let h = &self.heap;
-        let root = &h[self.root];
-        let def = root.get_definition_ident(h, identifier);
+
+        let module_root = self.lookup_module_root(module_name);
+        if module_root.is_none() {
+            return Err(AddComponentError::NoSuchModule);
+        }
+        let module_root = module_root.unwrap();
+
+        let root = &self.heap[module_root];
+        let def = root.get_definition_ident(&self.heap, identifier);
         if def.is_none() {
             return Err(NoSuchComponent);
         }
-        let def = &h[def.unwrap()];
+
+        let def = &self.heap[def.unwrap()];
         if !def.is_component() {
             return Err(NoSuchComponent);
         }
+
         for &param in def.parameters().iter() {
-            let param = &h[param];
+            let param = &self.heap[param];
             let first_element = &param.parser_type.elements[0];
 
             match first_element.variant {
@@ -82,9 +109,10 @@ impl ProtocolDescription {
                 }
             }
         }
+
         let mut result = Vec::new();
         for &param in def.parameters().iter() {
-            let param = &h[param];
+            let param = &self.heap[param];
             let first_element = &param.parser_type.elements[0];
 
             if first_element.variant == ParserTypeVariant::Input {
@@ -98,18 +126,34 @@ impl ProtocolDescription {
         Ok(result)
     }
     // expects port polarities to be correct
-    pub(crate) fn new_component(&self, identifier: &[u8], ports: &[PortId]) -> ComponentState {
+    pub(crate) fn new_component(&self, module_name: &[u8], identifier: &[u8], ports: &[PortId]) -> ComponentState {
         let mut args = Vec::new();
-        for (&x, y) in ports.iter().zip(self.component_polarities(identifier).unwrap()) {
+        for (&x, y) in ports.iter().zip(self.component_polarities(module_name, identifier).unwrap()) {
             match y {
                 Polarity::Getter => args.push(Value::Input(x)),
                 Polarity::Putter => args.push(Value::Output(x)),
             }
         }
-        let h = &self.heap;
-        let root = &h[self.root];
-        let def = root.get_definition_ident(h, identifier).unwrap();
-        ComponentState { prompt: Prompt::new(h, def, ValueGroup::new_stack(args)) }
+
+        let module_root = self.lookup_module_root(module_name).unwrap();
+        let root = &self.heap[module_root];
+        let def = root.get_definition_ident(&self.heap, identifier).unwrap();
+        ComponentState { prompt: Prompt::new(&self.heap, def, ValueGroup::new_stack(args)) }
+    }
+
+    fn lookup_module_root(&self, module_name: &[u8]) -> Option<RootId> {
+        for module in self.modules.iter() {
+            match &module.name {
+                Some(name) => if name.as_bytes() == module_name {
+                    return Some(module.root_id);
+                },
+                None => if module_name.is_empty() {
+                    return Some(module.root_id);
+                }
+            }
+        }
+
+        return None;
     }
 }
 impl ComponentState {
@@ -120,9 +164,12 @@ impl ComponentState {
     ) -> NonsyncBlocker {
         let mut context = EvalContext::Nonsync(context);
         loop {
-            let result = self.prompt.step(&pd.heap, &mut context);
+            let result = self.prompt.step(&pd.heap, &pd.modules, &mut context);
             match result {
-                Err(_) => todo!("error handling"),
+                Err(err) => {
+                    println!("Evaluation error:\n{}", err);
+                    panic!("proper error handling when component fails");
+                },
                 Ok(cont) => match cont {
                     EvalContinuation::Stepping => continue,
                     EvalContinuation::Inconsistent => return NonsyncBlocker::Inconsistent,
@@ -175,9 +222,12 @@ impl ComponentState {
     ) -> SyncBlocker {
         let mut context = EvalContext::Sync(context);
         loop {
-            let result = self.prompt.step(&pd.heap, &mut context);
+            let result = self.prompt.step(&pd.heap, &pd.modules, &mut context);
             match result {
-                Err(_) => todo!("error handling"),
+                Err(err) => {
+                    println!("Evaluation error:\n{}", err);
+                    panic!("proper error handling when component fails");
+                },
                 Ok(cont) => match cont {
                     EvalContinuation::Stepping => continue,
                     EvalContinuation::Inconsistent => return SyncBlocker::Inconsistent,

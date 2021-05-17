@@ -152,6 +152,13 @@ impl Drop for StringPool {
     }
 }
 
+// String pool cannot be cloned, and the created `StringRef` instances remain
+// allocated until the end of the program, so it is always safe to send. It is
+// also sync in the sense that it becomes an immutable thing after compilation,
+// but lets not derive that if we would ever become a multithreaded compiler in
+// the future.
+unsafe impl Send for StringPool {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

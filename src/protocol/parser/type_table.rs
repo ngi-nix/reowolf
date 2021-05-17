@@ -327,7 +327,8 @@ impl TypeTable {
             let definition = &ctx.heap[definition_id];
 
             let can_pop_breadcrumb = match definition {
-                // TODO: @cleanup Borrow rules hax
+                // Bit ugly, since we already have the definition, but we need
+                // to work around rust borrowing rules...
                 Definition::Enum(_) => self.resolve_base_enum_definition(modules, ctx, root_id, definition_id),
                 Definition::Union(_) => self.resolve_base_union_definition(modules, ctx, root_id, definition_id),
                 Definition::Struct(_) => self.resolve_base_struct_definition(modules, ctx, root_id, definition_id),

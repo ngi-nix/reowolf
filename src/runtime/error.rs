@@ -17,6 +17,7 @@ pub enum ConnectError {
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum AddComponentError {
     DuplicatePort(PortId),
+    NoSuchModule,
     NoSuchComponent,
     NonPortTypeParameters,
     CannotMovePort(PortId),

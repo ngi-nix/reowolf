@@ -232,6 +232,8 @@ pub unsafe extern "C" fn connector_add_port_pair(
 #[no_mangle]
 pub unsafe extern "C" fn connector_add_component(
     connector: &mut Connector,
+    module_ptr: *const u8,
+    module_len: usize,
     ident_ptr: *const u8,
     ident_len: usize,
     ports_ptr: *const PortId,
@@ -239,6 +241,7 @@ pub unsafe extern "C" fn connector_add_component(
 ) -> c_int {
     StoredError::tl_clear();
     match connector.add_component(
+        &*slice_from_raw_parts(module_ptr, module_len),
         &*slice_from_raw_parts(ident_ptr, ident_len),
         &*slice_from_raw_parts(ports_ptr, ports_len),
     ) {

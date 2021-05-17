@@ -16,7 +16,7 @@ fn test_assignment_operators() {
     fn perform_test(name: &str, source: String, expected_value: Value) {
         Tester::new_single_source_expect_ok(name, source)
             .for_function("foo", move |f| {
-                f.call(Some(expected_value));
+                f.call_ok(Some(expected_value));
             });
     }
 
@@ -100,7 +100,7 @@ fn test_binary_integer_operators() {
     fn perform_test(test_name: &str, value_type: &str, code: &str, expected_value: Value) {
         Tester::new_single_source_expect_ok(test_name, construct_source(value_type, code))
             .for_function("foo", move |f| {
-                f.call(Some(expected_value));
+                f.call_ok(Some(expected_value));
             });
     }
 

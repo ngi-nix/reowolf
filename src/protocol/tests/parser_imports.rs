@@ -83,18 +83,17 @@ fn test_single_symbol_import() {
         .compile()
         .expect_ok();
 
-    // TODO: Re-enable once std lib is properly implemented
-    // Tester::new("import all")
-    //     .with_source("
-    //     #module external
-    //     struct Foo { s32 field }
-    //     ")
-    //     .with_source("
-    //     import external::*;
-    //     s32 caller() { return Foo{field:0}.field; }
-    //     ")
-    //     .compile()
-    //     .expect_ok();
+    Tester::new("import all")
+        .with_source("
+        #module external
+        struct Foo { s32 field }
+        ")
+        .with_source("
+        import external::*;
+        func caller() -> s32 { return Foo{field:0}.field; }
+        ")
+        .compile()
+        .expect_ok();
 }
 
 #[test]

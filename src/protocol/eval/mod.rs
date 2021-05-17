@@ -23,7 +23,9 @@
 pub(crate) mod value;
 pub(crate) mod store;
 pub(crate) mod executor;
+pub(crate) mod error;
 
+pub use error::EvalError;
 pub use value::{Value, ValueGroup};
 pub(crate) use store::{Store};
 pub use executor::{EvalContinuation, Prompt};

@@ -89,7 +89,7 @@ fn new_sync() {
     let test_log_path = Path::new("./logs/new_sync");
     let mut c = file_logged_connector(0, test_log_path);
     let [o, i] = c.new_port_pair();
-    c.add_component(b"sync", &[i, o]).unwrap();
+    c.add_component(b"", b"sync", &[i, o]).unwrap();
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn cannot_use_moved_ports() {
     let test_log_path = Path::new("./logs/cannot_use_moved_ports");
     let mut c = file_logged_connector(0, test_log_path);
     let [p, g] = c.new_port_pair();
-    c.add_component(b"sync", &[g, p]).unwrap();
+    c.add_component(b"", b"sync", &[g, p]).unwrap();
     c.connect(SEC1).unwrap();
     c.put(p, TEST_MSG.clone()).unwrap_err();
     c.get(g).unwrap_err();
@@ -356,7 +356,7 @@ fn sync_sync() {
     let mut c = file_logged_connector(0, test_log_path);
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"sync", &[g0, p1]).unwrap();
+    c.add_component(b"", b"sync", &[g0, p1]).unwrap();
     c.connect(SEC1).unwrap();
     c.put(p0, TEST_MSG.clone()).unwrap();
     c.get(g1).unwrap();
@@ -408,7 +408,7 @@ fn distributed_msg_bounce() {
                 c.new_net_port(Putter, sock_addrs[0], Active).unwrap(),
                 c.new_net_port(Getter, sock_addrs[1], Active).unwrap(),
             ];
-            c.add_component(b"sync", &[g, p]).unwrap();
+            c.add_component(b"", b"sync", &[g, p]).unwrap();
             c.connect(SEC1).unwrap();
             c.sync(SEC1).unwrap();
         });
@@ -572,7 +572,7 @@ fn together() {
             let p2 = c.new_net_port(Getter, sock_addrs[0], Passive).unwrap();
             let p3 = c.new_net_port(Putter, sock_addrs[1], Active).unwrap();
             let [p4, p5] = c.new_port_pair();
-            c.add_component(b"together", &[p1, p2, p3, p4]).unwrap();
+            c.add_component(b"", b"together", &[p1, p2, p3, p4]).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p0, TEST_MSG.clone()).unwrap();
             c.get(p5).unwrap();
@@ -585,7 +585,7 @@ fn together() {
             let p2 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
             let p3 = c.new_net_port(Putter, sock_addrs[0], Active).unwrap();
             let [p4, p5] = c.new_port_pair();
-            c.add_component(b"together", &[p1, p2, p3, p4]).unwrap();
+            c.add_component(b"", b"together", &[p1, p2, p3, p4]).unwrap();
             c.connect(SEC1).unwrap();
             c.put(p0, TEST_MSG.clone()).unwrap();
             c.get(p5).unwrap();
@@ -877,7 +877,7 @@ fn ac_not_b() {
             let p1 = c.new_net_port(Getter, sock_addrs[1], Passive).unwrap();
             let [a, b] = c.new_port_pair();
 
-            c.add_component(b"ac_not_b", &[p0, p1, a]).unwrap();
+            c.add_component(b"", b"ac_not_b", &[p0, p1, a]).unwrap();
 
             c.connect(SEC1).unwrap();
 
@@ -985,7 +985,7 @@ fn pdl_reo_fifo1full() {
     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
     let [_p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"fifo1full", &[g0, p1]).unwrap();
+    c.add_component(b"", b"fifo1full", &[g0, p1]).unwrap();
     c.connect(None).unwrap();
     c.get(g1).unwrap();
     c.sync(None).unwrap();
@@ -1008,7 +1008,7 @@ fn pdl_msg_consensus() {
     let mut c = file_logged_configured_connector(0, test_log_path, Arc::new(pd));
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"msgconsensus", &[g0, g1]).unwrap();
+    c.add_component(b"", b"msgconsensus", &[g0, g1]).unwrap();
     c.connect(None).unwrap();
     c.put(p0, Payload::from(b"HELLO" as &[_])).unwrap();
     c.put(p1, Payload::from(b"HELLO" as &[_])).unwrap();
@@ -1043,7 +1043,7 @@ fn sequencer3_prim() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"sequencer3", &[p0, p1, p2]).unwrap();
+    c.add_component(b"", b"sequencer3", &[p0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let which_of_three = move |c: &mut Connector| {
@@ -1109,7 +1109,7 @@ fn sequencer3_comp() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"sequencer3", &[p0, p1, p2]).unwrap();
+    c.add_component(b"", b"sequencer3", &[p0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let which_of_three = move |c: &mut Connector| {
@@ -1167,7 +1167,7 @@ fn xrouter_prim() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"xrouter", &[g0, p1, p2]).unwrap();
+    c.add_component(b"", b"xrouter", &[g0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let now = std::time::Instant::now();
@@ -1235,7 +1235,7 @@ fn xrouter_comp() {
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
     let [p2, g2] = c.new_port_pair();
-    c.add_component(b"xrouter", &[g0, p1, p2]).unwrap();
+    c.add_component(b"", b"xrouter", &[g0, p1, p2]).unwrap();
     c.connect(None).unwrap();
 
     let now = std::time::Instant::now();
@@ -1274,7 +1274,7 @@ fn count_stream() {
 
     // setup a session between (a) native, and (b) sequencer3, connected by 3 ports.
     let [p0, g0] = c.new_port_pair();
-    c.add_component(b"count_stream", &[p0]).unwrap();
+    c.add_component(b"", b"count_stream", &[p0]).unwrap();
     c.connect(None).unwrap();
 
     for expecting in 0u8..16 {
@@ -1304,7 +1304,7 @@ fn for_msg_byte() {
 
     // setup a session between (a) native, and (b) sequencer3, connected by 3 ports.
     let [p0, g0] = c.new_port_pair();
-    c.add_component(b"for_msg_byte", &[p0]).unwrap();
+    c.add_component(b"", b"for_msg_byte", &[p0]).unwrap();
     c.connect(None).unwrap();
 
     for expecting in 0u8..8 {
@@ -1344,7 +1344,7 @@ fn eq_causality() {
     */
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"eq", &[g0, g1, p1]).unwrap();
+    c.add_component(b"", b"eq", &[g0, g1, p1]).unwrap();
 
     /*
                   V--------.
@@ -1353,7 +1353,7 @@ fn eq_causality() {
     */
     let [p2, g2] = c.new_port_pair();
     let [p3, g3] = c.new_port_pair();
-    c.add_component(b"eq", &[g3, g2, p3]).unwrap();
+    c.add_component(b"", b"eq", &[g3, g2, p3]).unwrap();
     c.connect(None).unwrap();
 
     for _ in 0..4 {
@@ -1432,7 +1432,7 @@ fn eq_no_causality() {
     */
     let [p0, g0] = c.new_port_pair();
     let [p1, g1] = c.new_port_pair();
-    c.add_component(b"eq", &[g0, g1, p1]).unwrap();
+    c.add_component(b"", b"eq", &[g0, g1, p1]).unwrap();
 
     /*
                   V--------.
@@ -1441,7 +1441,7 @@ fn eq_no_causality() {
     */
     let [p2, g2] = c.new_port_pair();
     let [p3, g3] = c.new_port_pair();
-    c.add_component(b"eq", &[g3, g2, p3]).unwrap();
+    c.add_component(b"", b"eq", &[g3, g2, p3]).unwrap();
     c.connect(None).unwrap();
 
     for _ in 0..32 {
