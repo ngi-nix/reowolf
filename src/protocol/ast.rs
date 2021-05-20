@@ -378,8 +378,8 @@ pub enum ParserTypeVariant {
     Input,
     Output,
     // User-defined types
-    PolymorphicArgument(DefinitionId, usize), // usize = index into polymorphic variables
-    Definition(DefinitionId, usize), // usize = number of following subtypes
+    PolymorphicArgument(DefinitionId, u32), // u32 = index into polymorphic variables
+    Definition(DefinitionId, u32), // u32 = number of following subtypes
 }
 
 impl ParserTypeVariant {
@@ -487,10 +487,6 @@ pub enum SymbolicParserTypeVariant {
 /// and performing type inference
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConcreteTypePart {
-    // Markers for the use of polymorphic types within a procedure's body that
-    // refer to polymorphic variables on the procedure's definition. Different
-    // from markers in the `InferenceType`, these will not contain nested types.
-    Marker(usize),
     // Special types (cannot be explicitly constructed by the programmer)
     Void,
     // Builtin types without nested types
@@ -505,7 +501,7 @@ pub enum ConcreteTypePart {
     Input,
     Output,
     // User defined type with any number of nested types
-    Instance(DefinitionId, usize),
+    Instance(DefinitionId, u32),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -926,17 +922,20 @@ pub enum ComponentVariant {
 pub struct ComponentDefinition {
     pub this: ComponentDefinitionId,
     pub defined_in: RootId,
-    // Phase 1: symbol scanning
+    // Symbol scanning
     pub span: InputSpan,
     pub variant: ComponentVariant,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
-    // Phase 2: parsing
+    // Parsing
     pub parameters: Vec<VariableId>,
     pub body: BlockStatementId,
+    // Validation/linking
+    pub num_expressions_in_body: i32,
 }
 
 impl ComponentDefinition {
+    // Used for preallocation during symbol scanning
     pub(crate) fn new_empty(
         this: ComponentDefinitionId, defined_in: RootId, span: InputSpan,
         variant: ComponentVariant, identifier: Identifier, poly_vars: Vec<Identifier>
@@ -944,7 +943,8 @@ impl ComponentDefinition {
         Self{ 
             this, defined_in, span, variant, identifier, poly_vars,
             parameters: Vec::new(), 
-            body: BlockStatementId::new_invalid()
+            body: BlockStatementId::new_invalid(),
+            num_expressions_in_body: -1,
         }
     }
 }
@@ -955,15 +955,17 @@ impl ComponentDefinition {
 pub struct FunctionDefinition {
     pub this: FunctionDefinitionId,
     pub defined_in: RootId,
-    // Phase 1: symbol scanning
+    // Symbol scanning
     pub builtin: bool,
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
-    // Phase 2: parsing
+    // Parser
     pub return_types: Vec<ParserType>,
     pub parameters: Vec<VariableId>,
     pub body: BlockStatementId,
+    // Validation/linking
+    pub num_expressions_in_body: i32,
 }
 
 impl FunctionDefinition {
@@ -978,6 +980,7 @@ impl FunctionDefinition {
             return_types: Vec::new(),
             parameters: Vec::new(),
             body: BlockStatementId::new_invalid(),
+            num_expressions_in_body: -1,
         }
     }
 }
@@ -1601,6 +1604,22 @@ impl Expression {
             Expression::Variable(expr) => &mut expr.concrete_type,
         }
     }
+
+    pub fn get_unique_id_in_definition(&self) -> i32 {
+        match self {
+            Expression::Assignment(expr) => expr.unique_id_in_definition,
+            Expression::Binding(expr) => expr.unique_id_in_definition,
+            Expression::Conditional(expr) => expr.unique_id_in_definition,
+            Expression::Binary(expr) => expr.unique_id_in_definition,
+            Expression::Unary(expr) => expr.unique_id_in_definition,
+            Expression::Indexing(expr) => expr.unique_id_in_definition,
+            Expression::Slicing(expr) => expr.unique_id_in_definition,
+            Expression::Select(expr) => expr.unique_id_in_definition,
+            Expression::Literal(expr) => expr.unique_id_in_definition,
+            Expression::Call(expr) => expr.unique_id_in_definition,
+            Expression::Variable(expr) => expr.unique_id_in_definition,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1628,6 +1647,7 @@ pub struct AssignmentExpression {
     pub right: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1641,6 +1661,7 @@ pub struct BindingExpression {
     pub right: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1655,6 +1676,7 @@ pub struct ConditionalExpression {
     pub false_expression: ExpressionId,
     // Validator/Linking
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1692,6 +1714,7 @@ pub struct BinaryExpression {
     pub right: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1717,6 +1740,7 @@ pub struct UnaryExpression {
     pub expression: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1730,6 +1754,7 @@ pub struct IndexingExpression {
     pub index: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1744,6 +1769,7 @@ pub struct SlicingExpression {
     pub to_index: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1757,6 +1783,7 @@ pub struct SelectExpression {
     pub field: Field,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1772,6 +1799,7 @@ pub struct CallExpression {
     pub definition: DefinitionId,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType, // of the return type
 }
@@ -1803,6 +1831,7 @@ pub struct LiteralExpression {
     pub value: Literal,
     // Validator/Linker
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }
@@ -1907,6 +1936,7 @@ pub struct VariableExpression {
     // Validator/Linker
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
     // Typing
     pub concrete_type: ConcreteType,
 }

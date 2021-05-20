@@ -66,8 +66,9 @@ pub(crate) struct PassValidationLinking {
     // child will throw an error if it is not assignable. The stored span is
     // used for the error's position
     must_be_assignable: Option<InputSpan>,
-    // Keeping track of relative position in block in the breadth-first pass.
-    relative_pos_in_block: u32,
+    // Keeping track of relative positions and unique IDs.
+    relative_pos_in_block: u32, // of statements: to determine when variables are visible
+    next_expr_index: i32, // to arrive at a unique ID for all expressions within a definition
     // Various temporary buffers for traversal. Essentially working around
     // Rust's borrowing rules since it cannot understand we're modifying AST
     // members but not the AST container.
@@ -87,6 +88,7 @@ impl PassValidationLinking {
             def_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             must_be_assignable: None,
             relative_pos_in_block: 0,
+            next_expr_index: 0,
             variable_buffer: ScopedBuffer::new_reserved(128),
             definition_buffer: ScopedBuffer::new_reserved(128),
             statement_buffer: ScopedBuffer::new_reserved(STMT_BUFFER_INIT_CAPACITY),
@@ -101,6 +103,7 @@ impl PassValidationLinking {
         self.expr_parent = ExpressionParent::None;
         self.def_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
         self.relative_pos_in_block = 0;
+        self.next_expr_index = 0
     }
 }
 
@@ -146,6 +149,8 @@ impl Visitor2 for PassValidationLinking {
 
         // Visit statements in component body
         self.visit_block_stmt(ctx, body_id)?;
+
+        ctx.heap[id].num_expressions_in_body = self.next_expr_index;
         Ok(())
     }
 
@@ -170,6 +175,8 @@ impl Visitor2 for PassValidationLinking {
 
         // Visit statements in function body
         self.visit_block_stmt(ctx, body_id)?;
+
+        ctx.heap[id].num_expressions_in_body = self.next_expr_index;
         Ok(())
     }
 
@@ -379,6 +386,8 @@ impl Visitor2 for PassValidationLinking {
         let right_expr_id = assignment_expr.right;
         let old_expr_parent = self.expr_parent;
         assignment_expr.parent = old_expr_parent;
+        assignment_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.must_be_assignable = Some(assignment_expr.span);
@@ -406,6 +415,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         conditional_expr.parent = old_expr_parent;
+        conditional_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, test_expr_id)?;
@@ -433,6 +444,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         binary_expr.parent = old_expr_parent;
+        binary_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, left_expr_id)?;
@@ -455,6 +468,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         unary_expr.parent = old_expr_parent;
+        unary_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(id.upcast(), 0);
         self.visit_expr(ctx, expr_id)?;
@@ -472,6 +487,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         indexing_expr.parent = old_expr_parent;
+        indexing_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
@@ -492,6 +509,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         slicing_expr.parent = old_expr_parent;
+        slicing_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
@@ -510,6 +529,8 @@ impl Visitor2 for PassValidationLinking {
 
         let old_expr_parent = self.expr_parent;
         select_expr.parent = old_expr_parent;
+        select_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(id.upcast(), 0);
         self.visit_expr(ctx, expr_id)?;
@@ -522,6 +543,8 @@ impl Visitor2 for PassValidationLinking {
         let literal_expr = &mut ctx.heap[id];
         let old_expr_parent = self.expr_parent;
         literal_expr.parent = old_expr_parent;
+        literal_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
@@ -822,6 +845,8 @@ impl Visitor2 for PassValidationLinking {
         let section = self.expression_buffer.start_section_initialized(&call_expr.arguments);
         let old_expr_parent = self.expr_parent;
         call_expr.parent = old_expr_parent;
+        call_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         for arg_expr_idx in 0..section.len() {
             let arg_expr_id = section[arg_expr_idx];
@@ -841,6 +866,8 @@ impl Visitor2 for PassValidationLinking {
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
         var_expr.parent = self.expr_parent;
+        var_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
 
         Ok(())
     }

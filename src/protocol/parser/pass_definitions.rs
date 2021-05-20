@@ -8,7 +8,7 @@ use crate::collections::*;
 
 /// Parses all the tokenized definitions into actual AST nodes.
 pub(crate) struct PassDefinitions {
-    // State
+    // State associated with the definition currently being processed
     cur_definition: DefinitionId,
     // Temporary buffers of various kinds
     buffer: String,
@@ -247,6 +247,7 @@ impl PassDefinitions {
     fn visit_function_definition(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<(), ParseError> {
+        // Retrieve function name
         consume_exact_ident(&module.source, iter, KW_FUNCTION)?;
         let (ident_text, _) = consume_ident(&module.source, iter)?;
 
@@ -301,6 +302,7 @@ impl PassDefinitions {
     fn visit_component_definition(
         &mut self, module: &Module, iter: &mut TokenIter, ctx: &mut PassCtx
     ) -> Result<(), ParseError> {
+        // Consume component variant and name
         let (_variant_text, _) = consume_any_ident(&module.source, iter)?;
         debug_assert!(_variant_text == KW_PRIMITIVE || _variant_text == KW_COMPOSITE);
         let (ident_text, _) = consume_ident(&module.source, iter)?;
@@ -835,6 +837,7 @@ impl PassDefinitions {
                     identifier,
                     declaration: None,
                     parent: ExpressionParent::None,
+                    unique_id_in_definition: -1,
                     concrete_type: Default::default()
                 });
                 let assignment_expr_id = ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
@@ -844,6 +847,7 @@ impl PassDefinitions {
                     operation: AssignmentOperator::Set,
                     right: initial_expr_id,
                     parent: ExpressionParent::None,
+                    unique_id_in_definition: -1,
                     concrete_type: Default::default(),
                 });
                 let assignment_stmt_id = ctx.heap.alloc_expression_statement(|this| ExpressionStatement{
@@ -930,6 +934,7 @@ impl PassDefinitions {
             Ok(ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
                 this, span, left, operation, right,
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast())
         } else {
@@ -952,6 +957,7 @@ impl PassDefinitions {
             Ok(ctx.heap.alloc_conditional_expression(|this| ConditionalExpression{
                 this, span, test, true_expression, false_expression,
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast())
         } else {
@@ -1135,6 +1141,7 @@ impl PassDefinitions {
             Ok(ctx.heap.alloc_unary_expression(|this| UnaryExpression {
                 this, span, operation, expression,
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default()
             }).upcast())
         } else {
@@ -1168,6 +1175,7 @@ impl PassDefinitions {
                     operation: UnaryOperator::PostIncrement,
                     expression: result,
                     parent: ExpressionParent::None,
+                    unique_id_in_definition: -1,
                     concrete_type: ConcreteType::default()
                 }).upcast();
             } else if token == TokenKind::MinusMinus {
@@ -1176,6 +1184,7 @@ impl PassDefinitions {
                     operation: UnaryOperator::PostDecrement,
                     expression: result,
                     parent: ExpressionParent::None,
+                    unique_id_in_definition: -1,
                     concrete_type: ConcreteType::default()
                 }).upcast();
             } else if token == TokenKind::OpenSquare {
@@ -1194,6 +1203,7 @@ impl PassDefinitions {
                     result = ctx.heap.alloc_slicing_expression(|this| SlicingExpression{
                         this, span, subject, from_index, to_index,
                         parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
                         concrete_type: ConcreteType::default()
                     }).upcast();
                 } else if Some(TokenKind::CloseSquare) == next {
@@ -1204,6 +1214,7 @@ impl PassDefinitions {
                         this, span, subject,
                         index: from_index,
                         parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
                         concrete_type: ConcreteType::default()
                     }).upcast();
                 } else {
@@ -1226,6 +1237,7 @@ impl PassDefinitions {
                 result = ctx.heap.alloc_select_expression(|this| SelectExpression{
                     this, span, subject, field,
                     parent: ExpressionParent::None,
+                    unique_id_in_definition: -1,
                     concrete_type: ConcreteType::default()
                 }).upcast();
             }
@@ -1263,6 +1275,7 @@ impl PassDefinitions {
                 span: InputSpan::from_positions(start_pos, end_pos),
                 value: Literal::Array(scoped_section.into_vec()),
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Integer) {
@@ -1272,6 +1285,7 @@ impl PassDefinitions {
                 this, span,
                 value: Literal::Integer(LiteralInteger{ unsigned_value: literal, negated: false }),
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::String) {
@@ -1282,6 +1296,7 @@ impl PassDefinitions {
                 this, span,
                 value: Literal::String(interned),
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Character) {
@@ -1291,6 +1306,7 @@ impl PassDefinitions {
                 this, span,
                 value: Literal::Character(character),
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Ident) {
@@ -1342,6 +1358,7 @@ impl PassDefinitions {
                                         definition: target_definition_id,
                                     }),
                                     parent: ExpressionParent::None,
+                                    unique_id_in_definition: -1,
                                     concrete_type: ConcreteType::default(),
                                 }).upcast()
                             },
@@ -1360,6 +1377,7 @@ impl PassDefinitions {
                                         variant_idx: 0
                                     }),
                                     parent: ExpressionParent::None,
+                                    unique_id_in_definition: -1,
                                     concrete_type: ConcreteType::default()
                                 }).upcast()
                             },
@@ -1385,6 +1403,7 @@ impl PassDefinitions {
                                         variant_idx: 0,
                                     }),
                                     parent: ExpressionParent::None,
+                                    unique_id_in_definition: -1,
                                     concrete_type: ConcreteType::default()
                                 }).upcast()
                             },
@@ -1400,6 +1419,7 @@ impl PassDefinitions {
                                     arguments,
                                     definition: target_definition_id,
                                     parent: ExpressionParent::None,
+                                    unique_id_in_definition: -1,
                                     concrete_type: ConcreteType::default(),
                                 }).upcast()
                             },
@@ -1430,6 +1450,7 @@ impl PassDefinitions {
                                     arguments,
                                     definition: target_definition_id,
                                     parent: ExpressionParent::None,
+                                    unique_id_in_definition: -1,
                                     concrete_type: ConcreteType::default(),
                                 }).upcast()
                             }
@@ -1461,6 +1482,7 @@ impl PassDefinitions {
                         span: ident_span,
                         value,
                         parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
                         concrete_type: ConcreteType::default(),
                     }).upcast()
                 } else {
@@ -1495,6 +1517,7 @@ impl PassDefinitions {
                         identifier,
                         declaration: None,
                         parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
                         concrete_type: ConcreteType::default()
                     }).upcast()
                 }
@@ -1530,6 +1553,7 @@ impl PassDefinitions {
             result = ctx.heap.alloc_binary_expression(|this| BinaryExpression{
                 this, span, left, operation, right,
                 parent: ExpressionParent::None,
+                unique_id_in_definition: -1,
                 concrete_type: ConcreteType::default()
             }).upcast();
         }
@@ -1857,7 +1881,7 @@ fn consume_parser_type_ident(
             let mut type_kind = None;
             for (poly_idx, poly_var) in poly_vars.iter().enumerate() {
                 if poly_var.value.as_bytes() == type_text {
-                    type_kind = Some(PTV::PolymorphicArgument(wrapping_definition, poly_idx));
+                    type_kind = Some(PTV::PolymorphicArgument(wrapping_definition, poly_idx as u32));
                 }
             }
 
@@ -1913,7 +1937,7 @@ fn consume_parser_type_ident(
                         },
                         SymbolVariant::Definition(symbol_definition) => {
                             let num_poly_vars = heap[symbol_definition.definition_id].poly_vars().len();
-                            type_kind = Some(PTV::Definition(symbol_definition.definition_id, num_poly_vars));
+                            type_kind = Some(PTV::Definition(symbol_definition.definition_id, num_poly_vars as u32));
                             break;
                         }
                     }

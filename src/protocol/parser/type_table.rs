@@ -161,17 +161,43 @@ pub struct StructField {
 
 pub struct FunctionType {
     pub return_types: Vec<ParserType>,
-    pub arguments: Vec<FunctionArgument>
+    pub arguments: Vec<FunctionArgument>,
+    pub monomorphs: Vec<ProcedureMonomorph>,
 }
 
 pub struct ComponentType {
     pub variant: ComponentVariant,
-    pub arguments: Vec<FunctionArgument>
+    pub arguments: Vec<FunctionArgument>,
+    pub monomorphs: Vec<ProcedureMonomorph>,
 }
 
 pub struct FunctionArgument {
     identifier: Identifier,
     parser_type: ParserType,
+}
+
+pub struct ProcedureMonomorph {
+    // Expression data for one particular monomorph
+    expr_data: Vec<MonomorphExpression>,
+}
+
+/// Represents the data associated with a single expression after type inference
+/// for a monomorph (or just the normal expression types, if dealing with a
+/// non-polymorphic function/component).
+pub struct MonomorphExpression {
+    // The output type of the expression. Note that for a function it is not the
+    // function's signature but its return type
+    pub(crate) expr_type: ConcreteType,
+    // Has multiple meanings: the field index for select expressions, the
+    // monomorph index for polymorphic function calls or literals. Negative
+    // values are never used, but used to catch programming errors.
+    pub(crate) field_or_monomorph_idx: i32,
+}
+
+impl Default for MonomorphExpression {
+    fn default() -> Self {
+        Self{ expr_type: ConcreteType::default(), field_or_monomorph_idx: -1 }
+    }
 }
 
 //------------------------------------------------------------------------------

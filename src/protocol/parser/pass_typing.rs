@@ -60,6 +60,7 @@ macro_rules! debug_log {
 
 use std::collections::{HashMap, HashSet};
 
+use crate::collections::DequeSet;
 use crate::protocol::ast::*;
 use crate::protocol::input_source::ParseError;
 use crate::protocol::parser::ModuleCompilationPhase;
@@ -82,19 +83,20 @@ const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
 const INTEGERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::IntegerLike ];
 const ARRAY_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Array, InferenceTypePart::Unknown ];
+const SLICE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Slice, InferenceTypePart::Unknown ];
 const ARRAYLIKE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::ArrayLike, InferenceTypePart::Unknown ];
 
 /// TODO: @performance Turn into PartialOrd+Ord to simplify checks
-/// TODO: @types Remove the Message -> Byte hack at some point...
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum InferenceTypePart {
-    // A marker with an identifier which we can use to retrieve the type subtree
-    // that follows the marker. This is used to perform type inference on
-    // polymorphs: an expression may determine the polymorphs type, after we
-    // need to apply that information to all other places where the polymorph is
-    // used.
-    MarkerDefinition(usize), // marker for polymorph types on a procedure's definition
-    MarkerBody(usize), // marker for polymorph types within a procedure body
+    // When we infer types of AST elements that support polymorphic arguments,
+    // then we might have the case that multiple embedded types depend on the
+    // polymorphic type (e.g. func bla(T a, T[] b) -> T[][]). If we can infer
+    // the type in one place (e.g. argument a), then we may propagate this
+    // information to other types (e.g. argument b and the return type). For
+    // this reason we place markers in the `InferenceType` instances such that
+    // we know which part of the type was originally a polymorphic argument.
+    Marker(u32),
     // Completely unknown type, needs to be inferred
     Unknown,
     // Partially known type, may be inferred to to be the appropriate related 
@@ -125,15 +127,13 @@ pub(crate) enum InferenceTypePart {
     Input,
     Output,
     // A user-defined type with any number of subtypes
-    Instance(DefinitionId, usize)
+    Instance(DefinitionId, u32)
 }
 
 impl InferenceTypePart {
     fn is_marker(&self) -> bool {
-        use InferenceTypePart as ITP;
-
         match self {
-            ITP::MarkerDefinition(_) | ITP::MarkerBody(_) => true,
+            InferenceTypePart::Marker(_) => true,
             _ => false,
         }
     }
@@ -160,8 +160,9 @@ impl InferenceTypePart {
 
     fn is_concrete_integer(&self) -> bool {
         use InferenceTypePart as ITP;
-        match self {ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
-        ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 => true,
+        match self {
+            ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
+            ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 => true,
             _ => false,
         }
     }
@@ -207,7 +208,7 @@ impl InferenceTypePart {
             ITP::Character | ITP::String => {
                 -1
             },
-            ITP::MarkerDefinition(_) | ITP::MarkerBody(_) |
+            ITP::Marker(_) |
             ITP::ArrayLike | ITP::Message | ITP::Array | ITP::Slice |
             ITP::PortLike | ITP::Input | ITP::Output => {
                 // One subtype, so do not modify depth
@@ -226,9 +227,6 @@ impl From<ConcreteTypePart> for InferenceTypePart {
         use InferenceTypePart as ITP;
 
         match v {
-            CTP::Marker(_) => {
-                unreachable!("encountered marker while converting concrete type to inferred type");
-            }
             CTP::Void => ITP::Void,
             CTP::Message => ITP::Message,
             CTP::Bool => ITP::Bool,
@@ -253,7 +251,7 @@ impl From<ConcreteTypePart> for InferenceTypePart {
 
 #[derive(Debug)]
 struct InferenceType {
-    has_body_marker: bool,
+    has_marker: bool,
     is_done: bool,
     parts: Vec<InferenceTypePart>,
 }
@@ -261,17 +259,15 @@ struct InferenceType {
 impl InferenceType {
     /// Generates a new InferenceType. The two boolean flags will be checked in
     /// debug mode.
-    fn new(has_body_marker: bool, is_done: bool, parts: Vec<InferenceTypePart>) -> Self {
+    fn new(has_marker: bool, is_done: bool, parts: Vec<InferenceTypePart>) -> Self {
         if cfg!(debug_assertions) {
             debug_assert!(!parts.is_empty());
-            let parts_body_marker = parts.iter().any(|v| {
-                if let InferenceTypePart::MarkerBody(_) = v { true } else { false }
-            });
-            debug_assert_eq!(has_body_marker, parts_body_marker);
+            let parts_body_marker = parts.iter().any(|v| v.is_marker());
+            debug_assert_eq!(has_marker, parts_body_marker);
             let parts_done = parts.iter().all(|v| v.is_concrete());
             debug_assert_eq!(is_done, parts_done, "{:?}", parts);
         }
-        Self{ has_body_marker, is_done, parts }
+        Self{ has_marker, is_done, parts }
     }
 
     /// Replaces a type subtree with the provided subtree. The caller must make
@@ -291,7 +287,7 @@ impl InferenceType {
     /// Seeks a body marker starting at the specified position. If a marker is
     /// found then its value and the index of the type subtree that follows it
     /// is returned.
-    fn find_body_marker(&self, mut start_idx: usize) -> Option<(usize, usize)> {
+    fn find_marker(&self, mut start_idx: usize) -> Option<(usize, usize)> {
         while start_idx < self.parts.len() {
             if let InferenceTypePart::MarkerBody(marker) = &self.parts[start_idx] {
                 return Some((*marker, start_idx + 1))
@@ -306,7 +302,7 @@ impl InferenceType {
     /// Returns an iterator over all body markers and the partial type tree that
     /// follows those markers. If it is a problem that `InferenceType` is 
     /// borrowed by the iterator, then use `find_body_marker`.
-    fn body_marker_iter(&self) -> InferenceTypeMarkerIter {
+    fn marker_iter(&self) -> InferenceTypeMarkerIter {
         InferenceTypeMarkerIter::new(&self.parts)
     }
 
@@ -351,14 +347,6 @@ impl InferenceType {
         let to_infer_part = &to_infer.parts[*to_infer_idx];
         let template_part = &template_parts[*template_idx];
 
-        // TODO: Maybe do this differently?
-        let mut template_definition_marker = None;
-        if *template_idx > 0 {
-            if let ITP::MarkerDefinition(marker) = &template_parts[*template_idx - 1] {
-                template_definition_marker = Some(*marker)
-            }
-        }
-
         // Check for programmer mistakes
         debug_assert_ne!(to_infer_part, template_part);
         debug_assert!(!to_infer_part.is_marker(), "marker encountered in 'infer part'");
@@ -368,11 +356,6 @@ impl InferenceType {
         if to_infer_part.may_be_inferred_from(template_part) {
             let depth_change = to_infer_part.depth_change();
             debug_assert_eq!(depth_change, template_part.depth_change());
-
-            if let Some(marker) = template_definition_marker {
-                to_infer.parts.insert(*to_infer_idx, ITP::MarkerDefinition(marker));
-                *to_infer_idx += 1;
-            }
 
             to_infer.parts[*to_infer_idx] = template_part.clone();
 
@@ -384,23 +367,12 @@ impl InferenceType {
         // Inference of a completely unknown type
         if *to_infer_part == ITP::Unknown {
             // template part is different, so cannot be unknown, hence copy the
-            // entire subtree. Make sure to copy definition markers, but not to
-            // transfer polymorph markers.
+            // entire subtree. Make sure not to copy markers.
             let template_end_idx = Self::find_subtree_end_idx(template_parts, *template_idx);
-            let template_start_idx = if let Some(marker) = template_definition_marker {
-                to_infer.parts[*to_infer_idx] = ITP::MarkerDefinition(marker);
-                *template_idx
-            } else {
-                to_infer.parts[*to_infer_idx] = template_parts[*template_idx].clone();
-                *template_idx + 1
-            };
-            *to_infer_idx += 1;
 
-            for template_idx in template_start_idx..template_end_idx {
+            for template_idx in *template_idx..template_end_idx {
                 let template_part = &template_parts[template_idx];
-                if let ITP::MarkerBody(_) = template_part {
-                    // Do not copy this one
-                } else {
+                if !template_part.is_marker() {
                     to_infer.parts.insert(*to_infer_idx, template_part.clone());
                     *to_infer_idx += 1;
                 }
@@ -496,7 +468,7 @@ impl InferenceType {
                 continue;
             }
 
-            // And can also not be inferred in any way: types must be incompatible
+            // Types can not be inferred in any way: types must be incompatible
             return DualInferenceResult::Incompatible;
         }
 
@@ -515,7 +487,6 @@ impl InferenceType {
     /// Attempts to infer the first subtree based on the template. Like
     /// `infer_subtrees_for_both_types`, but now only applying inference to
     /// `to_infer` based on the type information in `template`.
-    /// Secondary use is to make sure that a type follows a certain template.
     fn infer_subtree_for_single_type(
         to_infer: &mut InferenceType, mut to_infer_idx: usize,
         template: &[InferenceTypePart], mut template_idx: usize,
@@ -560,11 +531,11 @@ impl InferenceType {
             return SingleInferenceResult::Incompatible
         }
 
-        return if modified {
+        if modified {
             to_infer.recompute_is_done();
-            SingleInferenceResult::Modified
+            return SingleInferenceResult::Modified;
         } else {
-            SingleInferenceResult::Unmodified
+            return SingleInferenceResult::Unmodified;
         }
     }
 
@@ -615,7 +586,7 @@ impl InferenceType {
     /// Performs the conversion of the inference type into a concrete type.
     /// By calling this function you must make sure that no unspecified types
     /// (e.g. Unknown or IntegerLike) exist in the type.
-    fn write_concrete_type(&self, concrete_type: &mut ConcreteType, discard_marked_types: bool) {
+    fn write_concrete_type(&self, concrete_type: &mut ConcreteType) {
         use InferenceTypePart as ITP;
         use ConcreteTypePart as CTP;
 
@@ -628,26 +599,16 @@ impl InferenceType {
         while idx < self.parts.len() {
             let part = &self.parts[idx];
             let converted_part = match part {
-                ITP::MarkerDefinition(marker) => {
-                    // When annotating the AST we keep the markers. When
-                    // determining types for monomorphs we instead want to
-                    // keep the type (not the markers)
-                    if discard_marked_types {
-                        idx = InferenceType::find_subtree_end_idx(&self.parts, idx + 1);
-                        concrete_type.parts.push(CTP::Marker(*marker));
-                    } else {
-                        idx += 1;
-                    }
-                    continue;
-                },
-                ITP::MarkerBody(_) => {
-                    // Inner markers are removed when writing to the concrete
-                    // type.
+                ITP::Marker(_) => {
+                    // Markers are removed when writing to the concrete type.
                     idx += 1;
                     continue;
                 },
                 ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => {
-                    unreachable!("Attempted to convert inference type part {:?} into concrete type", part);
+                    // Should not happen if type inferencing works correctly: we
+                    // should have returned a programmer-readable error or have
+                    // inferred all types.
+                    unreachable!("attempted to convert inference type part {:?} into concrete type", part);
                 },
                 ITP::Void => CTP::Void,
                 ITP::Message => CTP::Message,
@@ -682,12 +643,10 @@ impl InferenceType {
         use InferenceTypePart as ITP;
 
         match &parts[idx] {
-            ITP::MarkerDefinition(thing) => {
-                buffer.push_str(&format!("{{D:{}}}", *thing));
-                idx = Self::write_display_name(buffer, heap, parts, idx + 1);
-            }, 
-            ITP::MarkerBody(thing) => {
-                buffer.push_str(&format!("{{B:{}}}", *thing));
+            ITP::Marker(_marker_idx) => {
+                if debug_log_enabled!() {
+                    buffer.push_str(&format!("{{Marker:{}}}", *_marker_idx));
+                }
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
             },
             ITP::Unknown => buffer.push_str("?"),
@@ -772,6 +731,16 @@ impl InferenceType {
     }
 }
 
+impl Default for InferenceType {
+    fn default() -> Self {
+        Self{
+            has_marker: false,
+            is_done: false,
+            parts: Vec::new(),
+        }
+    }
+}
+
 /// Iterator over the subtrees that follow a marker in an `InferenceType`
 /// instance. Returns immutable slices over the internal parts
 struct InferenceTypeMarkerIter<'a> {
@@ -786,12 +755,12 @@ impl<'a> InferenceTypeMarkerIter<'a> {
 }
 
 impl<'a> Iterator for InferenceTypeMarkerIter<'a> {
-    type Item = (usize, &'a [InferenceTypePart]);
+    type Item = (u32, &'a [InferenceTypePart]);
 
     fn next(&mut self) -> Option<Self::Item> {
         // Iterate until we find a marker
         while self.idx < self.parts.len() {
-            if let InferenceTypePart::MarkerBody(marker) = self.parts[self.idx] {
+            if let InferenceTypePart::Marker(marker) = self.parts[self.idx] {
                 // Found a marker, find the subtree end
                 let start_idx = self.idx + 1;
                 let end_idx = InferenceType::find_subtree_end_idx(self.parts, start_idx);
@@ -862,6 +831,24 @@ pub(crate) struct ResolveQueueElement {
 
 pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
 
+struct InferenceExpression {
+    expr_type: InferenceType,       // result type from expression
+    expr_id: ExpressionId,          // expression that is evaluated
+    field_or_monomorph_idx: i32,    // index of field, of index of monomorph array in type table
+    var_or_extra_data_idx: i32,     // index of extra data needed for inference
+}
+
+impl Default for InferenceExpression {
+    fn default() -> Self {
+        Self{
+            expr_type: InferenceType::default(),
+            expr_id: ExpressionId::new_invalid(),
+            field_or_monomorph_idx: -1,
+            var_or_extra_data_idx: -1,
+        }
+    }
+}
+
 /// This particular visitor will recurse depth-first into the AST and ensures
 /// that all expressions have the appropriate types.
 pub(crate) struct PassTyping {
@@ -875,12 +862,12 @@ pub(crate) struct PassTyping {
 
     // Mapping from parser type to inferred type. We attempt to continue to
     // specify these types until we're stuck or we've fully determined the type.
-    var_types: HashMap<VariableId, VarData>,      // types of variables
-    expr_types: HashMap<ExpressionId, InferenceType>,   // types of expressions
-    extra_data: HashMap<ExpressionId, ExtraData>,       // data for polymorph inference
+    var_types: HashMap<VariableId, VarData>,            // types of variables
+    expr_types: Vec<InferenceExpression>,                     // will be transferred to type table at end
+    extra_data: Vec<ExtraData>,       // data for polymorph inference
     // Keeping track of which expressions need to be reinferred because the
     // expressions they're linked to made progression on an associated type
-    expr_queued: HashSet<ExpressionId>,
+    expr_queued: DequeSet<i32>,
 }
 
 // TODO: @Rename, this is used for a lot of type inferencing. It seems like
@@ -891,6 +878,16 @@ struct ExtraData {
     /// Progression of types of call arguments or struct members
     embedded: Vec<InferenceType>,
     returned: InferenceType,
+}
+
+impl Default for ExtraData {
+    fn default() -> Self {
+        Self{
+            poly_vars: Vec::new(),
+            embedded: Vec::new(),
+            returned: InferenceType::default(),
+        }
+    }
 }
 
 struct VarData {
@@ -920,9 +917,9 @@ impl PassTyping {
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
             expr_buffer: Vec::with_capacity(EXPR_BUFFER_INIT_CAPACITY),
             var_types: HashMap::new(),
-            expr_types: HashMap::new(),
-            extra_data: HashMap::new(),
-            expr_queued: HashSet::new(),
+            expr_types: Vec::new(),
+            extra_data: Vec::new(),
+            expr_queued: DequeSet::new(),
         }
     }
 
@@ -998,6 +995,11 @@ impl Visitor2 for PassTyping {
         debug_log!("Visiting component '{}': {}", comp_def.identifier.value.as_str(), id.0.index);
         debug_log!("{}", "-".repeat(50));
 
+        // Reserve data for expression types
+        debug_assert!(self.expr_types.is_empty());
+        self.expr_types.resize(comp_def.num_expressions_in_body as usize, Default::default());
+
+        // Visit parameters
         for param_id in comp_def.parameters.clone() {
             let param = &ctx.heap[param_id];
             let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
@@ -1005,6 +1007,7 @@ impl Visitor2 for PassTyping {
             self.var_types.insert(param_id, VarData::new_local(var_type));
         }
 
+        // Visit the body and all of its expressions
         let body_stmt_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_stmt_id)
     }
@@ -1030,6 +1033,11 @@ impl Visitor2 for PassTyping {
         }
         debug_log!("{}", "-".repeat(50));
 
+        // Reserve data for expression types
+        debug_assert!(self.expr_types.is_empty());
+        self.expr_types.resize(func_def.num_expressions_in_body as usize, Default::default());
+
+        // Visit parameters
         for param_id in func_def.parameters.clone() {
             let param = &ctx.heap[param_id];
             let var_type = self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, true);
@@ -1037,6 +1045,7 @@ impl Visitor2 for PassTyping {
             self.var_types.insert(param_id, VarData::new_local(var_type));
         }
 
+        // Visit all of the expressions within the body
         let body_stmt_id = ctx.heap[id].body;
         self.visit_block_stmt(ctx, body_stmt_id)
     }
@@ -1166,7 +1175,6 @@ impl Visitor2 for PassTyping {
         let true_expr_id = conditional_expr.true_expression;
         let false_expr_id = conditional_expr.false_expression;
 
-        self.expr_types.insert(test_expr_id, InferenceType::new(false, true, vec![InferenceTypePart::Bool]));
         self.visit_expr(ctx, test_expr_id)?;
         self.visit_expr(ctx, true_expr_id)?;
         self.visit_expr(ctx, false_expr_id)?;
@@ -1328,27 +1336,6 @@ impl Visitor2 for PassTyping {
     }
 }
 
-macro_rules! debug_assert_expr_ids_unique_and_known {
-    // Base case for a single expression ID
-    ($resolver:ident, $id:ident) => {
-        if cfg!(debug_assertions) {
-            $resolver.expr_types.contains_key(&$id);
-        }
-    };
-    // Base case for two expression IDs
-    ($resolver:ident, $id1:ident, $id2:ident) => {
-        debug_assert_ne!($id1, $id2);
-        debug_assert_expr_ids_unique_and_known!($resolver, $id1);
-        debug_assert_expr_ids_unique_and_known!($resolver, $id2);
-    };
-    // Generic case
-    ($resolver:ident, $id1:ident, $id2:ident, $($tail:ident),+) => {
-        debug_assert_ne!($id1, $id2);
-        debug_assert_expr_ids_unique_and_known!($resolver, $id1);
-        debug_assert_expr_ids_unique_and_known!($resolver, $id2, $($tail),+);
-    };
-}
-
 macro_rules! debug_assert_ptrs_distinct {
     // Base case
     ($ptr1:ident, $ptr2:ident) => {
@@ -1375,9 +1362,6 @@ impl PassTyping {
         // the AST and have now performed typechecking for a different 
         // monomorph. In that case we just need to perform typechecking, no need
         // to annotate the AST again.
-        // TODO: @Monomorph, this is completely wrong. It seemed okay, but it
-        //  isn't. Each monomorph might result in completely different internal
-        //  types.
         let definition_id = match &self.definition_type {
             DefinitionType::Component(id) => id.upcast(),
             DefinitionType::Function(id) => id.upcast(),
@@ -1402,11 +1386,11 @@ impl PassTyping {
 
             if !already_checked {
                 let concrete_type = ctx.heap[*expr_id].get_type_mut();
-                expr_type.write_concrete_type(concrete_type, true);
+                expr_type.write_concrete_type(concrete_type);
             } else {
                 if cfg!(debug_assertions) {
                     let mut concrete_type = ConcreteType::default();
-                    expr_type.write_concrete_type(&mut concrete_type, true);
+                    expr_type.write_concrete_type(&mut concrete_type);
                     debug_assert_eq!(*ctx.heap[*expr_id].get_type(), concrete_type);
                 }
             }
@@ -1447,7 +1431,7 @@ impl PassTyping {
                     }
 
                     let mut concrete_type = ConcreteType::default();
-                    poly_type.write_concrete_type(&mut concrete_type, false);
+                    poly_type.write_concrete_type(&mut concrete_type);
                     monomorph_types.insert(poly_idx, concrete_type);
                 }
 
@@ -1803,9 +1787,10 @@ impl PassTyping {
         let progress_idx_base = self.apply_forced_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
         let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, from_id, 0, to_id, 0)?;
 
-        // Make sure if output is of T then subject is Array<T>
+        // Make sure if output is of Slice<T> then subject is Array<T>
+        let progress_expr_base = self.apply_forced_constraint(ctx, upcast_id, &SLICE_TEMPLATE)?;
         let (progress_expr, progress_subject) =
-            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 0)?;
+            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 1, subject_id, 1)?;
 
 
         debug_log!(" * After:");
@@ -1814,7 +1799,7 @@ impl PassTyping {
         debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.expr_types.get(&to_id).unwrap().display_name(&ctx.heap));
         debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
 
-        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_expr_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
         if progress_idx_base || progress_from { self.queue_expr(from_id); }
         if progress_idx_base || progress_to { self.queue_expr(to_id); }
@@ -2013,11 +1998,9 @@ impl PassTyping {
             },
             Literal::Character(_) => {
                 self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?;
-                todo!("check character literal type inference");
             },
             Literal::String(_) => {
                 self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?;
-                todo!("check string literal type inference");
             },
             Literal::Struct(data) => {
                 let extra = self.extra_data.get_mut(&upcast_id).unwrap();
@@ -2503,7 +2486,8 @@ impl PassTyping {
         &mut self, ctx: &mut Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
     ) -> Result<bool, ParseError> {
         debug_assert_expr_ids_unique_and_known!(self, expr_id);
-        let expr_type = self.expr_types.get_mut(&expr_id).unwrap();
+        let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition(); // TODO: @Temp
+        let expr_type = &mut self.expr_types[expr_idx as usize].expr_type;
         match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0) {
             SingleInferenceResult::Modified => Ok(true),
             SingleInferenceResult::Unmodified => Ok(false),
@@ -2536,9 +2520,10 @@ impl PassTyping {
         arg1_id: ExpressionId, arg1_start_idx: usize,
         arg2_id: ExpressionId, arg2_start_idx: usize
     ) -> Result<(bool, bool), ParseError> {
-        debug_assert_expr_ids_unique_and_known!(self, arg1_id, arg2_id);
-        let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
-        let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
+        let arg1_expr_idx = ctx.heap[arg1_id].get_unique_id_in_definition(); // TODO: @Temp
+        let arg2_expr_idx = ctx.heap[arg2_id].get_unique_id_in_definition();
+        let arg1_type: *mut _ = &mut self.expr_types[arg1_expr_idx as usize].expr_type;
+        let arg2_type: *mut _ = &mut self.expr_types[arg2_expr_idx as usize].expr_type;
 
         let infer_res = unsafe{ InferenceType::infer_subtrees_for_both_types(
             arg1_type, arg1_start_idx,
@@ -2562,13 +2547,11 @@ impl PassTyping {
     /// `expression_start_idx` belong to `expr_id`.
     fn apply_equal2_signature_constraint(
         ctx: &Ctx, outer_expr_id: ExpressionId, expr_id: Option<ExpressionId>,
-        polymorph_data: &mut ExtraData, polymorph_progress: &mut HashSet<usize>,
+        polymorph_data: &mut ExtraData, polymorph_progress: &mut HashSet<u32>,
         signature_type: *mut InferenceType, signature_start_idx: usize,
         expression_type: *mut InferenceType, expression_start_idx: usize
     ) -> Result<(bool, bool), ParseError> {
-        // Safety: cannot mutually infer the same types
-        //         polymorph_data containers may not be modified
-        debug_assert_ptrs_distinct!(signature_type, expression_type);
+        // Safety: all pointers distinct
 
         // Infer the signature and expression type
         let infer_res = unsafe { 
@@ -2608,10 +2591,10 @@ impl PassTyping {
         if progress_sig {
             let signature_type = unsafe{&mut *signature_type};
             debug_assert!(
-                signature_type.has_body_marker, 
+                signature_type.has_marker,
                 "made progress on signature type, but it doesn't have a marker"
             );
-            for (poly_idx, poly_section) in signature_type.body_marker_iter() {
+            for (poly_idx, poly_section) in signature_type.marker_iter() {
                 let polymorph_type = &mut polymorph_data.poly_vars[poly_idx];
                 match Self::apply_forced_constraint_types(
                     polymorph_type, 0, poly_section, 0
@@ -2636,11 +2619,11 @@ impl PassTyping {
     ///
     /// This function returns true if the expression's type has been progressed
     fn apply_equal2_polyvar_constraint(
-        polymorph_data: &ExtraData, _polymorph_progress: &HashSet<usize>,
+        polymorph_data: &ExtraData, _polymorph_progress: &HashSet<u32>,
         signature_type: *mut InferenceType, expr_type: *mut InferenceType
     ) -> bool {
         // Safety: all pointers should be distinct
-        //         polymorph_data contains may not be modified
+        //         polymorph_data containers may not be modified
         debug_assert_ptrs_distinct!(signature_type, expr_type);
         let signature_type = unsafe{&mut *signature_type};
         let expr_type = unsafe{&mut *expr_type};
@@ -2650,7 +2633,7 @@ impl PassTyping {
         let mut seek_idx = 0;
         let mut modified_sig = false;
         
-        while let Some((poly_idx, start_idx)) = signature_type.find_body_marker(seek_idx) {
+        while let Some((poly_idx, start_idx)) = signature_type.find_marker(seek_idx) {
             let end_idx = InferenceType::find_subtree_end_idx(&signature_type.parts, start_idx);
             // if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
@@ -2691,12 +2674,15 @@ impl PassTyping {
         arg1_id: ExpressionId, arg2_id: ExpressionId,
         start_idx: usize
     ) -> Result<(bool, bool, bool), ParseError> {
-        // Safety: all expression IDs are always distinct, and we do not modify
-        //  the container
-        debug_assert_expr_ids_unique_and_known!(self, expr_id, arg1_id, arg2_id);
-        let expr_type: *mut _ = self.expr_types.get_mut(&expr_id).unwrap();
-        let arg1_type: *mut _ = self.expr_types.get_mut(&arg1_id).unwrap();
-        let arg2_type: *mut _ = self.expr_types.get_mut(&arg2_id).unwrap();
+        // Safety: all points are unique
+        //         containers may not be modified
+        let expr_expr_idx = ctx.heap[expr_id].get_unique_id_in_definition(); // TODO: @Temp
+        let arg1_expr_idx = ctx.heap[arg1_id].get_unique_id_in_definition();
+        let arg2_expr_idx = ctx.heap[arg2_id].get_unique_id_in_definition();
+
+        let expr_type: *mut _ = &mut self.expr_types[expr_expr_idx as usize].expr_type;
+        let arg1_type: *mut _ = &mut self.expr_types[arg1_expr_idx as usize].expr_type;
+        let arg2_type: *mut _ = &mut self.expr_types[arg2_expr_idx as usize].expr_type;
 
         let expr_res = unsafe{
             InferenceType::infer_subtrees_for_both_types(expr_type, start_idx, arg1_type, start_idx)
@@ -2753,11 +2739,13 @@ impl PassTyping {
         let mut lhs_arg_idx = 0;
 
         while let Some(next_arg_id) = arg_iter.next() {
-            let arg1_type: *mut _ = self.expr_types.get_mut(&last_arg_id).unwrap();
-            let arg2_type: *mut _ = self.expr_types.get_mut(next_arg_id).unwrap();
+            let last_expr_idx = ctx.heap[last_arg_id].get_unique_id_in_definition(); // TODO: @Temp
+            let next_expr_idx = ctx.heap[next_arg_id].get_unique_id_in_definition();
+            let last_type: *mut _ = &mut self.expr_types[last_expr_idx as usize].expr_type;
+            let next_type: *mut _ = &mut self.expr_types[next_expr_idx as usize].expr_type;
 
             let res = unsafe {
-                InferenceType::infer_subtrees_for_both_types(arg1_type, 0, arg2_type, 0)
+                InferenceType::infer_subtrees_for_both_types(last_type, 0, next_type, 0)
             };
 
             if res == DualInferenceResult::Incompatible {
@@ -2805,9 +2793,24 @@ impl PassTyping {
             EP::None =>
                 // Should have been set by linker
                 unreachable!(),
-            EP::ExpressionStmt(_) | EP::Expression(_, _) =>
+            EP::ExpressionStmt(_) =>
                 // Determined during type inference
                 InferenceType::new(false, false, vec![ITP::Unknown]),
+            EP::Expression(parent_id, idx_in_parent) => {
+                // If we are the test expression of a conditional expression,
+                // then we must resolve to a boolean
+                let is_conditional = if let Expression::Conditional(_) = &ctx.heap[*parent_id] {
+                    true
+                } else {
+                    false
+                };
+
+                if is_conditional && *idx_in_parent == 0 {
+                    InferenceType::new(false, true, vec![ITP::Bool])
+                } else {
+                    InferenceType::new(false, false, vec![ITP::Unknown])
+                }
+            },
             EP::If(_) | EP::While(_) =>
                 // Must be a boolean
                 InferenceType::new(false, true, vec![ITP::Bool]),
@@ -2828,21 +2831,38 @@ impl PassTyping {
                 InferenceType::new(false, true, vec![ITP::Void]),
         };
 
-        match self.expr_types.entry(expr_id) {
-            Entry::Vacant(vacant) => {
-                vacant.insert(inference_type);
+        let infer_expr = &mut self.expr_types[expr.get_unique_id_in_definition() as usize];
+        let needs_extra_data = match expr {
+            Expression::Call(_) => true,
+            Expression::Literal(expr) => match expr.value {
+                Literal::Enum(_) | Literal::Union(_) | Literal::Struct(_) => true,
+                _ => false,
             },
-            Entry::Occupied(mut preexisting) => {
-                // We already have an entry, this happens if our parent fixed
-                // our type (e.g. we're used in a conditional expression's test)
-                // but we have a different type.
-                let old_type = preexisting.get_mut();
-                if let SingleInferenceResult::Incompatible = InferenceType::infer_subtree_for_single_type(
-                    old_type, 0, &inference_type.parts, 0
-                ) {
-                    return Err(self.construct_expr_type_error(ctx, expr_id, expr_id))
-                }
+            Expression::Select(_) => true,
+            _ => false,
+        };
+
+        debug_assert!(!(needs_extra_data && needs_var_data)); // obvious, but for future changes
+
+        if infer_expr.expr_id.is_invalid() {
+            // Nothing is set yet
+            infer_expr.expr_type = inference_type;
+            infer_expr.expr_id = expr_id;
+            if needs_extra_data {
+                let extra_idx = self.extra_data.len() as i32;
+                self.extra_data.push(ExtraData::default());
+                infer_expr.var_or_extra_data_idx = extra_idx;
             }
+        } else {
+            // We already have an entry
+            debug_assert!(false, "does this ever happen?");
+            if let SingleInferenceResult::Incompatible = InferenceType::infer_subtree_for_single_type(
+                &mut infer_expr.expr_type, 0, &inference_type.parts, 0
+            ) {
+                return Err(self.construct_expr_type_error(ctx, expr_id, expr_id));
+            }
+
+            debug_assert!((infer_expr.var_or_extra_data_idx != -1) == needs_extra_data);
         }
 
         Ok(())
@@ -2861,6 +2881,8 @@ impl PassTyping {
         // map them back and forth to the polymorphic arguments of the function
         // we are calling.
         let call = &ctx.heap[call_id];
+        let extra_data_idx = self.expr_types[call.unique_id_in_definition as usize].var_or_extra_data_idx;
+        debug_assert!(extra_data_idx != -1, "insert initial call polymorph data, no preallocated ExtraData");
 
         // Handle the polymorphic arguments (if there are any)
         let num_poly_args = call.parser_type.elements[0].variant.num_embedded();
@@ -2886,7 +2908,7 @@ impl PassTyping {
         };
 
         let mut parameter_types = Vec::with_capacity(parameters.len());
-        for parameter_id in parameters.clone().into_iter() { // TODO: @Performance
+        for parameter_id in parameters.clone().into_iter() { // TODO: @Performance @Now
             let param = &ctx.heap[parameter_id];
             parameter_types.push(self.determine_inference_type_from_parser_type_elements(&param.parser_type.elements, false));
         }
@@ -2897,13 +2919,13 @@ impl PassTyping {
                 InferenceType::new(false, true, vec![InferenceTypePart::Void])
             },
             Some(returned) => {
-                debug_assert_eq!(returned.len(), 1);
+                debug_assert_eq!(returned.len(), 1); // TODO: @ReturnTypes
                 let returned = &returned[0];
                 self.determine_inference_type_from_parser_type_elements(&returned.elements, false)
             }
         };
 
-        self.extra_data.insert(call_id.upcast(), ExtraData {
+        self.extra_data[extra_data_idx as usize] = ExtraData{
             poly_vars: poly_args,
             embedded: parameter_types,
             returned: return_type
@@ -2914,6 +2936,9 @@ impl PassTyping {
         &mut self, ctx: &mut Ctx, lit_id: LiteralExpressionId,
     ) {
         use InferenceTypePart as ITP;
+        let literal = &ctx.heap[lit_id];
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        debug_assert!(extra_data_idx != -1, "initial struct polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_struct();
 
         // Handle polymorphic arguments
@@ -2949,7 +2974,7 @@ impl PassTyping {
         // - all the parts for the currently known polymorphic arguments 
         let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(literal.definition, poly_args.len()));
+        parts.push(ITP::Instance(literal.definition, poly_args.len() as u32));
         let mut return_type_done = true;
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { return_type_done = false; }
@@ -2961,11 +2986,11 @@ impl PassTyping {
         debug_assert_eq!(parts.len(), parts_reserved);
         let return_type = InferenceType::new(!poly_args.is_empty(), return_type_done, parts);
 
-        self.extra_data.insert(lit_id.upcast(), ExtraData{
+        self.extra_data[extra_data_idx as usize] = ExtraData{
             poly_vars: poly_args,
             embedded: embedded_types,
             returned: return_type,
-        });
+        };
     }
 
     /// Inserts the extra polymorphic data struct for enum expressions. These
@@ -2975,6 +3000,9 @@ impl PassTyping {
         &mut self, ctx: &Ctx, lit_id: LiteralExpressionId
     ) {
         use InferenceTypePart as ITP;
+        let literal = &ctx.heap[lit_id];
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        debug_assert!(extra_data_idx != -1, "initial enum polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_enum();
 
         // Handle polymorphic arguments to the enum
@@ -2991,7 +3019,7 @@ impl PassTyping {
         // Handle enum type itself
         let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(literal.definition, poly_args.len()));
+        parts.push(ITP::Instance(literal.definition, poly_args.len() as u32));
         let mut enum_type_done = true;
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { enum_type_done = false; }
@@ -3003,11 +3031,11 @@ impl PassTyping {
         debug_assert_eq!(parts.len(), parts_reserved);
         let enum_type = InferenceType::new(!poly_args.is_empty(), enum_type_done, parts);
 
-        self.extra_data.insert(lit_id.upcast(), ExtraData{
+        self.extra_data[extra_data_idx as usize] = ExtraData{
             poly_vars: poly_args,
             embedded: Vec::new(),
             returned: enum_type,
-        });
+        };
     }
 
     /// Inserts the extra polymorphic data struct for unions. The polymorphic
@@ -3016,6 +3044,9 @@ impl PassTyping {
         &mut self, ctx: &Ctx, lit_id: LiteralExpressionId
     ) {
         use InferenceTypePart as ITP;
+        let literal = &ctx.heap[lit_id];
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        debug_assert!(extra_data_idx != -1, "initial union polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_union();
 
         // Construct the polymorphic variables
@@ -3047,7 +3078,7 @@ impl PassTyping {
         // Handle the type of the union itself
         let parts_reserved = 1 + poly_args.len() + total_num_poly_parts;
         let mut parts = Vec::with_capacity(parts_reserved);
-        parts.push(ITP::Instance(definition_id, poly_args.len()));
+        parts.push(ITP::Instance(definition_id, poly_args.len() as u32));
         let mut union_type_done = true;
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { union_type_done = false; }
@@ -3059,11 +3090,11 @@ impl PassTyping {
         debug_assert_eq!(parts_reserved, parts.len());
         let union_type = InferenceType::new(!poly_args.is_empty(), union_type_done, parts);
 
-        self.extra_data.insert(lit_id.upcast(), ExtraData{
+        self.extra_data[extra_data_idx as usize] = ExtraData{
             poly_vars: poly_args,
             embedded,
             returned: union_type
-        });
+        };
     }
 
     /// Inserts the extra polymorphic data struct. Assumes that the select
@@ -3075,6 +3106,8 @@ impl PassTyping {
 
         // Retrieve relevant data
         let expr = &ctx.heap[select_id];
+        let extra_data_idx = self.expr_types[expr.unique_id_in_definition as usize].var_or_extra_data_idx;
+        debug_assert!(extra_data_idx != -1, "initial select polymorph data, but no preallocated ExtraData");
         let field = expr.field.as_symbolic();
 
         let definition_id = field.definition.unwrap();
@@ -3087,7 +3120,7 @@ impl PassTyping {
         let mut poly_vars = Vec::with_capacity(num_poly_vars);
         let struct_parts_reserved = 1 + 2 * num_poly_vars;
         let mut struct_parts = Vec::with_capacity(struct_parts_reserved);
-        struct_parts.push(ITP::Instance(definition_id, num_poly_vars));        
+        struct_parts.push(ITP::Instance(definition_id, num_poly_vars as u32));
 
         for poly_idx in 0..num_poly_vars {
             poly_vars.push(InferenceType::new(true, false, vec![
@@ -3100,11 +3133,11 @@ impl PassTyping {
 
         // Generate initial field type
         let field_type = self.determine_inference_type_from_parser_type_elements(&definition.fields[field_idx].parser_type.elements, false);
-        self.extra_data.insert(select_id.upcast(), ExtraData{
+        self.extra_data[extra_data_idx as usize] = ExtraData{
             poly_vars,
             embedded: vec![InferenceType::new(num_poly_vars != 0, num_poly_vars == 0, struct_parts)],
             returned: field_type
-        });
+        };
     }
 
     /// Determines the initial InferenceType from the provided ParserType. This
@@ -3121,7 +3154,7 @@ impl PassTyping {
     /// that we can perform type inference on the polymorphic variables.
     fn determine_inference_type_from_parser_type_elements(
         &mut self, elements: &[ParserTypeElement],
-        parser_type_in_body: bool
+        use_definitions_known_poly_args: bool
     ) -> InferenceType {
         use ParserTypeVariant as PTV;
         use InferenceTypePart as ITP;
@@ -3166,13 +3199,12 @@ impl PassTyping {
                 PTV::Output => { infer_type.push(ITP::Output); },
                 PTV::PolymorphicArgument(belongs_to_definition, poly_arg_idx) => {
                     let poly_arg_idx = *poly_arg_idx;
-                    if parser_type_in_body {
+                    if use_definitions_known_poly_args {
                         // Refers to polymorphic argument on procedure we're currently processing.
                         // This argument is already known.
                         debug_assert_eq!(*belongs_to_definition, self.definition_type.definition_id());
                         debug_assert!((poly_arg_idx as usize) < self.poly_vars.len());
 
-                        infer_type.push(ITP::MarkerDefinition(poly_arg_idx as usize));
                         for concrete_part in &self.poly_vars[poly_arg_idx].parts {
                             infer_type.push(ITP::from(*concrete_part));
                         }
@@ -3180,7 +3212,7 @@ impl PassTyping {
                         // Polymorphic argument has to be inferred
                         has_markers = true;
                         has_inferred = true;
-                        infer_type.push(ITP::MarkerBody(poly_arg_idx));
+                        infer_type.push(ITP::Marker(poly_arg_idx));
                         infer_type.push(ITP::Unknown)
                     }
                 },
@@ -3277,13 +3309,13 @@ impl PassTyping {
     ) -> ParseError {
         // Helper function to check for polymorph mismatch between two inference
         // types.
-        fn has_poly_mismatch<'a>(type_a: &'a InferenceType, type_b: &'a InferenceType) -> Option<(usize, &'a [InferenceTypePart], &'a [InferenceTypePart])> {
-            if !type_a.has_body_marker || !type_b.has_body_marker {
+        fn has_poly_mismatch<'a>(type_a: &'a InferenceType, type_b: &'a InferenceType) -> Option<(u32, &'a [InferenceTypePart], &'a [InferenceTypePart])> {
+            if !type_a.has_marker || !type_b.has_marker {
                 return None
             }
 
-            for (marker_a, section_a) in type_a.body_marker_iter() {
-                for (marker_b, section_b) in type_b.body_marker_iter() {
+            for (marker_a, section_a) in type_a.marker_iter() {
+                for (marker_b, section_b) in type_b.marker_iter() {
                     if marker_a != marker_b {
                         // Not the same polymorphic variable
                         continue;
@@ -3300,16 +3332,16 @@ impl PassTyping {
         }
 
         // Helpers function to retrieve polyvar name and definition name
-        fn get_poly_var_and_definition_name<'a>(ctx: &'a Ctx, poly_var_idx: usize, definition_id: DefinitionId) -> (&'a str, &'a str) {
+        fn get_poly_var_and_definition_name<'a>(ctx: &'a Ctx, poly_var_idx: u32, definition_id: DefinitionId) -> (&'a str, &'a str) {
             let definition = &ctx.heap[definition_id];
-            let poly_var = definition.poly_vars()[poly_var_idx].value.as_str();
+            let poly_var = definition.poly_vars()[poly_var_idx as usize].value.as_str();
             let func_name = definition.identifier().value.as_str();
 
             (poly_var, func_name)
         }
 
         // Helper function to construct initial error
-        fn construct_main_error(ctx: &Ctx, poly_var_idx: usize, expr: &Expression) -> ParseError {
+        fn construct_main_error(ctx: &Ctx, poly_var_idx: u32, expr: &Expression) -> ParseError {
             match expr {
                 Expression::Call(expr) => {
                     let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, expr.definition);

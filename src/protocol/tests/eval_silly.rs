@@ -102,7 +102,7 @@ fn test_slicing_magic() {
             auto created = create_holder(0, 5, 2, 8);
 
             // in a convoluted fashion select the value 3 from the lhs and the value 3 from the rhs
-            auto result = slicing_magic(create_holder(0, 5, 2, 8), 3, 2, 1, 2);
+            auto result = slicing_magic(created, 3, 2, 1, 2);
 
             // and return 3 + 3
             return result[0] + result[1];
