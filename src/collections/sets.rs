@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
 /// Simple double ended queue that ensures that all elements are unique. Queue
-/// is not ordered.
+/// elements are not ordered (use case is that the queue should be rather
+/// small).
 pub struct DequeSet<T: Eq> {
     inner: VecDeque<T>,
 }
@@ -41,6 +42,11 @@ impl<T: Eq> DequeSet<T> {
         }
 
         self.inner.push_front(to_push);
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.inner.clear();
     }
 
     #[inline]

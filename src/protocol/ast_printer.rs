@@ -863,7 +863,7 @@ fn write_parser_type(target: &mut String, heap: &Heap, t: &ParserType) {
             },
             PTV::PolymorphicArgument(definition_id, arg_idx) => {
                 let definition = &heap[*definition_id];
-                let poly_var = &definition.poly_vars()[*arg_idx].value;
+                let poly_var = &definition.poly_vars()[*arg_idx as usize].value;
                 target.push_str(poly_var.as_str());
             },
             PTV::Definition(definition_id, num_embedded) => {
@@ -901,13 +901,6 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
         }
 
         match &t.parts[idx] {
-            CTP::Marker(marker) => {
-                // Marker points to polymorphic variable index
-                let definition = &heap[def_id];
-                let poly_var_ident = &definition.poly_vars()[*marker];
-                target.push_str(poly_var_ident.value.as_str());
-                idx = write_concrete_part(target, heap, def_id, t, idx + 1);
-            },
             CTP::Void => target.push_str("void"),
             CTP::Message => target.push_str("msg"),
             CTP::Bool => target.push_str("bool"),

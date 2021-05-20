@@ -953,7 +953,7 @@ fn serialize_parser_type(buffer: &mut String, heap: &Heap, parser_type: &ParserT
             },
             PTV::PolymorphicArgument(definition_id, poly_idx) => {
                 let definition = &heap[*definition_id];
-                let poly_arg = &definition.poly_vars()[*poly_idx];
+                let poly_arg = &definition.poly_vars()[*poly_idx as usize];
                 buffer.push_str(poly_arg.value.as_str());
             },
             PTV::Definition(definition_id, num_embedded) => {
@@ -996,9 +996,6 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
 
         let part = &concrete.parts[idx];
         match part {
-            CTP::Marker(poly_idx) => {
-                buffer.push_str(poly_vars[*poly_idx].value.as_str());
-            },
             CTP::Void => buffer.push_str("void"),
             CTP::Message => write_bytes(buffer, KW_TYPE_MESSAGE),
             CTP::Bool => write_bytes(buffer, KW_TYPE_BOOL),

@@ -28,7 +28,6 @@ use crate::protocol::ast::*;
 use crate::protocol::input_source::*;
 
 use crate::protocol::ast_printer::ASTWriter;
-use crate::protocol::parser::type_table::PolymorphicVariable;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModuleCompilationPhase {
@@ -277,6 +276,7 @@ fn insert_builtin_function<T: Fn(FunctionDefinitionId) -> (Vec<(&'static str, Pa
         return_types: Vec::new(),
         parameters: Vec::new(),
         body: BlockStatementId::new_invalid(),
+        num_expressions_in_body: -1,
     });
 
     let (args, ret) = arg_and_return_fn(func_id);

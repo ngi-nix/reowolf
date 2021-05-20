@@ -396,7 +396,7 @@ impl ParserTypeVariant {
                 0,
             ArrayLike | InputOrOutput | Array | Input | Output =>
                 1,
-            Definition(_, num) => *num,
+            Definition(_, num) => *num as usize,
         }
     }
 }
@@ -512,16 +512,6 @@ pub struct ConcreteType {
 impl Default for ConcreteType {
     fn default() -> Self {
         Self{ parts: Vec::new() }
-    }
-}
-
-impl ConcreteType {
-    pub(crate) fn has_marker(&self) -> bool {
-        self.parts
-            .iter()
-            .any(|p| {
-                if let ConcreteTypePart::Marker(_) = p { true } else { false }
-            })
     }
 }
 

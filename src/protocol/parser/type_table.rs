@@ -623,6 +623,7 @@ impl TypeTable {
             definition: DefinedTypeVariant::Function(FunctionType{
                 return_types: definition.return_types.clone(),
                 arguments,
+                monomorphs: Vec::new(),
             }),
             poly_vars,
             is_polymorph,
@@ -682,6 +683,7 @@ impl TypeTable {
             definition: DefinedTypeVariant::Component(ComponentType{
                 variant: component_variant,
                 arguments,
+                monomorphs: Vec::new(),
             }),
             poly_vars,
             is_polymorph,
@@ -878,7 +880,7 @@ impl TypeTable {
     fn mark_used_polymorphic_variables(poly_vars: &mut Vec<PolymorphicVariable>, parser_type: &ParserType) {
         for element in & parser_type.elements {
             if let ParserTypeVariant::PolymorphicArgument(_, idx) = &element.variant {
-                poly_vars[*idx].is_in_use = true;
+                poly_vars[*idx as usize].is_in_use = true;
             }
         }
     }

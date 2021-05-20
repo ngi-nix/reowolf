@@ -46,15 +46,15 @@
 ///     maybe there is a better way then flattened trees + markers?
 
 macro_rules! debug_log_enabled {
-    () => { false };
+    () => { true };
 }
 
 macro_rules! debug_log {
     ($format:literal) => {
-        enabled_debug_print!(false, "types", $format);
+        enabled_debug_print!(true, "types", $format);
     };
     ($format:literal, $($args:expr),*) => {
-        enabled_debug_print!(false, "types", $format, $($args),*);
+        enabled_debug_print!(true, "types", $format, $($args),*);
     };
 }
 
@@ -73,7 +73,6 @@ use super::visitor::{
     Visitor2,
     VisitorResult
 };
-use std::collections::hash_map::Entry;
 
 const VOID_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Void ];
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
@@ -249,7 +248,7 @@ impl From<ConcreteTypePart> for InferenceTypePart {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct InferenceType {
     has_marker: bool,
     is_done: bool,
@@ -287,9 +286,9 @@ impl InferenceType {
     /// Seeks a body marker starting at the specified position. If a marker is
     /// found then its value and the index of the type subtree that follows it
     /// is returned.
-    fn find_marker(&self, mut start_idx: usize) -> Option<(usize, usize)> {
+    fn find_marker(&self, mut start_idx: usize) -> Option<(u32, usize)> {
         while start_idx < self.parts.len() {
-            if let InferenceTypePart::MarkerBody(marker) = &self.parts[start_idx] {
+            if let InferenceTypePart::Marker(marker) = &self.parts[start_idx] {
                 return Some((*marker, start_idx + 1))
             }
 
@@ -369,8 +368,10 @@ impl InferenceType {
             // template part is different, so cannot be unknown, hence copy the
             // entire subtree. Make sure not to copy markers.
             let template_end_idx = Self::find_subtree_end_idx(template_parts, *template_idx);
+            to_infer.parts[*to_infer_idx] = template_parts[*template_idx].clone(); // first element
 
-            for template_idx in *template_idx..template_end_idx {
+            *to_infer_idx += 1;
+            for template_idx in *template_idx + 1..template_end_idx {
                 let template_part = &template_parts[template_idx];
                 if !template_part.is_marker() {
                     to_infer.parts.insert(*to_infer_idx, template_part.clone());
@@ -831,6 +832,7 @@ pub(crate) struct ResolveQueueElement {
 
 pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
 
+#[derive(Clone)]
 struct InferenceExpression {
     expr_type: InferenceType,       // result type from expression
     expr_id: ExpressionId,          // expression that is evaluated
@@ -873,6 +875,7 @@ pub(crate) struct PassTyping {
 // TODO: @Rename, this is used for a lot of type inferencing. It seems like
 //  there is a different underlying architecture waiting to surface.
 struct ExtraData {
+    expr_id: ExpressionId, // the expression with which this data is associated
     /// Progression of polymorphic variables (if any)
     poly_vars: Vec<InferenceType>,
     /// Progression of types of call arguments or struct members
@@ -883,6 +886,7 @@ struct ExtraData {
 impl Default for ExtraData {
     fn default() -> Self {
         Self{
+            expr_id: ExpressionId::new_invalid(),
             poly_vars: Vec::new(),
             embedded: Vec::new(),
             returned: InferenceType::default(),
@@ -1336,25 +1340,18 @@ impl Visitor2 for PassTyping {
     }
 }
 
-macro_rules! debug_assert_ptrs_distinct {
-    // Base case
-    ($ptr1:ident, $ptr2:ident) => {
-        debug_assert!(!std::ptr::eq($ptr1, $ptr2));
-    };
-    // Generic case
-    ($ptr1:ident, $ptr2:ident, $($tail:ident),+) => {
-        debug_assert_ptrs_distinct!($ptr1, $ptr2);
-        debug_assert_ptrs_distinct!($ptr2, $($tail),+);
-    };
-}
-
 impl PassTyping {
+    fn temp_get_display_name(&self, ctx: &Ctx, expr_id: ExpressionId) -> String {
+        let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition();
+        let expr_type = &self.expr_types[expr_idx as usize].expr_type;
+        expr_type.display_name(&ctx.heap)
+    }
+
     fn resolve_types(&mut self, ctx: &mut Ctx, queue: &mut ResolveQueue) -> Result<(), ParseError> {
         // Keep inferring until we can no longer make any progress
-        while let Some(next_expr_id) = self.expr_queued.iter().next() {
-            let next_expr_id = *next_expr_id;
-            self.expr_queued.remove(&next_expr_id);
-            self.progress_expr(ctx, next_expr_id)?;
+        while !self.expr_queued.is_empty() {
+            let next_expr_idx = self.expr_queued.pop_front().unwrap();
+            self.progress_expr(ctx, next_expr_idx)?;
         }
 
         // We check if we have all the types we need. If we're typechecking a 
@@ -1367,14 +1364,16 @@ impl PassTyping {
             DefinitionType::Function(id) => id.upcast(),
         };
 
+        // TODO: Modify this to be correct and use a new array with types
         let already_checked = ctx.types.get_base_definition(&definition_id).unwrap().has_any_monomorph();
-        for (expr_id, expr_type) in self.expr_types.iter_mut() {
+        for infer_expr in self.expr_types.iter_mut() {
+            let expr_type = &mut infer_expr.expr_type;
             if !expr_type.is_done {
                 // Auto-infer numberlike/integerlike types to a regular int
                 if expr_type.parts.len() == 1 && expr_type.parts[0] == InferenceTypePart::IntegerLike {
                     expr_type.parts[0] = InferenceTypePart::SInt32;
                 } else {
-                    let expr = &ctx.heap[*expr_id];
+                    let expr = &ctx.heap[infer_expr.expr_id];
                     return Err(ParseError::new_error_at_span(
                         &ctx.module.source, expr.span(), format!(
                             "could not fully infer the type of this expression (got '{}')",
@@ -1385,13 +1384,13 @@ impl PassTyping {
             }
 
             if !already_checked {
-                let concrete_type = ctx.heap[*expr_id].get_type_mut();
+                let concrete_type = ctx.heap[infer_expr.expr_id].get_type_mut();
                 expr_type.write_concrete_type(concrete_type);
             } else {
                 if cfg!(debug_assertions) {
                     let mut concrete_type = ConcreteType::default();
                     expr_type.write_concrete_type(&mut concrete_type);
-                    debug_assert_eq!(*ctx.heap[*expr_id].get_type(), concrete_type);
+                    debug_assert_eq!(*ctx.heap[infer_expr.expr_id].get_type(), concrete_type);
                 }
             }
         }
@@ -1401,7 +1400,7 @@ impl PassTyping {
 
         // Check all things we need to monomorphize
         // TODO: Struct/enum/union monomorphization
-        for (expr_id, extra_data) in self.extra_data.iter() {
+        for extra_data in self.extra_data.iter() {
             if extra_data.poly_vars.is_empty() { continue; }
 
             // Retrieve polymorph variable specification. Those of struct 
@@ -1409,7 +1408,7 @@ impl PassTyping {
             // The remaining ones (e.g. select expressions) allow partial 
             // inference of types, as long as the accessed field's type is
             // fully inferred.
-            let needs_full_inference = match &ctx.heap[*expr_id] {
+            let needs_full_inference = match &ctx.heap[extra_data.expr_id] {
                 Expression::Call(_) => true,
                 Expression::Literal(_) => true,
                 _ => false
@@ -1421,7 +1420,7 @@ impl PassTyping {
                     if !poly_type.is_done {
                         // TODO: Single clean function for function signatures and polyvars.
                         // TODO: Better error message
-                        let expr = &ctx.heap[*expr_id];
+                        let expr = &ctx.heap[extra_data.expr_id];
                         return Err(ParseError::new_error_at_span(
                             &ctx.module.source, expr.span(), format!(
                                 "could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
@@ -1437,7 +1436,7 @@ impl PassTyping {
 
                 // Resolve to the appropriate expression and instantiate 
                 // monomorphs.
-                match &ctx.heap[*expr_id] {
+                match &ctx.heap[extra_data.expr_id] {
                     Expression::Call(call_expr) => {
                         // Add to type table if not yet typechecked
                         if call_expr.method == Method::UserFunction {
@@ -1481,7 +1480,8 @@ impl PassTyping {
         Ok(())
     }
 
-    fn progress_expr(&mut self, ctx: &mut Ctx, id: ExpressionId) -> Result<(), ParseError> {
+    fn progress_expr(&mut self, ctx: &mut Ctx, idx: i32) -> Result<(), ParseError> {
+        let id = self.expr_types[idx as usize].expr_id; // TODO: @Temp
         match &ctx.heap[id] {
             Expression::Assignment(expr) => {
                 let id = expr.this;
@@ -1534,18 +1534,18 @@ impl PassTyping {
 
         let upcast_id = id.upcast();
 
-        // Assignment does not return anything (it operates like a statement)
-        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &VOID_TEMPLATE)?;
-
         let expr = &ctx.heap[id];
         let arg1_expr_id = expr.left;
         let arg2_expr_id = expr.right;
 
         debug_log!("Assignment expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+
+        // Assignment does not return anything (it operates like a statement)
+        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &VOID_TEMPLATE)?;
 
         // Apply forced constraint to LHS value
         let progress_forced = match expr.operation {
@@ -1564,14 +1564,14 @@ impl PassTyping {
         debug_assert!(if progress_forced { progress_arg2 } else { true });
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.temp_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_forced || progress_arg1 { self.queue_expr(arg1_expr_id); }
-        if progress_arg2 { self.queue_expr(arg2_expr_id); }
+        if progress_forced || progress_arg1 { self.queue_expr(ctx, arg1_expr_id); }
+        if progress_arg2 { self.queue_expr(ctx, arg2_expr_id); }
 
         Ok(())
     }
@@ -1585,22 +1585,22 @@ impl PassTyping {
 
         debug_log!("Conditional expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
             ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_expr_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.temp_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_arg1 { self.queue_expr(arg1_expr_id); }
-        if progress_arg2 { self.queue_expr(arg2_expr_id); }
+        if progress_arg1 { self.queue_expr(ctx, arg1_expr_id); }
+        if progress_arg2 { self.queue_expr(ctx, arg2_expr_id); }
 
         Ok(())
     }
@@ -1617,9 +1617,9 @@ impl PassTyping {
 
         debug_log!("Binary expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.expr_types.get(&arg1_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type: {}", self.expr_types.get(&arg2_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_id));
+        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_id));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
@@ -1678,13 +1678,13 @@ impl PassTyping {
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.expr_types.get(&arg1_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.expr_types.get(&arg2_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.temp_get_display_name(ctx, arg1_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_arg1 { self.queue_expr(arg1_id); }
-        if progress_arg2 { self.queue_expr(arg2_id); }
+        if progress_arg1 { self.queue_expr(ctx, arg1_id); }
+        if progress_arg2 { self.queue_expr(ctx, arg2_id); }
 
         Ok(())
     }
@@ -1698,8 +1698,8 @@ impl PassTyping {
 
         debug_log!("Unary expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg  type: {}", self.expr_types.get(&arg_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg  type: {}", self.temp_get_display_name(ctx, arg_id));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         let (progress_expr, progress_arg) = match expr.operation {
             UO::Positive | UO::Negative => {
@@ -1727,11 +1727,11 @@ impl PassTyping {
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Arg  type [{}]: {}", progress_arg, self.expr_types.get(&arg_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Arg  type [{}]: {}", progress_arg, self.temp_get_display_name(ctx, arg_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_arg { self.queue_expr(arg_id); }
+        if progress_arg { self.queue_expr(ctx, arg_id); }
 
         Ok(())
     }
@@ -1744,9 +1744,9 @@ impl PassTyping {
 
         debug_log!("Indexing expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Index   type: {}", self.expr_types.get(&index_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, subject_id));
+        debug_log!("   - Index   type: {}", self.temp_get_display_name(ctx, index_id));
+        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and index is integerlike
         let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
@@ -1757,13 +1757,13 @@ impl PassTyping {
             self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Index   type [{}]: {}", progress_index, self.expr_types.get(&index_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.temp_get_display_name(ctx, subject_id));
+        debug_log!("   - Index   type [{}]: {}", progress_index, self.temp_get_display_name(ctx, index_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
-        if progress_index { self.queue_expr(index_id); }
+        if progress_subject_base || progress_subject { self.queue_expr(ctx, subject_id); }
+        if progress_index { self.queue_expr(ctx, index_id); }
 
         Ok(())
     }
@@ -1777,10 +1777,10 @@ impl PassTyping {
 
         debug_log!("Slicing expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - FromIdx type: {}", self.expr_types.get(&from_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - ToIdx   type: {}", self.expr_types.get(&to_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, subject_id));
+        debug_log!("   - FromIdx type: {}", self.temp_get_display_name(ctx, from_id));
+        debug_log!("   - ToIdx   type: {}", self.temp_get_display_name(ctx, to_id));
+        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and indices are of equal integerlike
         let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
@@ -1794,15 +1794,15 @@ impl PassTyping {
 
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - FromIdx type [{}]: {}", progress_idx_base || progress_from, self.expr_types.get(&from_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.expr_types.get(&to_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.temp_get_display_name(ctx, subject_id));
+        debug_log!("   - FromIdx type [{}]: {}", progress_idx_base || progress_from, self.temp_get_display_name(ctx, from_id));
+        debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.temp_get_display_name(ctx, to_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         if progress_expr_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-        if progress_subject_base || progress_subject { self.queue_expr(subject_id); }
-        if progress_idx_base || progress_from { self.queue_expr(from_id); }
-        if progress_idx_base || progress_to { self.queue_expr(to_id); }
+        if progress_subject_base || progress_subject { self.queue_expr(ctx, subject_id); }
+        if progress_idx_base || progress_from { self.queue_expr(ctx, from_id); }
+        if progress_idx_base || progress_to { self.queue_expr(ctx, to_id); }
 
         Ok(())
     }
@@ -1812,11 +1812,14 @@ impl PassTyping {
         
         debug_log!("Select expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.expr_types.get(&ctx.heap[id].subject).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, ctx.heap[id].subject));
+        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
 
+        let subject_id = ctx.heap[id].subject;
+        let subject_expr_idx = ctx.heap[subject_id].get_unique_id_in_definition();
         let expr = &mut ctx.heap[id];
-        let subject_id = expr.subject;
+        let expr_idx = expr.unique_id_in_definition;
+        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
 
         fn determine_inference_type_instance<'a>(types: &'a TypeTable, infer_type: &InferenceType) -> Result<Option<&'a DefinedType>, ()> {
             for part in &infer_type.parts {
@@ -1855,7 +1858,7 @@ impl PassTyping {
                 // and not previously determined
                 if field.definition.is_none() {
                     // Not yet known, check if we can determine it
-                    let subject_type = self.expr_types.get(&subject_id).unwrap();
+                    let subject_type = &self.expr_types[subject_expr_idx as usize].expr_type;
                     let type_def = determine_inference_type_instance(&ctx.types, subject_type);
 
                     match type_def {
@@ -1918,12 +1921,13 @@ impl PassTyping {
                 // applied.
                 // Check to see if we can infer anything about the subject's and
                 // the field's polymorphic variables
-                let poly_data = self.extra_data.get_mut(&upcast_id).unwrap();
+
+                let poly_data = &mut self.extra_data[extra_idx as usize];
                 let mut poly_progress = HashSet::new();
                 
                 // Apply to struct's type
                 let signature_type: *mut _ = &mut poly_data.embedded[0];
-                let subject_type: *mut _ = self.expr_types.get_mut(&subject_id).unwrap();
+                let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
 
                 let (_, progress_subject) = Self::apply_equal2_signature_constraint(
                     ctx, upcast_id, Some(subject_id), poly_data, &mut poly_progress,
@@ -1931,12 +1935,12 @@ impl PassTyping {
                 )?;
 
                 if progress_subject {
-                    self.expr_queued.insert(subject_id);
+                    self.expr_queued.push_back(subject_expr_idx);
                 }
                 
                 // Apply to field's type
                 let signature_type: *mut _ = &mut poly_data.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
 
                 let (_, progress_expr) = Self::apply_equal2_signature_constraint(
                     ctx, upcast_id, None, poly_data, &mut poly_progress, 
@@ -1945,20 +1949,21 @@ impl PassTyping {
 
                 if progress_expr {
                     if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        self.expr_queued.insert(parent_id);
+                        let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                        self.expr_queued.push_back(parent_idx);
                     }
                 }
 
                 // Reapply progress in polymorphic variables to struct's type
                 let signature_type: *mut _ = &mut poly_data.embedded[0];
-                let subject_type: *mut _ = self.expr_types.get_mut(&subject_id).unwrap();
+                let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
                 
                 let progress_subject = Self::apply_equal2_polyvar_constraint(
                     poly_data, &poly_progress, signature_type, subject_type
                 );
 
                 let signature_type: *mut _ = &mut poly_data.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
 
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
                     poly_data, &poly_progress, signature_type, expr_type
@@ -1968,12 +1973,12 @@ impl PassTyping {
             }
         };
 
-        if progress_subject { self.queue_expr(subject_id); }
+        if progress_subject { self.queue_expr(ctx, subject_id); }
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject, self.expr_types.get(&subject_id).unwrap().display_name(&ctx.heap));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Subject type [{}]: {}", progress_subject, self.temp_get_display_name(ctx, subject_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
         Ok(())
     }
@@ -1981,10 +1986,12 @@ impl PassTyping {
     fn progress_literal_expr(&mut self, ctx: &mut Ctx, id: LiteralExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
+        let expr_idx = expr.unique_id_in_definition;
+        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
 
         debug_log!("Literal expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         let progress_expr = match &expr.value {
             Literal::Null => {
@@ -1997,13 +2004,13 @@ impl PassTyping {
                 self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?
             },
             Literal::Character(_) => {
-                self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?;
+                self.apply_forced_constraint(ctx, upcast_id, &CHARACTER_TEMPLATE)?
             },
             Literal::String(_) => {
-                self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?;
+                self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?
             },
             Literal::Struct(data) => {
-                let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                let extra = &mut self.extra_data[extra_idx as usize];
                 for _poly in &extra.poly_vars {
                     debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
@@ -2015,8 +2022,9 @@ impl PassTyping {
                 // Mutually infer field signature/expression types
                 for (field_idx, field) in data.fields.iter().enumerate() {
                     let field_expr_id = field.value;
+                    let field_expr_idx = ctx.heap[field_expr_id].get_unique_id_in_definition();
                     let signature_type: *mut _ = &mut extra.embedded[field_idx];
-                    let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
+                    let field_type: *mut _ = &mut self.expr_types[field_expr_idx as usize].expr_type;
                     let (_, progress_arg) = Self::apply_equal2_signature_constraint(
                         ctx, upcast_id, Some(field_expr_id), extra, &mut poly_progress,
                         signature_type, 0, field_type, 0
@@ -2029,7 +2037,7 @@ impl PassTyping {
                     );
 
                     if progress_arg {
-                        self.expr_queued.insert(field_expr_id);
+                        self.expr_queued.push_back(field_expr_idx);
                     }
                 }
 
@@ -2037,7 +2045,7 @@ impl PassTyping {
 
                 // Same for the type of the struct itself
                 let signature_type: *mut _ = &mut extra.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
                 let (_, progress_expr) = Self::apply_equal2_signature_constraint(
                     ctx, upcast_id, None, extra, &mut poly_progress,
                     signature_type, 0, expr_type, 0
@@ -2053,7 +2061,8 @@ impl PassTyping {
                 if progress_expr {
                     // TODO: @cleanup, cannot call utility self.queue_parent thingo
                     if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        self.expr_queued.insert(parent_id);
+                        let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                        self.expr_queued.push_back(parent_idx);
                     }
                 }
 
@@ -2067,7 +2076,8 @@ impl PassTyping {
                     debug_assert_eq!(field_idx, data.fields[field_idx].field_idx, "confusing, innit?");
                     let signature_type: *mut _ = &mut extra.embedded[field_idx];
                     let field_expr_id = data.fields[field_idx].value;
-                    let field_type: *mut _ = self.expr_types.get_mut(&field_expr_id).unwrap();
+                    let field_expr_idx = ctx.heap[field_expr_id].get_unique_id_in_definition();
+                    let field_type: *mut _ = &mut self.expr_types[field_expr_idx as usize].expr_type;
 
                     let progress_arg = Self::apply_equal2_polyvar_constraint(
                         extra, &poly_progress, signature_type, field_type
@@ -2079,13 +2089,13 @@ impl PassTyping {
                         unsafe{&*field_type}.display_name(&ctx.heap)
                     );
                     if progress_arg {
-                        self.expr_queued.insert(field_expr_id);
+                        self.expr_queued.push_back(field_expr_idx);
                     }
                 }
                 
                 // For the return type
                 let signature_type: *mut _ = &mut extra.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
 
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
                     extra, &poly_progress, signature_type, expr_type
@@ -2094,7 +2104,7 @@ impl PassTyping {
                 progress_expr
             },
             Literal::Enum(_) => {
-                let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                let extra = &mut self.extra_data[extra_idx as usize];
                 for _poly in &extra.poly_vars {
                     debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
@@ -2103,7 +2113,7 @@ impl PassTyping {
                 debug_log!(" * During (inferring types from return type)");
 
                 let signature_type: *mut _ = &mut extra.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
                 let (_, progress_expr) = Self::apply_equal2_signature_constraint(
                     ctx, upcast_id, None, extra, &mut poly_progress,
                     signature_type, 0, expr_type, 0
@@ -2118,7 +2128,8 @@ impl PassTyping {
                 if progress_expr {
                     // TODO: @cleanup
                     if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        self.expr_queued.insert(parent_id);
+                        let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                        self.expr_queued.push_back(parent_idx);
                     }
                 }
 
@@ -2130,7 +2141,7 @@ impl PassTyping {
                 progress_expr
             },
             Literal::Union(data) => {
-                let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+                let extra = &mut self.extra_data[extra_idx as usize];
                 for _poly in &extra.poly_vars {
                     debug_log!(" * Poly: {}", _poly.display_name(&ctx.heap));
                 }
@@ -2142,8 +2153,9 @@ impl PassTyping {
                 // Mutually infer union variant values
                 for (value_idx, value_expr_id) in data.values.iter().enumerate() {
                     let value_expr_id = *value_expr_id;
+                    let value_expr_idx = ctx.heap[value_expr_id].get_unique_id_in_definition();
                     let signature_type: *mut _ = &mut extra.embedded[value_idx];
-                    let value_type: *mut _ = self.expr_types.get_mut(&value_expr_id).unwrap();
+                    let value_type: *mut _ = &mut self.expr_types[value_expr_idx as usize].expr_type;
                     let (_, progress_arg) = Self::apply_equal2_signature_constraint(
                         ctx, upcast_id, Some(value_expr_id), extra, &mut poly_progress,
                         signature_type, 0, value_type, 0 
@@ -2156,7 +2168,7 @@ impl PassTyping {
                     );
 
                     if progress_arg {
-                        self.expr_queued.insert(value_expr_id);
+                        self.expr_queued.push_back(value_expr_idx);
                     }
                 }
 
@@ -2164,7 +2176,7 @@ impl PassTyping {
 
                 // Infer type of union itself
                 let signature_type: *mut _ = &mut extra.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
                 let (_, progress_expr) = Self::apply_equal2_signature_constraint(
                     ctx, upcast_id, None, extra, &mut poly_progress,
                     signature_type, 0, expr_type, 0
@@ -2180,7 +2192,8 @@ impl PassTyping {
                 if progress_expr {
                     // TODO: @cleanup, borrowing rules
                     if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        self.expr_queued.insert(parent_id);
+                        let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                        self.expr_queued.push_back(parent_idx);
                     }
                 }
 
@@ -2190,7 +2203,8 @@ impl PassTyping {
                 for value_idx in 0..extra.embedded.len() {
                     let signature_type: *mut _ = &mut extra.embedded[value_idx];
                     let value_expr_id = data.values[value_idx];
-                    let value_type: *mut _ = self.expr_types.get_mut(&value_expr_id).unwrap();
+                    let value_expr_idx = ctx.heap[value_expr_id].get_unique_id_in_definition();
+                    let value_type: *mut _ = &mut self.expr_types[value_expr_idx as usize].expr_type;
                     
                     let progress_arg = Self::apply_equal2_polyvar_constraint(
                         extra, &poly_progress, signature_type, value_type
@@ -2202,13 +2216,13 @@ impl PassTyping {
                         unsafe{&*value_type}.display_name(&ctx.heap)
                     );
                     if progress_arg {
-                        self.expr_queued.insert(value_expr_id);
+                        self.expr_queued.push_back(value_expr_idx);
                     }
                 }
 
                 // And for the union type itself
                 let signature_type: *mut _ = &mut extra.returned;
-                let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
 
                 let progress_expr = Self::apply_equal2_polyvar_constraint(
                     extra, &poly_progress, signature_type, expr_type
@@ -2220,13 +2234,13 @@ impl PassTyping {
                 let expr_elements = data.clone(); // TODO: @performance
                 debug_log!("Array expr ({} elements): {}", expr_elements.len(), upcast_id.index);
                 debug_log!(" * Before:");
-                debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+                debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
                 // All elements should have an equal type
                 let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
                 for (progress_arg, arg_id) in progress.iter().zip(expr_elements.iter()) {
                     if *progress_arg {
-                        self.queue_expr(*arg_id);
+                        self.queue_expr(ctx, *arg_id);
                     }
                 }
 
@@ -2243,18 +2257,18 @@ impl PassTyping {
                     // Note that if the array type progressed the type of the arguments,
                     // then we should enqueue this progression function again
                     // TODO: @fix Make apply_equal_n accept a start idx as well
-                    if arg_progress { self.queue_expr(upcast_id); }
+                    if arg_progress { self.queue_expr(ctx, upcast_id); }
                 }
 
                 debug_log!(" * After:");
-                debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+                debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
                 progress_expr
             },
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // TODO: FIX!!!!
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
@@ -2268,40 +2282,44 @@ impl PassTyping {
     fn progress_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
-        let extra = self.extra_data.get_mut(&upcast_id).unwrap();
+        let expr_idx = expr.unique_id_in_definition;
+        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
 
         debug_log!("Call expr '{}': {}", ctx.heap[expr.definition].identifier().value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
         debug_log!(" * During (inferring types from arguments and return type):");
+
+        let extra = &mut self.extra_data[extra_idx as usize];
 
         // Check if we can make progress using the arguments and/or return types
         // while keeping track of the polyvars we've extended
         let mut poly_progress = HashSet::new();
         debug_assert_eq!(extra.embedded.len(), expr.arguments.len());
 
-        for (arg_idx, arg_id) in expr.arguments.clone().into_iter().enumerate() {
-            let signature_type: *mut _ = &mut extra.embedded[arg_idx];
-            let argument_type: *mut _ = self.expr_types.get_mut(&arg_id).unwrap();
+        for (call_arg_idx, arg_id) in expr.arguments.clone().into_iter().enumerate() {
+            let arg_expr_idx = ctx.heap[arg_id].get_unique_id_in_definition();
+            let signature_type: *mut _ = &mut extra.embedded[call_arg_idx];
+            let argument_type: *mut _ = &mut self.expr_types[arg_expr_idx as usize].expr_type;
             let (_, progress_arg) = Self::apply_equal2_signature_constraint(
                 ctx, upcast_id, Some(arg_id), extra, &mut poly_progress,
                 signature_type, 0, argument_type, 0
             )?;
 
             debug_log!(
-                "   - Arg {} type | sig: {}, arg: {}", arg_idx,
+                "   - Arg {} type | sig: {}, arg: {}", call_arg_idx,
                 unsafe{&*signature_type}.display_name(&ctx.heap), 
                 unsafe{&*argument_type}.display_name(&ctx.heap));
 
             if progress_arg {
                 // Progressed argument expression
-                self.expr_queued.insert(arg_id);
+                self.expr_queued.push_back(arg_expr_idx);
             }
         }
 
         // Do the same for the return type
         let signature_type: *mut _ = &mut extra.returned;
-        let expr_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+        let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
         let (_, progress_expr) = Self::apply_equal2_signature_constraint(
             ctx, upcast_id, None, extra, &mut poly_progress,
             signature_type, 0, expr_type, 0
@@ -2316,7 +2334,8 @@ impl PassTyping {
         if progress_expr {
             // TODO: @cleanup, cannot call utility self.queue_parent thingo
             if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                self.expr_queued.insert(parent_id);
+                let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                self.expr_queued.push_back(parent_idx);
             }
         }
 
@@ -2333,7 +2352,8 @@ impl PassTyping {
         for arg_idx in 0..extra.embedded.len() {
             let signature_type: *mut _ = &mut extra.embedded[arg_idx];
             let arg_expr_id = expr.arguments[arg_idx];
-            let arg_type: *mut _ = self.expr_types.get_mut(&arg_expr_id).unwrap();
+            let arg_expr_idx = ctx.heap[arg_expr_id].get_unique_id_in_definition();
+            let arg_type: *mut _ = &mut self.expr_types[arg_expr_idx as usize].expr_type;
             
             let progress_arg = Self::apply_equal2_polyvar_constraint(
                 extra, &poly_progress,
@@ -2346,13 +2366,13 @@ impl PassTyping {
                 unsafe{&*arg_type}.display_name(&ctx.heap)
             );
             if progress_arg {
-                self.expr_queued.insert(arg_expr_id);
+                self.expr_queued.push_back(arg_expr_idx);
             }
         }
 
         // Once more for the return type
         let signature_type: *mut _ = &mut extra.returned;
-        let ret_type: *mut _ = self.expr_types.get_mut(&upcast_id).unwrap();
+        let ret_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
 
         let progress_ret = Self::apply_equal2_polyvar_constraint(
             extra, &poly_progress, signature_type, ret_type
@@ -2367,7 +2387,7 @@ impl PassTyping {
         }
 
         debug_log!(" * After:");
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         Ok(())
     }
@@ -2375,16 +2395,17 @@ impl PassTyping {
     fn progress_variable_expr(&mut self, ctx: &mut Ctx, id: VariableExpressionId) -> Result<(), ParseError> {
         let upcast_id = id.upcast();
         let var_expr = &ctx.heap[id];
+        let var_expr_idx = var_expr.unique_id_in_definition;
         let var_id = var_expr.declaration.unwrap();
 
         debug_log!("Variable expr '{}': {}", ctx.heap[var_id].identifier.value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
         debug_log!("   - Var  type: {}", self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // Retrieve shared variable type and expression type and apply inference
         let var_data = self.var_types.get_mut(&var_id).unwrap();
-        let expr_type = self.expr_types.get_mut(&upcast_id).unwrap();
+        let expr_type = &mut self.expr_types[var_expr_idx as usize].expr_type;
 
         let infer_res = unsafe{ InferenceType::infer_subtrees_for_both_types(
             &mut var_data.var_type as *mut _, 0, expr_type, 0
@@ -2411,14 +2432,16 @@ impl PassTyping {
             // Let other variable expressions using this type progress as well
             for other_expr in var_data.used_at.iter() {
                 if *other_expr != upcast_id {
-                    self.expr_queued.insert(*other_expr);
+                    let other_expr_idx = ctx.heap[*other_expr].get_unique_id_in_definition();
+                    self.expr_queued.push_back(other_expr_idx);
                 }
             }
 
             // Let a linked port know that our type has updated
             if let Some(linked_id) = var_data.linked_var {
-                // Only perform one-way inference to prevent updating our type, this
-                // would lead to an inconsistency
+                // Only perform one-way inference to prevent updating our type,
+                // this would lead to an inconsistency in the type inference
+                // algorithm otherwise.
                 let var_type: *mut _ = &mut var_data.var_type;
                 let link_data = self.var_types.get_mut(&linked_id).unwrap();
 
@@ -2433,7 +2456,8 @@ impl PassTyping {
                 match InferenceType::infer_subtree_for_single_type(&mut link_data.var_type, 1, &unsafe{&*var_type}.parts, 1) {
                     SingleInferenceResult::Modified => {
                         for other_expr in &link_data.used_at {
-                            self.expr_queued.insert(*other_expr);
+                            let other_expr_idx = ctx.heap[*other_expr].get_unique_id_in_definition();
+                            self.expr_queued.push_back(other_expr_idx);
                         }
                     },
                     SingleInferenceResult::Unmodified => {},
@@ -2462,7 +2486,7 @@ impl PassTyping {
 
         debug_log!(" * After:");
         debug_log!("   - Var  type [{}]: {}", progress_var, self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.expr_types.get(&upcast_id).unwrap().display_name(&ctx.heap));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
 
 
         Ok(())
@@ -2470,12 +2494,14 @@ impl PassTyping {
 
     fn queue_expr_parent(&mut self, ctx: &Ctx, expr_id: ExpressionId) {
         if let ExpressionParent::Expression(parent_expr_id, _) = &ctx.heap[expr_id].parent() {
-            self.expr_queued.insert(*parent_expr_id);
+            let expr_idx = ctx.heap[*parent_expr_id].get_unique_id_in_definition();
+            self.expr_queued.push_back(expr_idx);
         }
     }
 
-    fn queue_expr(&mut self, expr_id: ExpressionId) {
-        self.expr_queued.insert(expr_id);
+    fn queue_expr(&mut self, ctx: &Ctx, expr_id: ExpressionId) {
+        let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition();
+        self.expr_queued.push_back(expr_idx);
     }
 
     /// Applies a forced type constraint: the type associated with the supplied
@@ -2483,9 +2509,8 @@ impl PassTyping {
     /// be fully specified (e.g. a bool) or contain "inference" variables (e.g.
     /// an array of T)
     fn apply_forced_constraint(
-        &mut self, ctx: &mut Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
+        &mut self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
     ) -> Result<bool, ParseError> {
-        debug_assert_expr_ids_unique_and_known!(self, expr_id);
         let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition(); // TODO: @Temp
         let expr_type = &mut self.expr_types[expr_idx as usize].expr_type;
         match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0) {
@@ -2595,7 +2620,7 @@ impl PassTyping {
                 "made progress on signature type, but it doesn't have a marker"
             );
             for (poly_idx, poly_section) in signature_type.marker_iter() {
-                let polymorph_type = &mut polymorph_data.poly_vars[poly_idx];
+                let polymorph_type = &mut polymorph_data.poly_vars[poly_idx as usize];
                 match Self::apply_forced_constraint_types(
                     polymorph_type, 0, poly_section, 0
                 ) {
@@ -2624,7 +2649,6 @@ impl PassTyping {
     ) -> bool {
         // Safety: all pointers should be distinct
         //         polymorph_data containers may not be modified
-        debug_assert_ptrs_distinct!(signature_type, expr_type);
         let signature_type = unsafe{&mut *signature_type};
         let expr_type = unsafe{&mut *expr_type};
 
@@ -2637,7 +2661,7 @@ impl PassTyping {
             let end_idx = InferenceType::find_subtree_end_idx(&signature_type.parts, start_idx);
             // if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
-                let polymorph_type = &polymorph_data.poly_vars[poly_idx];
+                let polymorph_type = &polymorph_data.poly_vars[poly_idx as usize];
                 let modified_at_marker = Self::apply_forced_constraint_types(
                     signature_type, start_idx, 
                     &polymorph_type.parts, 0
@@ -2740,7 +2764,7 @@ impl PassTyping {
 
         while let Some(next_arg_id) = arg_iter.next() {
             let last_expr_idx = ctx.heap[last_arg_id].get_unique_id_in_definition(); // TODO: @Temp
-            let next_expr_idx = ctx.heap[next_arg_id].get_unique_id_in_definition();
+            let next_expr_idx = ctx.heap[*next_arg_id].get_unique_id_in_definition();
             let last_type: *mut _ = &mut self.expr_types[last_expr_idx as usize].expr_type;
             let next_type: *mut _ = &mut self.expr_types[next_expr_idx as usize].expr_type;
 
@@ -2766,9 +2790,11 @@ impl PassTyping {
 
         // Re-infer everything. Note that we do not need to re-infer the type
         // exactly at `last_lhs_progressed`, but only everything up to it.
-        let last_type: *mut _ = self.expr_types.get_mut(args.last().unwrap()).unwrap();
+        let last_arg_expr_idx = ctx.heap[*args.last().unwrap()].get_unique_id_in_definition();
+        let last_type: *mut _ = &mut self.expr_types[last_arg_expr_idx as usize].expr_type;
         for arg_idx in 0..last_lhs_progressed {
-            let arg_type: *mut _ = self.expr_types.get_mut(&args[arg_idx]).unwrap();
+            let other_arg_expr_idx = ctx.heap[args[arg_idx]].get_unique_id_in_definition();
+            let arg_type: *mut _ = &mut self.expr_types[other_arg_expr_idx as usize].expr_type;
             unsafe{
                 (*arg_type).replace_subtree(0, &(*last_type).parts);
             }
@@ -2842,8 +2868,6 @@ impl PassTyping {
             _ => false,
         };
 
-        debug_assert!(!(needs_extra_data && needs_var_data)); // obvious, but for future changes
-
         if infer_expr.expr_id.is_invalid() {
             // Nothing is set yet
             infer_expr.expr_type = inference_type;
@@ -2881,7 +2905,7 @@ impl PassTyping {
         // map them back and forth to the polymorphic arguments of the function
         // we are calling.
         let call = &ctx.heap[call_id];
-        let extra_data_idx = self.expr_types[call.unique_id_in_definition as usize].var_or_extra_data_idx;
+        let extra_data_idx = self.expr_types[call.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "insert initial call polymorph data, no preallocated ExtraData");
 
         // Handle the polymorphic arguments (if there are any)
@@ -2926,10 +2950,11 @@ impl PassTyping {
         };
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
+            expr_id: call_id.upcast(),
             poly_vars: poly_args,
             embedded: parameter_types,
             returned: return_type
-        });
+        };
     }
 
     fn insert_initial_struct_polymorph_data(
@@ -2937,7 +2962,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial struct polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_struct();
 
@@ -2979,7 +3004,7 @@ impl PassTyping {
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { return_type_done = false; }
 
-            parts.push(ITP::MarkerBody(poly_var_idx));
+            parts.push(ITP::Marker(poly_var_idx as u32));
             parts.extend(poly_var.parts.iter().cloned());
         }
 
@@ -2987,6 +3012,7 @@ impl PassTyping {
         let return_type = InferenceType::new(!poly_args.is_empty(), return_type_done, parts);
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
+            expr_id: lit_id.upcast(),
             poly_vars: poly_args,
             embedded: embedded_types,
             returned: return_type,
@@ -3001,7 +3027,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial enum polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_enum();
 
@@ -3024,7 +3050,7 @@ impl PassTyping {
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { enum_type_done = false; }
 
-            parts.push(ITP::MarkerBody(poly_var_idx));
+            parts.push(ITP::Marker(poly_var_idx as u32));
             parts.extend(poly_var.parts.iter().cloned());
         }
 
@@ -3032,6 +3058,7 @@ impl PassTyping {
         let enum_type = InferenceType::new(!poly_args.is_empty(), enum_type_done, parts);
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
+            expr_id: lit_id.upcast(),
             poly_vars: poly_args,
             embedded: Vec::new(),
             returned: enum_type,
@@ -3045,7 +3072,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx;
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial union polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_union();
 
@@ -3083,7 +3110,7 @@ impl PassTyping {
         for (poly_var_idx, poly_var) in poly_args.iter().enumerate() {
             if !poly_var.is_done { union_type_done = false; }
 
-            parts.push(ITP::MarkerBody(poly_var_idx));
+            parts.push(ITP::Marker(poly_var_idx as u32));
             parts.extend(poly_var.parts.iter().cloned());
         }
 
@@ -3091,6 +3118,7 @@ impl PassTyping {
         let union_type = InferenceType::new(!poly_args.is_empty(), union_type_done, parts);
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
+            expr_id: lit_id.upcast(),
             poly_vars: poly_args,
             embedded,
             returned: union_type
@@ -3106,7 +3134,7 @@ impl PassTyping {
 
         // Retrieve relevant data
         let expr = &ctx.heap[select_id];
-        let extra_data_idx = self.expr_types[expr.unique_id_in_definition as usize].var_or_extra_data_idx;
+        let extra_data_idx = self.expr_types[expr.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial select polymorph data, but no preallocated ExtraData");
         let field = expr.field.as_symbolic();
 
@@ -3124,9 +3152,9 @@ impl PassTyping {
 
         for poly_idx in 0..num_poly_vars {
             poly_vars.push(InferenceType::new(true, false, vec![
-                ITP::MarkerBody(poly_idx), ITP::Unknown,
+                ITP::Marker(poly_idx as u32), ITP::Unknown,
             ]));
-            struct_parts.push(ITP::MarkerBody(poly_idx));
+            struct_parts.push(ITP::Marker(poly_idx as u32));
             struct_parts.push(ITP::Unknown);
         }
         debug_assert_eq!(struct_parts.len(), struct_parts_reserved);
@@ -3134,6 +3162,7 @@ impl PassTyping {
         // Generate initial field type
         let field_type = self.determine_inference_type_from_parser_type_elements(&definition.fields[field_idx].parser_type.elements, false);
         self.extra_data[extra_data_idx as usize] = ExtraData{
+            expr_id: select_id.upcast(),
             poly_vars,
             embedded: vec![InferenceType::new(num_poly_vars != 0, num_poly_vars == 0, struct_parts)],
             returned: field_type
@@ -3205,7 +3234,7 @@ impl PassTyping {
                         debug_assert_eq!(*belongs_to_definition, self.definition_type.definition_id());
                         debug_assert!((poly_arg_idx as usize) < self.poly_vars.len());
 
-                        for concrete_part in &self.poly_vars[poly_arg_idx].parts {
+                        for concrete_part in &self.poly_vars[poly_arg_idx as usize].parts {
                             infer_type.push(ITP::from(*concrete_part));
                         }
                     } else {
@@ -3236,8 +3265,10 @@ impl PassTyping {
         // TODO: Expand and provide more meaningful information for humans
         let expr = &ctx.heap[expr_id];
         let arg_expr = &ctx.heap[arg_id];
-        let expr_type = self.expr_types.get(&expr_id).unwrap();
-        let arg_type = self.expr_types.get(&arg_id).unwrap();
+        let expr_idx = expr.get_unique_id_in_definition();
+        let arg_expr_idx = arg_expr.get_unique_id_in_definition();
+        let expr_type = &self.expr_types[expr_idx as usize].expr_type;
+        let arg_type = &self.expr_types[arg_expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
             &ctx.module.source, expr.span(), format!(
@@ -3260,8 +3291,10 @@ impl PassTyping {
         let arg1 = &ctx.heap[arg1_id];
         let arg2 = &ctx.heap[arg2_id];
 
-        let arg1_type = self.expr_types.get(&arg1_id).unwrap();
-        let arg2_type = self.expr_types.get(&arg2_id).unwrap();
+        let arg1_idx = arg1.get_unique_id_in_definition();
+        let arg1_type = &self.expr_types[arg1_idx as usize].expr_type;
+        let arg2_idx = arg2.get_unique_id_in_definition();
+        let arg2_type = &self.expr_types[arg2_idx as usize].expr_type;
 
         return ParseError::new_error_str_at_span(
             &ctx.module.source, expr.span(),
@@ -3283,7 +3316,8 @@ impl PassTyping {
         &self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
     ) -> ParseError {
         let expr = &ctx.heap[expr_id];
-        let expr_type = self.expr_types.get(&expr_id).unwrap();
+        let expr_idx = expr.get_unique_id_in_definition();
+        let expr_type = &self.expr_types[expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
             &ctx.module.source, expr.span(), format!(

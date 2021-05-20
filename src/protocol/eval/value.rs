@@ -371,7 +371,7 @@ pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOp
         let lhs = store.maybe_read_ref(lhs);
         let rhs = store.maybe_read_ref(rhs);
 
-        enum ValueKind { Message, String, Array };
+        enum ValueKind { Message, String, Array }
         let value_kind;
 
         match lhs {
