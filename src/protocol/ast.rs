@@ -154,6 +154,7 @@ define_new_ast_id!(IndexingExpressionId, ExpressionId, index(IndexingExpression,
 define_new_ast_id!(SlicingExpressionId, ExpressionId, index(SlicingExpression, Expression::Slicing, expressions), alloc(alloc_slicing_expression));
 define_new_ast_id!(SelectExpressionId, ExpressionId, index(SelectExpression, Expression::Select, expressions), alloc(alloc_select_expression));
 define_new_ast_id!(LiteralExpressionId, ExpressionId, index(LiteralExpression, Expression::Literal, expressions), alloc(alloc_literal_expression));
+define_new_ast_id!(CastExpressionId, ExpressionId, index(CastExpression, Expression::Cast, expressions), alloc(alloc_cast_expression));
 define_new_ast_id!(CallExpressionId, ExpressionId, index(CallExpression, Expression::Call, expressions), alloc(alloc_call_expression));
 define_new_ast_id!(VariableExpressionId, ExpressionId, index(VariableExpression, Expression::Variable, expressions), alloc(alloc_variable_expression));
 
@@ -1404,6 +1405,7 @@ pub enum Expression {
     Slicing(SlicingExpression),
     Select(SelectExpression),
     Literal(LiteralExpression),
+    Cast(CastExpression),
     Call(CallExpression),
     Variable(VariableExpression),
 }
@@ -1486,6 +1488,7 @@ impl Expression {
             Expression::Slicing(expr) => expr.span,
             Expression::Select(expr) => expr.span,
             Expression::Literal(expr) => expr.span,
+            Expression::Cast(expr) => expr.span,
             Expression::Call(expr) => expr.span,
             Expression::Variable(expr) => expr.identifier.span,
         }
@@ -1502,6 +1505,7 @@ impl Expression {
             Expression::Slicing(expr) => &expr.parent,
             Expression::Select(expr) => &expr.parent,
             Expression::Literal(expr) => &expr.parent,
+            Expression::Cast(expr) => &expr.parent,
             Expression::Call(expr) => &expr.parent,
             Expression::Variable(expr) => &expr.parent,
         }
@@ -1526,6 +1530,7 @@ impl Expression {
             Expression::Slicing(expr) => expr.parent = parent,
             Expression::Select(expr) => expr.parent = parent,
             Expression::Literal(expr) => expr.parent = parent,
+            Expression::Cast(expr) => expr.parent = parent,
             Expression::Call(expr) => expr.parent = parent,
             Expression::Variable(expr) => expr.parent = parent,
         }
@@ -1542,6 +1547,7 @@ impl Expression {
             Expression::Slicing(expr) => expr.unique_id_in_definition,
             Expression::Select(expr) => expr.unique_id_in_definition,
             Expression::Literal(expr) => expr.unique_id_in_definition,
+            Expression::Cast(expr) => expr.unique_id_in_definition,
             Expression::Call(expr) => expr.unique_id_in_definition,
             Expression::Variable(expr) => expr.unique_id_in_definition,
         }
@@ -1694,6 +1700,18 @@ pub struct SelectExpression {
     pub subject: ExpressionId,
     pub field_name: Identifier,
     // Validator/Linker
+    pub parent: ExpressionParent,
+    pub unique_id_in_definition: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CastExpression {
+    pub this: CastExpressionId,
+    // Parsing
+    pub span: InputSpan, // of the "cast" keyword,
+    pub to_type: ParserType,
+    pub subject: ExpressionId,
+    // Validator/linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
 }

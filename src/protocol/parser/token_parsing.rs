@@ -26,7 +26,8 @@ pub(crate) const KW_LIT_TRUE:  &'static [u8] = b"true";
 pub(crate) const KW_LIT_FALSE: &'static [u8] = b"false";
 pub(crate) const KW_LIT_NULL:  &'static [u8] = b"null";
 
-// Keywords - functions
+// Keywords - function(like)s
+pub(crate) const KW_CAST:        &'static [u8] = b"cast";
 pub(crate) const KW_FUNC_GET:    &'static [u8] = b"get";
 pub(crate) const KW_FUNC_PUT:    &'static [u8] = b"put";
 pub(crate) const KW_FUNC_FIRES:  &'static [u8] = b"fires";
@@ -521,7 +522,7 @@ fn is_reserved_statement_keyword(text: &[u8]) -> bool {
 
 fn is_reserved_expression_keyword(text: &[u8]) -> bool {
     match text {
-        KW_LET |
+        KW_LET | KW_CAST |
         KW_LIT_TRUE | KW_LIT_FALSE | KW_LIT_NULL |
         KW_FUNC_GET | KW_FUNC_PUT | KW_FUNC_FIRES | KW_FUNC_CREATE | KW_FUNC_ASSERT | KW_FUNC_LENGTH => true,
         _ => false,

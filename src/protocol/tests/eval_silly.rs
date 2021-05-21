@@ -184,31 +184,32 @@ fn test_struct_fields() {
 fn test_field_selection_polymorphism() {
     // Bit silly, but just to be sure
     Tester::new_single_source_expect_ok("struct field shuffles", "
-struct VecXYZ<T> { T x, T y, T z }
-struct VecYZX<T> { T y, T z, T x }
-struct VecZXY<T> { T z, T x, T y }
-func modify_x<T>(T input) -> T {
-    input.x = 1337;
-    return input;
-}
+        struct VecXYZ<T> { T x, T y, T z }
+        struct VecYZX<T> { T y, T z, T x }
+        struct VecZXY<T> { T z, T x, T y }
 
-func foo() -> bool {
-    auto xyz = VecXYZ<u16>{ x: 1, y: 2, z: 3 };
-    auto yzx = VecYZX<u32>{ y: 2, z: 3, x: 1 };
-    auto zxy = VecZXY<u64>{ x: 1, y: 2, z: 3 };
+        func modify_x<T>(T input) -> T {
+            input.x = 1337;
+            return input;
+        }
 
-    auto mod_xyz = modify_x(xyz);
-    auto mod_yzx = modify_x(yzx);
-    auto mod_zxy = modify_x(zxy);
+        func foo() -> bool {
+            auto xyz = VecXYZ<u16>{ x: 1, y: 2, z: 3 };
+            auto yzx = VecYZX<u32>{ y: 2, z: 3, x: 1 };
+            auto zxy = VecZXY<u64>{ x: 1, y: 2, z: 3 }; // different initialization order
 
-    return
-        xyz.x == 1 && xyz.y == 2 && xyz.z == 3 &&
-        yzx.x == 1 && yzx.y == 2 && yzx.z == 3 &&
-        zxy.x == 1 && zxy.y == 2 && zxy.z == 3 &&
-        mod_xyz.x == 1337 && mod_xyz.y == 2 && mod_xyz.z == 3 &&
-        mod_yzx.x == 1337 && mod_yzx.y == 2 && mod_yzx.z == 3 &&
-        mod_zxy.x == 1337 && mod_zxy.y == 2 && mod_zxy.z == 3;
-}
+            auto mod_xyz = modify_x(xyz);
+            auto mod_yzx = modify_x(yzx);
+            auto mod_zxy = modify_x(zxy);
+
+            return
+                xyz.x == 1 && xyz.y == 2 && xyz.z == 3 &&
+                yzx.x == 1 && yzx.y == 2 && yzx.z == 3 &&
+                zxy.x == 1 && zxy.y == 2 && zxy.z == 3 &&
+                mod_xyz.x == 1337 && mod_xyz.y == 2 && mod_xyz.z == 3 &&
+                mod_yzx.x == 1337 && mod_yzx.y == 2 && mod_yzx.z == 3 &&
+                mod_zxy.x == 1337 && mod_zxy.y == 2 && mod_zxy.z == 3;
+        }
 ").for_function("foo", |f| {
         f.call_ok(Some(Value::Bool(true)));
     });

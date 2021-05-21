@@ -704,7 +704,7 @@ impl PassDefinitions {
             let poly_vars = ctx.heap[definition_id].poly_vars();
             consume_parser_type(
                 &module.source, iter, &ctx.symbols, &ctx.heap,
-                &poly_vars, SymbolScope::Module(module.root_id), definition_id,
+                poly_vars, SymbolScope::Module(module.root_id), definition_id,
                 true, 1
             )?
         } else {
@@ -1451,10 +1451,42 @@ impl PassDefinitions {
                         _ => unreachable!(),
                     };
 
-                    ctx.heap.alloc_literal_expression(|this| LiteralExpression{
+                    ctx.heap.alloc_literal_expression(|this| LiteralExpression {
                         this,
                         span: ident_span,
                         value,
+                        parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
+                    }).upcast()
+                } else if ident_text == KW_CAST {
+                    // Casting expression
+                    iter.consume();
+                    let to_type = if Some(TokenKind::OpenAngle) == iter.next() {
+                        iter.consume();
+                        let definition_id = self.cur_definition;
+                        let poly_vars = ctx.heap[definition_id].poly_vars();
+                        consume_parser_type(
+                            &module.source, iter, &ctx.symbols, &ctx.heap,
+                            poly_vars, SymbolScope::Module(module.root_id), definition_id,
+                            true, 1
+                        )?
+                    } else {
+                        // Automatic casting with inferred target type
+                        ParserType{ elements: vec![ParserTypeElement{
+                            full_span: ident_span, // TODO: @Span fix
+                            variant: ParserTypeVariant::Inferred,
+                        }]}
+                    };
+
+                    consume_token(&module.source, iter, TokenKind::OpenParen)?;
+                    let subject = self.consume_expression(module, iter, ctx)?;
+                    consume_token(&module.source, iter, TokenKind::CloseParen)?;
+
+                    ctx.heap.alloc_cast_expression(|this| CastExpression{
+                        this,
+                        span: ident_span,
+                        to_type,
+                        subject,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast()

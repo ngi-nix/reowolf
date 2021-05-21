@@ -152,6 +152,9 @@ impl Frame {
                     }
                 }
             },
+            Expression::Cast(_) => {
+                todo!("casting expression");
+            }
             Expression::Call(expr) => {
                 for arg_expr_id in &expr.arguments {
                     self.expr_stack.push_back(ExprInstruction::PushValToFront);
@@ -488,6 +491,9 @@ impl Prompt {
 
                             cur_frame.expr_values.push_back(value);
                         },
+                        Expression::Cast(_) => {
+                            todo!("casting expression evaluation");
+                        }
                         Expression::Call(expr) => {
                             // Push a new frame. Note that all expressions have
                             // been pushed to the front, so they're in the order

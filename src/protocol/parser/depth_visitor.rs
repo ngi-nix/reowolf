@@ -166,6 +166,10 @@ pub(crate) trait Visitor: Sized {
     fn visit_select_expression(&mut self, h: &mut Heap, expr: SelectExpressionId) -> VisitorResult {
         recursive_select_expression(self, h, expr)
     }
+    fn visit_cast_expression(&mut self, h: &mut Heap, expr: CastExpressionId) -> VisitorResult {
+        let subject = h[expr].subject;
+        self.visit_expression(h, subject)
+    }
     fn visit_call_expression(&mut self, h: &mut Heap, expr: CallExpressionId) -> VisitorResult {
         recursive_call_expression(self, h, expr)
     }
@@ -400,6 +404,7 @@ fn recursive_expression<T: Visitor>(
         Expression::Slicing(expr) => this.visit_slicing_expression(h, expr.this),
         Expression::Select(expr) => this.visit_select_expression(h, expr.this),
         Expression::Literal(expr) => this.visit_constant_expression(h, expr.this),
+        Expression::Cast(expr) => this.visit_cast_expression(h, expr.this),
         Expression::Call(expr) => this.visit_call_expression(h, expr.this),
         Expression::Variable(expr) => this.visit_variable_expression(h, expr.this),
     }

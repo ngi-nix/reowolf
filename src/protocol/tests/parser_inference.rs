@@ -330,48 +330,48 @@ fn test_failed_variable_inference() {
 
 #[test]
 fn test_failed_polymorph_inference() {
-    // Tester::new_single_source_expect_err(
-    //     "function call inference mismatch",
-    //     "
-    //     func poly<T>(T a, T b) -> s32 { return 0; }
-    //     func call() -> s32 {
-    //         s8 first_arg = 5;
-    //         s64 second_arg = 2;
-    //         return poly(first_arg, second_arg);
-    //     }
-    //     "
-    // ).error(|e| { e
-    //     .assert_num(3)
-    //     .assert_ctx_has(0, "poly(first_arg, second_arg)")
-    //     .assert_occurs_at(0, "poly")
-    //     .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
-    //     .assert_occurs_at(1, "second_arg")
-    //     .assert_msg_has(1, "inferred it to 's64'")
-    //     .assert_occurs_at(2, "first_arg")
-    //     .assert_msg_has(2, "inferred it to 's8'");
-    // });
-    //
-    // Tester::new_single_source_expect_err(
-    //     "struct literal inference mismatch",
-    //     "
-    //     struct Pair<T>{ T first, T second }
-    //     func call() -> s32 {
-    //         s8 first_arg = 5;
-    //         s64 second_arg = 2;
-    //         auto pair = Pair{ first: first_arg, second: second_arg };
-    //         return 3;
-    //     }
-    //     "
-    // ).error(|e| { e
-    //     .assert_num(3)
-    //     .assert_ctx_has(0, "Pair{ first: first_arg, second: second_arg }")
-    //     .assert_occurs_at(0, "Pair{")
-    //     .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
-    //     .assert_occurs_at(1, "second_arg")
-    //     .assert_msg_has(1, "inferred it to 's64'")
-    //     .assert_occurs_at(2, "first_arg")
-    //     .assert_msg_has(2, "inferred it to 's8'");
-    // });
+    Tester::new_single_source_expect_err(
+        "function call inference mismatch",
+        "
+        func poly<T>(T a, T b) -> s32 { return 0; }
+        func call() -> s32 {
+            s8 first_arg = 5;
+            s64 second_arg = 2;
+            return poly(first_arg, second_arg);
+        }
+        "
+    ).error(|e| { e
+        .assert_num(3)
+        .assert_ctx_has(0, "poly(first_arg, second_arg)")
+        .assert_occurs_at(0, "poly")
+        .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
+        .assert_occurs_at(1, "second_arg")
+        .assert_msg_has(1, "inferred it to 's64'")
+        .assert_occurs_at(2, "first_arg")
+        .assert_msg_has(2, "inferred it to 's8'");
+    });
+
+    Tester::new_single_source_expect_err(
+        "struct literal inference mismatch",
+        "
+        struct Pair<T>{ T first, T second }
+        func call() -> s32 {
+            s8 first_arg = 5;
+            s64 second_arg = 2;
+            auto pair = Pair{ first: first_arg, second: second_arg };
+            return 3;
+        }
+        "
+    ).error(|e| { e
+        .assert_num(3)
+        .assert_ctx_has(0, "Pair{ first: first_arg, second: second_arg }")
+        .assert_occurs_at(0, "Pair{")
+        .assert_msg_has(0, "Conflicting type for polymorphic variable 'T'")
+        .assert_occurs_at(1, "second_arg")
+        .assert_msg_has(1, "inferred it to 's64'")
+        .assert_occurs_at(2, "first_arg")
+        .assert_msg_has(2, "inferred it to 's8'");
+    });
 
     // Cannot really test literal inference error, but this comes close
     Tester::new_single_source_expect_err(

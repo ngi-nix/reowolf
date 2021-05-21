@@ -1317,6 +1317,18 @@ impl Visitor2 for PassTyping {
         self.progress_literal_expr(ctx, id)
     }
 
+    fn visit_cast_expr(&mut self, ctx: &mut Ctx, id: CastExpressionId) -> VisitorResult {
+        let upcast_id = id.upcast();
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
+
+        let cast_expr = &ctx.heap[id];
+        let subject_expr_id = cast_expr.subject;
+
+        self.visit_expr(ctx, subject_expr_id)?;
+
+        self.progress_cast_expr(ctx, id)
+    }
+
     fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
@@ -1329,7 +1341,7 @@ impl Visitor2 for PassTyping {
         self.expr_types[call_expr.unique_id_in_definition as usize].field_or_monomorph_idx = 0;
 
         // Visit all arguments
-        for arg_expr_id in call_expr.arguments.clone() {
+        for arg_expr_id in call_expr.arguments.clone() { // TODO: @Performance
             self.visit_expr(ctx, arg_expr_id)?;
         }
 
@@ -1539,6 +1551,10 @@ impl PassTyping {
             Expression::Literal(expr) => {
                 let id = expr.this;
                 self.progress_literal_expr(ctx, id)
+            },
+            Expression::Cast(expr) => {
+                let id = expr.this;
+                self.progress_cast_expr(ctx, id)
             },
             Expression::Call(expr) => {
                 let id = expr.this;
@@ -2286,6 +2302,17 @@ impl PassTyping {
         // TODO: FIX!!!!
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
+        Ok(())
+    }
+
+    fn progress_cast_expr(&mut self, ctx: &mut Ctx, id: CastExpressionId) -> Result<(), ParseError> {
+        let upcast_id = id.upcast();
+        let expr = &ctx.heap[id];
+        let expr_idx = expr.unique_id_in_definition;
+
+        // The cast expression acts like a blocker for two-way inference. The
+        // only thing we can do is wait until both the input and the output
+        // TODO: Continue here
         Ok(())
     }
 

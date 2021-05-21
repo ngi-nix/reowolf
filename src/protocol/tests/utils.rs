@@ -1197,6 +1197,9 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
             }
             None
         },
+        Expression::Cast(expr) => {
+            seek_expr_in_expr(heap, expr.subject, f)
+        }
         Expression::Call(expr) => {
             for arg in &expr.arguments {
                 if let Some(id) = seek_expr_in_expr(heap, *arg, f) {

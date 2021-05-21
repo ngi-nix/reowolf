@@ -704,6 +704,9 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
+            Expression::Cast(expr) => {
+                todo!("print casting expression")
+            }
             Expression::Call(expr) => {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
                     .with_s_key("CallExpr");

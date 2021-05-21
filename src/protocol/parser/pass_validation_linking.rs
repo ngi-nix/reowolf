@@ -727,6 +727,30 @@ impl Visitor2 for PassValidationLinking {
         Ok(())
     }
 
+    fn visit_cast_expr(&mut self, ctx: &mut Ctx, id: CastExpressionId) -> VisitorResult {
+        let cast_expr = &mut ctx.heap[id];
+
+        if let Some(span) = self.must_be_assignable {
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "cannot assign to the result from a cast expression"
+            ))
+        }
+
+        let upcast_id = id.upcast();
+        let old_expr_parent = self.expr_parent;
+        cast_expr.parent = old_expr_parent;
+        cast_expr.unique_id_in_definition = self.next_expr_index;
+        self.next_expr_index += 1;
+
+        // Recurse into the thing that we're casting
+        self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
+        let subject_id = cast_expr.subject;
+        self.visit_expr(ctx, subject_id)?;
+        self.expr_parent = old_expr_parent;
+
+        Ok(())
+    }
+
     fn visit_call_expr(&mut self, ctx: &mut Ctx, id: CallExpressionId) -> VisitorResult {
         let call_expr = &mut ctx.heap[id];
 
