@@ -823,12 +823,22 @@ impl DefinitionType {
     }
 }
 
-#[derive(PartialEq, Eq)]
 pub(crate) struct ResolveQueueElement {
     pub(crate) root_id: RootId,
     pub(crate) definition_id: DefinitionId,
     pub(crate) monomorph_types: Vec<ConcreteType>,
+    pub(crate) reserved_monomorph_idx: i32,
 }
+
+impl PartialEq for ResolveQueueElement {
+    fn eq(&self, other: &Self) -> bool {
+        return
+            self.root_id == other.root_id &&
+            self.definition_id == other.definition_id &&
+            self.monomorph_types == other.monomorph_types;
+    }
+}
+impl Eq for ResolveQueueElement {}
 
 pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
 
@@ -837,7 +847,7 @@ struct InferenceExpression {
     expr_type: InferenceType,       // result type from expression
     expr_id: ExpressionId,          // expression that is evaluated
     field_or_monomorph_idx: i32,    // index of field, of index of monomorph array in type table
-    var_or_extra_data_idx: i32,     // index of extra data needed for inference
+    extra_data_idx: i32,     // index of extra data needed for inference
 }
 
 impl Default for InferenceExpression {
@@ -846,7 +856,7 @@ impl Default for InferenceExpression {
             expr_type: InferenceType::default(),
             expr_id: ExpressionId::new_invalid(),
             field_or_monomorph_idx: -1,
-            var_or_extra_data_idx: -1,
+            extra_data_idx: -1,
         }
     }
 }
@@ -855,6 +865,7 @@ impl Default for InferenceExpression {
 /// that all expressions have the appropriate types.
 pub(crate) struct PassTyping {
     // Current definition we're typechecking.
+    reserved_idx: i32,
     definition_type: DefinitionType,
     poly_vars: Vec<ConcreteType>,
 
@@ -876,6 +887,7 @@ pub(crate) struct PassTyping {
 //  there is a different underlying architecture waiting to surface.
 struct ExtraData {
     expr_id: ExpressionId, // the expression with which this data is associated
+    definition_id: DefinitionId, // the definition, only used for user feedback
     /// Progression of polymorphic variables (if any)
     poly_vars: Vec<InferenceType>,
     /// Progression of types of call arguments or struct members
@@ -887,6 +899,7 @@ impl Default for ExtraData {
     fn default() -> Self {
         Self{
             expr_id: ExpressionId::new_invalid(),
+            definition_id: DefinitionId::new_invalid(),
             poly_vars: Vec::new(),
             embedded: Vec::new(),
             returned: InferenceType::default(),
@@ -916,6 +929,7 @@ impl VarData {
 impl PassTyping {
     pub(crate) fn new() -> Self {
         PassTyping {
+            reserved_idx: -1,
             definition_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             poly_vars: Vec::new(),
             stmt_buffer: Vec::with_capacity(STMT_BUFFER_INIT_CAPACITY),
@@ -929,32 +943,27 @@ impl PassTyping {
 
     // TODO: @cleanup Unsure about this, maybe a pattern will arise after
     //  a while.
-    pub(crate) fn queue_module_definitions(ctx: &Ctx, queue: &mut ResolveQueue) {
+    pub(crate) fn queue_module_definitions(ctx: &mut Ctx, queue: &mut ResolveQueue) {
         debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::ValidatedAndLinked);
         let root_id = ctx.module.root_id;
         let root = &ctx.heap.protocol_descriptions[root_id];
         for definition_id in &root.definitions {
             let definition = &ctx.heap[*definition_id];
-            match definition {
-                Definition::Function(definition) => {
-                    if definition.poly_vars.is_empty() {
-                        queue.push(ResolveQueueElement{
-                            root_id,
-                            definition_id: *definition_id,
-                            monomorph_types: Vec::new(),
-                        })
-                    }
-                },
-                Definition::Component(definition) => {
-                    if definition.poly_vars.is_empty() {
-                        queue.push(ResolveQueueElement{
-                            root_id,
-                            definition_id: *definition_id,
-                            monomorph_types: Vec::new(),
-                        })
-                    }
-                },
-                Definition::Enum(_) | Definition::Struct(_) | Definition::Union(_) => {},
+
+            let should_add_to_queue = match definition {
+                Definition::Function(definition) => definition.poly_vars.is_empty(),
+                Definition::Component(definition) => definition.poly_vars.is_empty(),
+                Definition::Enum(_) | Definition::Struct(_) | Definition::Union(_) => false,
+            };
+
+            if should_add_to_queue {
+                let reserved_idx = ctx.types.reserve_procedure_monomorph_index(definition_id, None);
+                queue.push(ResolveQueueElement{
+                    root_id,
+                    definition_id: *definition_id,
+                    monomorph_types: Vec::new(),
+                    reserved_monomorph_idx: reserved_idx,
+                })
             }
         }
     }
@@ -965,8 +974,9 @@ impl PassTyping {
         // Visit the definition
         debug_assert_eq!(ctx.module.root_id, element.root_id);
         self.reset();
-        self.poly_vars.clear();
-        self.poly_vars.extend(element.monomorph_types.iter().cloned());
+        debug_assert!(self.poly_vars.is_empty());
+        self.reserved_idx = element.reserved_monomorph_idx;
+        self.poly_vars = element.monomorph_types;
         self.visit_definition(ctx, element.definition_id)?;
 
         // Keep resolving types
@@ -975,6 +985,7 @@ impl PassTyping {
     }
 
     fn reset(&mut self) {
+        self.reserved_idx = -1;
         self.definition_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
         self.poly_vars.clear();
         self.stmt_buffer.clear();
@@ -1243,13 +1254,6 @@ impl Visitor2 for PassTyping {
     }
 
     fn visit_select_expr(&mut self, ctx: &mut Ctx, id: SelectExpressionId) -> VisitorResult {
-        // TODO: @Monomorph, this is a temporary hack, see other comments
-        let expr = &mut ctx.heap[id];
-        if let Field::Symbolic(field) = &mut expr.field {
-            field.definition = None;
-            field.field_idx = 0;
-        }
-
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
 
@@ -1318,8 +1322,13 @@ impl Visitor2 for PassTyping {
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
         self.insert_initial_call_polymorph_data(ctx, id);
 
-        // TODO: @performance
+        // By default we set the polymorph idx for calls to 0. If the call ends
+        // up not being a polymorphic one, then we will select the default
+        // expression types in the type table
         let call_expr = &ctx.heap[id];
+        self.expr_types[call_expr.unique_id_in_definition as usize].field_or_monomorph_idx = 0;
+
+        // Visit all arguments
         for arg_expr_id in call_expr.arguments.clone() {
             self.visit_expr(ctx, arg_expr_id)?;
         }
@@ -1354,18 +1363,44 @@ impl PassTyping {
             self.progress_expr(ctx, next_expr_idx)?;
         }
 
-        // We check if we have all the types we need. If we're typechecking a 
-        // polymorphic procedure more than once, then we have already annotated
-        // the AST and have now performed typechecking for a different 
-        // monomorph. In that case we just need to perform typechecking, no need
-        // to annotate the AST again.
-        let definition_id = match &self.definition_type {
-            DefinitionType::Component(id) => id.upcast(),
-            DefinitionType::Function(id) => id.upcast(),
-        };
+        // Helper for transferring polymorphic variables to concrete types and
+        // checking if they're completely specified
+        fn poly_inference_to_concrete_type(
+            ctx: &Ctx, expr_id: ExpressionId, inference: &Vec<InferenceType>
+        ) -> Result<Vec<ConcreteType>, ParseError> {
+            let mut concrete = Vec::with_capacity(inference.len());
+            for (poly_idx, poly_type) in inference.iter().enumerate() {
+                if !poly_type.is_done {
+                    let expr = &ctx.heap[expr_id];
+                    let definition = match expr {
+                        Expression::Call(expr) => expr.definition,
+                        Expression::Literal(expr) => match &expr.value {
+                            Literal::Enum(lit) => lit.definition,
+                            Literal::Union(lit) => lit.definition,
+                            Literal::Struct(lit) => lit.definition,
+                            _ => unreachable!()
+                        },
+                        _ => unreachable!(),
+                    };
+                    let poly_vars = ctx.heap[definition].poly_vars();
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, expr.span(), format!(
+                            "could not fully infer the type of polymorphic variable '{}' of this expression (got '{}')",
+                            poly_vars[poly_idx].value.as_str(), poly_type.display_name(&ctx.heap)
+                        )
+                    ));
+                }
 
-        // TODO: Modify this to be correct and use a new array with types
-        let already_checked = ctx.types.get_base_definition(&definition_id).unwrap().has_any_monomorph();
+                let mut concrete_type = ConcreteType::default();
+                poly_type.write_concrete_type(&mut concrete_type);
+                concrete.push(concrete_type);
+            }
+
+            Ok(concrete)
+        }
+
+        // Inference is now done. But we may still have uninferred types. So we
+        // check for these.
         for infer_expr in self.expr_types.iter_mut() {
             let expr_type = &mut infer_expr.expr_type;
             if !expr_type.is_done {
@@ -1383,98 +1418,85 @@ impl PassTyping {
                 }
             }
 
-            if !already_checked {
-                let concrete_type = ctx.heap[infer_expr.expr_id].get_type_mut();
-                expr_type.write_concrete_type(concrete_type);
-            } else {
-                if cfg!(debug_assertions) {
-                    let mut concrete_type = ConcreteType::default();
-                    expr_type.write_concrete_type(&mut concrete_type);
-                    debug_assert_eq!(*ctx.heap[infer_expr.expr_id].get_type(), concrete_type);
+            // Expression is fine, check if any extra data is attached
+            if infer_expr.extra_data_idx < 0 { continue; }
+
+            // Extra data is attached, perform typechecking and transfer
+            // resolved information to the expression
+            let extra_data = &self.extra_data[infer_expr.extra_data_idx as usize];
+            if extra_data.poly_vars.is_empty() { continue; }
+
+            // Note that only call and literal expressions need full inference.
+            // Select expressions also use `extra_data`, but only for temporary
+            // storage of the struct type whose field it is selecting.
+            match &ctx.heap[extra_data.expr_id] {
+                Expression::Call(expr) => {
+                    if expr.method != Method::UserFunction && expr.method != Method::UserComponent {
+                        // Builtin function
+                        continue;
+                    }
+
+                    let definition_id = expr.definition;
+                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
+
+                    match ctx.types.get_procedure_monomorph_index(&definition_id, &poly_types) {
+                        Some(reserved_idx) => {
+                            // Already typechecked, or already put into the resolve queue
+                            infer_expr.field_or_monomorph_idx = reserved_idx;
+                        },
+                        None => {
+                            // Not typechecked yet, so add an entry in the queue
+                            let reserved_idx = ctx.types.reserve_procedure_monomorph_index(&definition_id, Some(poly_types.clone()));
+                            infer_expr.field_or_monomorph_idx = reserved_idx;
+                            queue.push(ResolveQueueElement{
+                                root_id: ctx.heap[definition_id].defined_in(),
+                                definition_id,
+                                monomorph_types: poly_types,
+                                reserved_monomorph_idx: reserved_idx,
+                            });
+                        }
+                    }
+                },
+                Expression::Literal(expr) => {
+                    let definition_id = match &expr.value {
+                        Literal::Enum(lit) => lit.definition,
+                        Literal::Union(lit) => lit.definition,
+                        Literal::Struct(lit) => lit.definition,
+                        _ => unreachable!(),
+                    };
+
+                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
+                    let mono_index = ctx.types.add_data_monomorph(&definition_id, poly_types);
+                    infer_expr.field_or_monomorph_idx = mono_index;
+                },
+                Expression::Select(_) => {
+                    debug_assert!(infer_expr.field_or_monomorph_idx >= 0);
+                },
+                _ => {
+                    unreachable!("handling extra data for expression {:?}", &ctx.heap[extra_data.expr_id]);
                 }
             }
         }
 
-        // All types are fine
-        ctx.types.add_monomorph(&definition_id, self.poly_vars.clone());
+        // Every expression checked, and new monomorphs are queued. Transfer the
+        // expression information to the type table.
+        let definition_id = match &self.definition_type {
+            DefinitionType::Component(id) => id.upcast(),
+            DefinitionType::Function(id) => id.upcast(),
+        };
 
-        // Check all things we need to monomorphize
-        // TODO: Struct/enum/union monomorphization
-        for extra_data in self.extra_data.iter() {
-            if extra_data.poly_vars.is_empty() { continue; }
+        let target = ctx.types.get_procedure_expression_data_mut(&definition_id, self.reserved_idx);
+        debug_assert!(target.poly_args == self.poly_vars);
+        debug_assert!(target.expr_data.is_empty());
 
-            // Retrieve polymorph variable specification. Those of struct 
-            // literals and those of procedure calls need to be fully inferred.
-            // The remaining ones (e.g. select expressions) allow partial 
-            // inference of types, as long as the accessed field's type is
-            // fully inferred.
-            let needs_full_inference = match &ctx.heap[extra_data.expr_id] {
-                Expression::Call(_) => true,
-                Expression::Literal(_) => true,
-                _ => false
-            };
-
-            if needs_full_inference {
-                let mut monomorph_types = Vec::with_capacity(extra_data.poly_vars.len());
-                for (poly_idx, poly_type) in extra_data.poly_vars.iter().enumerate() {
-                    if !poly_type.is_done {
-                        // TODO: Single clean function for function signatures and polyvars.
-                        // TODO: Better error message
-                        let expr = &ctx.heap[extra_data.expr_id];
-                        return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, expr.span(), format!(
-                                "could not fully infer the type of polymorphic variable {} of this expression (got '{}')",
-                                poly_idx, poly_type.display_name(&ctx.heap)
-                            )
-                        ))
-                    }
-
-                    let mut concrete_type = ConcreteType::default();
-                    poly_type.write_concrete_type(&mut concrete_type);
-                    monomorph_types.insert(poly_idx, concrete_type);
-                }
-
-                // Resolve to the appropriate expression and instantiate 
-                // monomorphs.
-                match &ctx.heap[extra_data.expr_id] {
-                    Expression::Call(call_expr) => {
-                        // Add to type table if not yet typechecked
-                        if call_expr.method == Method::UserFunction {
-                            let definition_id = call_expr.definition;
-                            if !ctx.types.has_monomorph(&definition_id, &monomorph_types) {
-                                let root_id = ctx.types
-                                    .get_base_definition(&definition_id)
-                                    .unwrap()
-                                    .ast_root;
-
-                                // Pre-emptively add the monomorph to the type table, but
-                                // we still need to perform typechecking on it
-                                // TODO: Unsure about this, performance wise
-                                let queue_element = ResolveQueueElement{
-                                    root_id,
-                                    definition_id,
-                                    monomorph_types,
-                                };
-                                if !queue.contains(&queue_element) {
-                                    queue.push(queue_element);
-                                }
-                            }
-                        }
-                    },
-                    Expression::Literal(lit_expr) => {
-                        let definition_id = match &lit_expr.value {
-                            Literal::Struct(literal) => &literal.definition,
-                            Literal::Enum(literal) => &literal.definition,
-                            Literal::Union(literal) => &literal.definition,
-                            _ => unreachable!("post-inference monomorph for non-struct, non-enum, non-union literal")
-                        };
-                        if !ctx.types.has_monomorph(definition_id, &monomorph_types) {
-                            ctx.types.add_monomorph(definition_id, monomorph_types);
-                        }
-                    },
-                    _ => unreachable!("needs fully inference, but not a struct literal or call expression")
-                }
-            } // else: was just a helper structure...
+        target.expr_data.reserve(self.expr_types.len());
+        for infer_expr in self.expr_types.iter() {
+            let mut concrete = ConcreteType::default();
+            infer_expr.expr_type.write_concrete_type(&mut concrete);
+            target.expr_data.push(MonomorphExpression{
+                expr_type: concrete,
+                field_or_monomorph_idx: infer_expr.field_or_monomorph_idx
+            });
         }
 
         Ok(())
@@ -1817,9 +1839,11 @@ impl PassTyping {
 
         let subject_id = ctx.heap[id].subject;
         let subject_expr_idx = ctx.heap[subject_id].get_unique_id_in_definition();
-        let expr = &mut ctx.heap[id];
-        let expr_idx = expr.unique_id_in_definition;
-        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
+        let select_expr = &ctx.heap[id];
+        let expr_idx = select_expr.unique_id_in_definition;
+
+        let infer_expr = &self.expr_types[expr_idx as usize];
+        let extra_idx = infer_expr.extra_data_idx;
 
         fn determine_inference_type_instance<'a>(types: &'a TypeTable, infer_type: &InferenceType) -> Result<Option<&'a DefinedType>, ()> {
             for part in &infer_type.parts {
@@ -1846,132 +1870,118 @@ impl PassTyping {
             Ok(None)
         }
 
-        let (progress_subject, progress_expr) = match &mut expr.field {
-            Field::Length => {
-                let progress_subject = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
-                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
+        if infer_expr.field_or_monomorph_idx < 0 {
+            // We don't know the field or the definition it is pointing to yet
+            // Not yet known, check if we can determine it
+            let subject_type = &self.expr_types[subject_expr_idx as usize].expr_type;
+            let type_def = determine_inference_type_instance(&ctx.types, subject_type);
 
-                (progress_subject, progress_expr)
-            },
-            Field::Symbolic(field) => {
-                // Retrieve the struct definition id and field index if possible 
-                // and not previously determined
-                if field.definition.is_none() {
-                    // Not yet known, check if we can determine it
-                    let subject_type = &self.expr_types[subject_expr_idx as usize].expr_type;
-                    let type_def = determine_inference_type_instance(&ctx.types, subject_type);
+            match type_def {
+                Ok(Some(type_def)) => {
+                    // Subject type is known, check if it is a
+                    // struct and the field exists on the struct
+                    let struct_def = if let DefinedTypeVariant::Struct(struct_def) = &type_def.definition {
+                        struct_def
+                    } else {
+                        return Err(ParseError::new_error_at_span(
+                            &ctx.module.source, select_expr.field_name.span, format!(
+                                "Can only apply field access to structs, got a subject of type '{}'",
+                                subject_type.display_name(&ctx.heap)
+                            )
+                        ));
+                    };
 
-                    match type_def {
-                        Ok(Some(type_def)) => {
-                            // Subject type is known, check if it is a 
-                            // struct and the field exists on the struct
-                            let struct_def = if let DefinedTypeVariant::Struct(struct_def) = &type_def.definition {
-                                struct_def
-                            } else {
-                                return Err(ParseError::new_error_at_span(
-                                    &ctx.module.source, field.identifier.span, format!(
-                                        "Can only apply field access to structs, got a subject of type '{}'",
-                                        subject_type.display_name(&ctx.heap)
-                                    )
-                                ));
-                            };
+                    let mut struct_def_id = None;
 
-                            for (field_def_idx, field_def) in struct_def.fields.iter().enumerate() {
-                                if field_def.identifier == field.identifier {
-                                    // Set field definition and index
-                                    field.definition = Some(type_def.ast_definition);
-                                    field.field_idx = field_def_idx;
-                                    break;
-                                }
-                            }
-
-                            if field.definition.is_none() {
-                                let field_span = field.identifier.span;
-                                let ast_struct_def = ctx.heap[type_def.ast_definition].as_struct();
-                                return Err(ParseError::new_error_at_span(
-                                    &ctx.module.source, field_span, format!(
-                                        "this field does not exist on the struct '{}'",
-                                        ast_struct_def.identifier.value.as_str()
-                                    )
-                                ))
-                            }
-
-                            // Encountered definition and field index for the
-                            // first time
-                            self.insert_initial_select_polymorph_data(ctx, id);
-                        },
-                        Ok(None) => {
-                            // Type of subject is not yet known, so we 
-                            // cannot make any progress yet
-                            return Ok(())
-                        },
-                        Err(()) => {
-                            return Err(ParseError::new_error_at_span(
-                                &ctx.module.source, field.identifier.span, format!(
-                                    "Can only apply field access to structs, got a subject of type '{}'",
-                                    subject_type.display_name(&ctx.heap)
-                                )
-                            ));
+                    for (field_def_idx, field_def) in struct_def.fields.iter().enumerate() {
+                        if field_def.identifier == select_expr.field_name {
+                            // Set field definition and index
+                            let infer_expr = &mut self.expr_types[expr_idx as usize];
+                            infer_expr.field_or_monomorph_idx = field_def_idx as i32;
+                            struct_def_id = Some(type_def.ast_definition);
+                            break;
                         }
                     }
-                }
 
-                // If here then field definition and index are known, and the
-                // initial type (based on the struct's definition) has been
-                // applied.
-                // Check to see if we can infer anything about the subject's and
-                // the field's polymorphic variables
-
-                let poly_data = &mut self.extra_data[extra_idx as usize];
-                let mut poly_progress = HashSet::new();
-                
-                // Apply to struct's type
-                let signature_type: *mut _ = &mut poly_data.embedded[0];
-                let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
-
-                let (_, progress_subject) = Self::apply_equal2_signature_constraint(
-                    ctx, upcast_id, Some(subject_id), poly_data, &mut poly_progress,
-                    signature_type, 0, subject_type, 0
-                )?;
-
-                if progress_subject {
-                    self.expr_queued.push_back(subject_expr_idx);
-                }
-                
-                // Apply to field's type
-                let signature_type: *mut _ = &mut poly_data.returned;
-                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
-
-                let (_, progress_expr) = Self::apply_equal2_signature_constraint(
-                    ctx, upcast_id, None, poly_data, &mut poly_progress, 
-                    signature_type, 0, expr_type, 0
-                )?;
-
-                if progress_expr {
-                    if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
-                        let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
-                        self.expr_queued.push_back(parent_idx);
+                    if struct_def_id.is_none() {
+                        let ast_struct_def = ctx.heap[type_def.ast_definition].as_struct();
+                        return Err(ParseError::new_error_at_span(
+                            &ctx.module.source, select_expr.field_name.span, format!(
+                                "this field does not exist on the struct '{}'",
+                                ast_struct_def.identifier.value.as_str()
+                            )
+                        ))
                     }
+
+                    // Encountered definition and field index for the
+                    // first time
+                    self.insert_initial_select_polymorph_data(ctx, id, struct_def_id.unwrap());
+                },
+                Ok(None) => {
+                    // Type of subject is not yet known, so we
+                    // cannot make any progress yet
+                    return Ok(())
+                },
+                Err(()) => {
+                    return Err(ParseError::new_error_at_span(
+                        &ctx.module.source, select_expr.field_name.span, format!(
+                            "Can only apply field access to structs, got a subject of type '{}'",
+                            subject_type.display_name(&ctx.heap)
+                        )
+                    ));
                 }
-
-                // Reapply progress in polymorphic variables to struct's type
-                let signature_type: *mut _ = &mut poly_data.embedded[0];
-                let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
-                
-                let progress_subject = Self::apply_equal2_polyvar_constraint(
-                    poly_data, &poly_progress, signature_type, subject_type
-                );
-
-                let signature_type: *mut _ = &mut poly_data.returned;
-                let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
-
-                let progress_expr = Self::apply_equal2_polyvar_constraint(
-                    poly_data, &poly_progress, signature_type, expr_type
-                );
-
-                (progress_subject, progress_expr)
             }
-        };
+        }
+
+        // If here then field index is known, and the referenced struct type
+        // information is inserted into `extra_data`. Check to see if we can
+        // do some mutual inference.
+        let poly_data = &mut self.extra_data[extra_idx as usize];
+        let mut poly_progress = HashSet::new();
+
+        // Apply to struct's type
+        let signature_type: *mut _ = &mut poly_data.embedded[0];
+        let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
+
+        let (_, progress_subject) = Self::apply_equal2_signature_constraint(
+            ctx, upcast_id, Some(subject_id), poly_data, &mut poly_progress,
+            signature_type, 0, subject_type, 0
+        )?;
+
+        if progress_subject {
+            self.expr_queued.push_back(subject_expr_idx);
+        }
+
+        // Apply to field's type
+        let signature_type: *mut _ = &mut poly_data.returned;
+        let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
+
+        let (_, progress_expr) = Self::apply_equal2_signature_constraint(
+            ctx, upcast_id, None, poly_data, &mut poly_progress,
+            signature_type, 0, expr_type, 0
+        )?;
+
+        if progress_expr {
+            if let Some(parent_id) = ctx.heap[upcast_id].parent_expr_id() {
+                let parent_idx = ctx.heap[parent_id].get_unique_id_in_definition();
+                self.expr_queued.push_back(parent_idx);
+            }
+        }
+
+        // Reapply progress in polymorphic variables to struct's type
+        let signature_type: *mut _ = &mut poly_data.embedded[0];
+        let subject_type: *mut _ = &mut self.expr_types[subject_expr_idx as usize].expr_type;
+
+        let progress_subject = Self::apply_equal2_polyvar_constraint(
+            poly_data, &poly_progress, signature_type, subject_type
+        );
+
+        let signature_type: *mut _ = &mut poly_data.returned;
+        let expr_type: *mut _ = &mut self.expr_types[expr_idx as usize].expr_type;
+
+        let progress_expr = Self::apply_equal2_polyvar_constraint(
+            poly_data, &poly_progress, signature_type, expr_type
+        );
 
         if progress_subject { self.queue_expr(ctx, subject_id); }
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
@@ -1987,7 +1997,7 @@ impl PassTyping {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let expr_idx = expr.unique_id_in_definition;
-        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
+        let extra_idx = self.expr_types[expr_idx as usize].extra_data_idx;
 
         debug_log!("Literal expr: {}", upcast_id.index);
         debug_log!(" * Before:");
@@ -2283,7 +2293,7 @@ impl PassTyping {
         let upcast_id = id.upcast();
         let expr = &ctx.heap[id];
         let expr_idx = expr.unique_id_in_definition;
-        let extra_idx = self.expr_types[expr_idx as usize].var_or_extra_data_idx;
+        let extra_idx = self.expr_types[expr_idx as usize].extra_data_idx;
 
         debug_log!("Call expr '{}': {}", ctx.heap[expr.definition].identifier().value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
@@ -2875,7 +2885,7 @@ impl PassTyping {
             if needs_extra_data {
                 let extra_idx = self.extra_data.len() as i32;
                 self.extra_data.push(ExtraData::default());
-                infer_expr.var_or_extra_data_idx = extra_idx;
+                infer_expr.extra_data_idx = extra_idx;
             }
         } else {
             // We already have an entry
@@ -2886,7 +2896,7 @@ impl PassTyping {
                 return Err(self.construct_expr_type_error(ctx, expr_id, expr_id));
             }
 
-            debug_assert!((infer_expr.var_or_extra_data_idx != -1) == needs_extra_data);
+            debug_assert!((infer_expr.extra_data_idx != -1) == needs_extra_data);
         }
 
         Ok(())
@@ -2905,7 +2915,7 @@ impl PassTyping {
         // map them back and forth to the polymorphic arguments of the function
         // we are calling.
         let call = &ctx.heap[call_id];
-        let extra_data_idx = self.expr_types[call.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
+        let extra_data_idx = self.expr_types[call.unique_id_in_definition as usize].extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "insert initial call polymorph data, no preallocated ExtraData");
 
         // Handle the polymorphic arguments (if there are any)
@@ -2951,6 +2961,7 @@ impl PassTyping {
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
             expr_id: call_id.upcast(),
+            definition_id: call.definition,
             poly_vars: poly_args,
             embedded: parameter_types,
             returned: return_type
@@ -2962,7 +2973,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial struct polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_struct();
 
@@ -3013,6 +3024,7 @@ impl PassTyping {
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
             expr_id: lit_id.upcast(),
+            definition_id: literal.definition,
             poly_vars: poly_args,
             embedded: embedded_types,
             returned: return_type,
@@ -3027,7 +3039,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial enum polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_enum();
 
@@ -3059,6 +3071,7 @@ impl PassTyping {
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
             expr_id: lit_id.upcast(),
+            definition_id: literal.definition,
             poly_vars: poly_args,
             embedded: Vec::new(),
             returned: enum_type,
@@ -3072,7 +3085,7 @@ impl PassTyping {
     ) {
         use InferenceTypePart as ITP;
         let literal = &ctx.heap[lit_id];
-        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
+        let extra_data_idx = self.expr_types[literal.unique_id_in_definition as usize].extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial union polymorph data, but no preallocated ExtraData");
         let literal = ctx.heap[lit_id].value.as_union();
 
@@ -3119,6 +3132,7 @@ impl PassTyping {
 
         self.extra_data[extra_data_idx as usize] = ExtraData{
             expr_id: lit_id.upcast(),
+            definition_id: literal.definition,
             poly_vars: poly_args,
             embedded,
             returned: union_type
@@ -3128,19 +3142,18 @@ impl PassTyping {
     /// Inserts the extra polymorphic data struct. Assumes that the select
     /// expression's referenced (definition_id, field_idx) has been resolved.
     fn insert_initial_select_polymorph_data(
-        &mut self, ctx: &Ctx, select_id: SelectExpressionId
+        &mut self, ctx: &Ctx, select_id: SelectExpressionId, struct_def_id: DefinitionId
     ) {
         use InferenceTypePart as ITP;
 
         // Retrieve relevant data
         let expr = &ctx.heap[select_id];
-        let extra_data_idx = self.expr_types[expr.unique_id_in_definition as usize].var_or_extra_data_idx; // TODO: @Temp
+        let expr_type = &self.expr_types[expr.unique_id_in_definition as usize];
+        let field_idx = expr_type.field_or_monomorph_idx as usize;
+        let extra_data_idx = expr_type.extra_data_idx; // TODO: @Temp
         debug_assert!(extra_data_idx != -1, "initial select polymorph data, but no preallocated ExtraData");
-        let field = expr.field.as_symbolic();
 
-        let definition_id = field.definition.unwrap();
-        let definition = ctx.heap[definition_id].as_struct();
-        let field_idx = field.field_idx;
+        let definition = ctx.heap[struct_def_id].as_struct();
 
         // Generate initial polyvar types and struct type
         // TODO: @Performance: we can immediately set the polyvars of the subject's struct type
@@ -3148,7 +3161,7 @@ impl PassTyping {
         let mut poly_vars = Vec::with_capacity(num_poly_vars);
         let struct_parts_reserved = 1 + 2 * num_poly_vars;
         let mut struct_parts = Vec::with_capacity(struct_parts_reserved);
-        struct_parts.push(ITP::Instance(definition_id, num_poly_vars as u32));
+        struct_parts.push(ITP::Instance(struct_def_id, num_poly_vars as u32));
 
         for poly_idx in 0..num_poly_vars {
             poly_vars.push(InferenceType::new(true, false, vec![
@@ -3163,6 +3176,7 @@ impl PassTyping {
         let field_type = self.determine_inference_type_from_parser_type_elements(&definition.fields[field_idx].parser_type.elements, false);
         self.extra_data[extra_data_idx as usize] = ExtraData{
             expr_id: select_id.upcast(),
+            definition_id: struct_def_id,
             poly_vars,
             embedded: vec![InferenceType::new(num_poly_vars != 0, num_poly_vars == 0, struct_parts)],
             returned: field_type
@@ -3375,10 +3389,10 @@ impl PassTyping {
         }
 
         // Helper function to construct initial error
-        fn construct_main_error(ctx: &Ctx, poly_var_idx: u32, expr: &Expression) -> ParseError {
+        fn construct_main_error(ctx: &Ctx, poly_data: &ExtraData, poly_var_idx: u32, expr: &Expression) -> ParseError {
             match expr {
                 Expression::Call(expr) => {
-                    let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, expr.definition);
+                    let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
                         &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' of '{}'",
@@ -3387,14 +3401,7 @@ impl PassTyping {
                     )
                 },
                 Expression::Literal(expr) => {
-                    let definition_id = match &expr.value {
-                        Literal::Struct(v) => v.definition,
-                        Literal::Enum(v) => v.definition,
-                        Literal::Union(v) => v.definition,
-                        _ => unreachable!(),
-                    };
-
-                    let (poly_var, type_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, definition_id);
+                    let (poly_var, type_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
                         &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' of instantiation of '{}'",
@@ -3403,12 +3410,11 @@ impl PassTyping {
                     );
                 },
                 Expression::Select(expr) => {
-                    let field = expr.field.as_symbolic();
-                    let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, field.definition.unwrap());
+                    let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
                         &ctx.module.source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
-                            poly_var, field.identifier.value.as_str(), struct_name
+                            poly_var, expr.field_name.value.as_str(), struct_name
                         )
                     )
                 }
@@ -3450,7 +3456,7 @@ impl PassTyping {
         if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(
             &poly_data.returned, &poly_data.returned
         ) {
-            return construct_main_error(ctx, poly_idx, expr)
+            return construct_main_error(ctx, poly_data, poly_idx, expr)
                 .with_info_at_span(
                     &ctx.module.source, expr.span(), format!(
                         "The {} inferred the conflicting types '{}' and '{}'",
@@ -3469,7 +3475,7 @@ impl PassTyping {
                 }
 
                 if let Some((poly_idx, section_a, section_b)) = has_poly_mismatch(&arg_a, &arg_b) {
-                    let error = construct_main_error(ctx, poly_idx, expr);
+                    let error = construct_main_error(ctx, poly_data, poly_idx, expr);
                     if arg_a_idx == arg_b_idx {
                         // Same argument
                         let arg = &ctx.heap[expr_args[arg_a_idx]];
@@ -3501,7 +3507,7 @@ impl PassTyping {
             // Check with return type
             if let Some((poly_idx, section_arg, section_ret)) = has_poly_mismatch(arg_a, &poly_data.returned) {
                 let arg = &ctx.heap[expr_args[arg_a_idx]];
-                return construct_main_error(ctx, poly_idx, expr)
+                return construct_main_error(ctx, poly_data, poly_idx, expr)
                     .with_info_at_span(
                         &ctx.module.source, arg.span(), format!(
                             "This argument inferred it to '{}'",

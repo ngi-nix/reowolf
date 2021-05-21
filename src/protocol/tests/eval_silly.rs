@@ -65,14 +65,13 @@ fn test_concatenate_operator() {
 
 #[test]
 fn test_slicing_magic() {
-    // TODO: Reimplement polymorphism, then retest with polymorphic types
     Tester::new_single_source_expect_ok("slicing", "
-        struct Holder {
-            u32[] left,
-            u32[] right,
+        struct Holder<T> {
+            T[] left,
+            T[] right,
         }
 
-        func create_array(u32 first_index, u32 last_index) -> u32[] {
+        func create_array<T>(T first_index, T last_index) -> T[] {
             auto result = {};
             while (first_index < last_index) {
                 // Absolutely rediculous, but we don't have builtin array functions yet...
@@ -82,7 +81,7 @@ fn test_slicing_magic() {
             return result;
         }
 
-        func create_holder(u32 left_first, u32 left_last, u32 right_first, u32 right_last) -> Holder {
+        func create_holder<T>(T left_first, T left_last, T right_first, T right_last) -> Holder<T> {
             return Holder{
                 left: create_array(left_first, left_last),
                 right: create_array(right_first, right_last)
@@ -91,7 +90,7 @@ fn test_slicing_magic() {
 
         // Another silly thing, we first slice the full thing. Then subslice a single
         // element, then concatenate. We always return an array of two things.
-        func slicing_magic(Holder holder, u32 left_base, u32 left_amount, u32 right_base, u32 right_amount) -> u32[] {
+        func slicing_magic<T>(Holder<T> holder, u32 left_base, u32 left_amount, u32 right_base, u32 right_amount) -> T[] {
             auto left = holder.left[left_base..left_base + left_amount];
             auto right = holder.right[right_base..right_base + right_amount];
             return left[0..1] @ right[0..1];

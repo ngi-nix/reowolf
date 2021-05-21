@@ -199,13 +199,13 @@ impl Parser {
         // Perform typechecking on all modules
         let mut queue = ResolveQueue::new();
         for module in &mut self.modules {
-            let ctx = visitor::Ctx{
+            let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
                 module,
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
             };
-            PassTyping::queue_module_definitions(&ctx, &mut queue);
+            PassTyping::queue_module_definitions(&mut ctx, &mut queue);
         };
         while !queue.is_empty() {
             let top = queue.pop().unwrap();
@@ -248,9 +248,9 @@ impl Parser {
         LinkStatements::new().visit_protocol_description(h, pd)?;
         // BuildLabels::new().visit_protocol_description(h, pd)?;
         // ResolveLabels::new().visit_protocol_description(h, pd)?;
-        AssignableExpressions::new().visit_protocol_description(h, pd)?;
-        IndexableExpressions::new().visit_protocol_description(h, pd)?;
-        SelectableExpressions::new().visit_protocol_description(h, pd)?;
+        // AssignableExpressions::new().visit_protocol_description(h, pd)?;
+        // IndexableExpressions::new().visit_protocol_description(h, pd)?;
+        // SelectableExpressions::new().visit_protocol_description(h, pd)?;
 
         Ok(())
     }

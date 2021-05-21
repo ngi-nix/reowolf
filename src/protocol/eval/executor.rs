@@ -6,6 +6,7 @@ use super::store::*;
 use super::error::*;
 use crate::protocol::*;
 use crate::protocol::ast::*;
+use crate::protocol::type_table::*;
 
 macro_rules! debug_enabled { () => { true }; }
 macro_rules! debug_log {
@@ -26,6 +27,7 @@ pub(crate) enum ExprInstruction {
 #[derive(Debug, Clone)]
 pub(crate) struct Frame {
     pub(crate) definition: DefinitionId,
+    pub(crate) monomorph_idx: i32,
     pub(crate) position: StatementId,
     pub(crate) expr_stack: VecDeque<ExprInstruction>, // hack for expression evaluation, evaluated by popping from back
     pub(crate) expr_values: VecDeque<Value>, // hack for expression results, evaluated by popping from front/back
@@ -33,7 +35,7 @@ pub(crate) struct Frame {
 
 impl Frame {
     /// Creates a new execution frame. Does not modify the stack in any way.
-    pub fn new(heap: &Heap, definition_id: DefinitionId) -> Self {
+    pub fn new(heap: &Heap, definition_id: DefinitionId, monomorph_idx: i32) -> Self {
         let definition = &heap[definition_id];
         let first_statement = match definition {
             Definition::Component(definition) => definition.body,
@@ -43,6 +45,7 @@ impl Frame {
 
         Frame{
             definition: definition_id,
+            monomorph_idx,
             position: first_statement.upcast(),
             expr_stack: VecDeque::with_capacity(128),
             expr_values: VecDeque::with_capacity(128),
@@ -159,7 +162,7 @@ pub enum EvalContinuation {
     Terminal,
     SyncBlockStart,
     SyncBlockEnd,
-    NewComponent(DefinitionId, ValueGroup),
+    NewComponent(DefinitionId, i32, ValueGroup),
     BlockFires(Value),
     BlockGet(Value),
     Put(Value, Value),
@@ -174,19 +177,21 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub fn new(heap: &Heap, def: DefinitionId, args: ValueGroup) -> Self {
+    pub fn new(_types: &TypeTable, heap: &Heap, def: DefinitionId, monomorph_idx: i32, args: ValueGroup) -> Self {
         let mut prompt = Self{
             frames: Vec::new(),
             store: Store::new(),
         };
 
-        prompt.frames.push(Frame::new(heap, def));
+        // Maybe do typechecking in the future?
+        debug_assert!((monomorph_idx as usize) < _types.get_base_definition(&def).unwrap().definition.procedure_monomorphs().len());
+        prompt.frames.push(Frame::new(heap, def, monomorph_idx));
         args.into_store(&mut prompt.store);
 
         prompt
     }
 
-    pub(crate) fn step(&mut self, heap: &Heap, modules: &[Module], ctx: &mut EvalContext) -> EvalResult {
+    pub(crate) fn step(&mut self, types: &TypeTable, heap: &Heap, modules: &[Module], ctx: &mut EvalContext) -> EvalResult {
         // Helper function to transfer multiple values from the expression value
         // array into a heap region (e.g. constructing arrays or structs).
         fn transfer_expression_values_front_into_heap(cur_frame: &mut Frame, store: &mut Store, num_values: usize) -> HeapPos {
@@ -389,7 +394,9 @@ impl Prompt {
                         },
                         Expression::Select(expr) => {
                             let subject= cur_frame.expr_values.pop_back().unwrap();
-                            let field_idx = expr.field.as_symbolic().field_idx as u32;
+                            let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                            let field_idx = mono_data.expr_data[expr.unique_id_in_definition as usize].field_or_monomorph_idx as u32;
+
                             // Note: same as above: clone if value lives on expr stack, simply
                             // refer to it if it already lives on the stack/heap.
                             let (deallocate_heap_pos, value_to_push) = match subject {
@@ -429,8 +436,11 @@ impl Prompt {
                                 }
                                 Literal::Integer(lit_value) => {
                                     use ConcreteTypePart as CTP;
-                                    debug_assert_eq!(expr.concrete_type.parts.len(), 1);
-                                    match expr.concrete_type.parts[0] {
+                                    let def_types = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                                    let concrete_type = &def_types.expr_data[expr.unique_id_in_definition as usize].expr_type;
+
+                                    debug_assert_eq!(concrete_type.parts.len(), 1);
+                                    match concrete_type.parts[0] {
                                         CTP::UInt8  => Value::UInt8(lit_value.unsigned_value as u8),
                                         CTP::UInt16 => Value::UInt16(lit_value.unsigned_value as u16),
                                         CTP::UInt32 => Value::UInt32(lit_value.unsigned_value as u32),
@@ -439,7 +449,7 @@ impl Prompt {
                                         CTP::SInt16 => Value::SInt16(lit_value.unsigned_value as i16),
                                         CTP::SInt32 => Value::SInt32(lit_value.unsigned_value as i32),
                                         CTP::SInt64 => Value::SInt64(lit_value.unsigned_value as i64),
-                                        _ => unreachable!("got concrete type {:?} for integer literal at expr {:?}", &expr.concrete_type, expr_id),
+                                        _ => unreachable!("got concrete type {:?} for integer literal at expr {:?}", concrete_type, expr_id),
                                     }
                                 }
                                 Literal::Struct(lit_value) => {
@@ -484,8 +494,12 @@ impl Prompt {
                                 self.store.stack.push(argument);
                             }
 
+                            // Determine the monomorph index of the function we're calling
+                            let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                            let call_data = &mono_data.expr_data[expr.unique_id_in_definition as usize];
+
                             // Push the new frame
-                            self.frames.push(Frame::new(heap, expr.definition));
+                            self.frames.push(Frame::new(heap, expr.definition, call_data.field_or_monomorph_idx));
                             self.store.cur_stack_boundary = new_stack_boundary;
 
                             // To simplify the logic a little bit we will now
@@ -665,6 +679,9 @@ impl Prompt {
                     "mismatch in expr stack size and number of arguments for new statement"
                 );
 
+                let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                let expr_data = &mono_data.expr_data[call_expr.unique_id_in_definition as usize];
+
                 // Note that due to expression value evaluation they exist in
                 // reverse order on the stack.
                 // TODO: Revise this code, keep it as is to be compatible with current runtime
@@ -684,7 +701,7 @@ impl Prompt {
                 cur_frame.position = stmt.next;
 
                 todo!("Make sure this is handled correctly, transfer 'heap' values to another Prompt");
-                Ok(EvalContinuation::NewComponent(call_expr.definition, argument_group))
+                Ok(EvalContinuation::NewComponent(call_expr.definition, expr_data.field_or_monomorph_idx, argument_group))
             },
             Statement::Expression(stmt) => {
                 // The expression has just been completely evaluated. Some

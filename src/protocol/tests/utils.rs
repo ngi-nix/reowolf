@@ -5,7 +5,7 @@ use crate::protocol::{
     input_source::*,
     parser::{
         Parser,
-        type_table::TypeTable,
+        type_table::{TypeTable, DefinedTypeVariant},
         symbol_table::SymbolTable,
         token_parsing::*,
     },
@@ -644,10 +644,10 @@ impl<'a> FunctionTester<'a> {
         use crate::protocol::*;
         use crate::runtime::*;
 
-        let mut prompt = Prompt::new(&self.ctx.heap, self.def.this.upcast(), ValueGroup::new_stack(Vec::new()));
+        let mut prompt = Prompt::new(&self.ctx.types, &self.ctx.heap, self.def.this.upcast(), 0, ValueGroup::new_stack(Vec::new()));
         let mut call_context = EvalContext::None;
         loop {
-            let result = prompt.step(&self.ctx.heap, &self.ctx.modules, &mut call_context);
+            let result = prompt.step(&self.ctx.types, &self.ctx.heap, &self.ctx.modules, &mut call_context);
             match result {
                 Ok(EvalContinuation::Stepping) => {},
                 _ => return (prompt, result),
@@ -687,12 +687,14 @@ impl<'a> VariableTester<'a> {
     }
 
     pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
-        let mut serialized = String::new();
+        // Lookup concrete type in type table
+        let mono_data = self.ctx.types.get_procedure_expression_data(&self.definition_id, 0);
         let lhs = self.ctx.heap[self.assignment.left].as_variable();
-        serialize_concrete_type(
-            &mut serialized, self.ctx.heap, self.definition_id, 
-            &lhs.concrete_type
-        );
+        let concrete_type = &mono_data.expr_data[lhs.unique_id_in_definition as usize].expr_type;
+
+        // Serialize and check
+        let mut serialized = String::new();
+        serialize_concrete_type(&mut serialized, self.ctx.heap, self.definition_id, concrete_type);
 
         assert_eq!(
             expected, &serialized,
@@ -721,11 +723,14 @@ impl<'a> ExpressionTester<'a> {
     }
 
     pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
+        // Lookup concrete type
+        let mono_data = self.ctx.types.get_procedure_expression_data(&self.definition_id, 0);
+        let expr_index = self.expr.get_unique_id_in_definition();
+        let concrete_type = &mono_data.expr_data[expr_index as usize].expr_type;
+
+        // Serialize and check type
         let mut serialized = String::new();
-        serialize_concrete_type(
-            &mut serialized, self.ctx.heap, self.definition_id,
-            self.expr.get_type()
-        );
+        serialize_concrete_type(&mut serialized, self.ctx.heap, self.definition_id, concrete_type);
 
         assert_eq!(
             expected, &serialized,
@@ -863,38 +868,75 @@ impl<'a> ErrorTester<'a> {
 // Generic utilities
 //------------------------------------------------------------------------------
 
-fn has_equal_num_monomorphs<'a>(ctx: TestCtx<'a>, num: usize, definition_id: DefinitionId) -> (bool, usize) {
+fn has_equal_num_monomorphs(ctx: TestCtx, num: usize, definition_id: DefinitionId) -> (bool, usize) {
+    use DefinedTypeVariant::*;
+
     let type_def = ctx.types.get_base_definition(&definition_id).unwrap();
-    let num_on_type = type_def.monomorphs.len();
-    
+    let num_on_type = match &type_def.definition {
+        Struct(v) => v.monomorphs.len(),
+        Enum(v) => v.monomorphs.len(),
+        Union(v) => v.monomorphs.len(),
+        Function(v) => v.monomorphs.len(),
+        Component(v) => v.monomorphs.len(),
+    };
+
     (num_on_type == num, num_on_type)
 }
 
-fn has_monomorph<'a>(ctx: TestCtx<'a>, definition_id: DefinitionId, serialized_monomorph: &str) -> (bool, String) {
+fn has_monomorph(ctx: TestCtx, definition_id: DefinitionId, serialized_monomorph: &str) -> (bool, String) {
+    use DefinedTypeVariant::*;
+
     let type_def = ctx.types.get_base_definition(&definition_id).unwrap();
 
+    // Note: full_buffer is just for error reporting
     let mut full_buffer = String::new();
     let mut has_match = false;
-    full_buffer.push('[');
-    for (monomorph_idx, monomorph) in type_def.monomorphs.iter().enumerate() {
+
+    let serialize_monomorph = |monomorph: &Vec<ConcreteType>| -> String {
         let mut buffer = String::new();
-        for (element_idx, monomorph_element) in monomorph.iter().enumerate() {
-            if element_idx != 0 { buffer.push(';'); }
-            serialize_concrete_type(&mut buffer, ctx.heap, definition_id, monomorph_element);
+        for (element_idx, element) in monomorph.iter().enumerate() {
+            if element_idx != 0 {
+                buffer.push(';');
+            }
+            serialize_concrete_type(&mut buffer, ctx.heap, definition_id, element);
         }
 
-        if buffer == serialized_monomorph {
-            // Found an exact match
-            has_match = true;
-        }
+        buffer
+    };
 
-        if monomorph_idx != 0 {
+    full_buffer.push('[');
+    let mut append_to_full_buffer = |buffer: String| {
+        if buffer.len() == 1 {
             full_buffer.push_str(", ");
         }
         full_buffer.push('"');
         full_buffer.push_str(&buffer);
         full_buffer.push('"');
+    };
+
+    match &type_def.definition {
+        Enum(_) | Union(_) | Struct(_) => {
+            let monomorphs = type_def.definition.data_monomorphs();
+            for monomorph in monomorphs.iter() {
+                let buffer = serialize_monomorph(&monomorph.poly_args);
+                if buffer == serialized_monomorph {
+                    has_match = true;
+                }
+                append_to_full_buffer(buffer);
+            }
+        },
+        Function(_) | Component(_) => {
+            let monomorphs = type_def.definition.procedure_monomorphs();
+            for monomorph in monomorphs.iter() {
+                let buffer = serialize_monomorph(&monomorph.poly_args);
+                if buffer == serialized_monomorph {
+                    has_match = true;
+                }
+                append_to_full_buffer(buffer);
+            }
+        }
     }
+
     full_buffer.push(']');
 
     (has_match, full_buffer)

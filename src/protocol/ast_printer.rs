@@ -561,8 +561,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.right, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Binding(expr) => {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
@@ -573,8 +571,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.right, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Conditional(expr) => {
                 self.kv(indent).with_id(PREFIX_CONDITIONAL_EXPR_ID, expr.this.0.index)
@@ -587,8 +583,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.false_expression, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Binary(expr) => {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
@@ -600,8 +594,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.right, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Unary(expr) => {
                 self.kv(indent).with_id(PREFIX_UNARY_EXPR_ID, expr.this.0.index)
@@ -611,8 +603,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.expression, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Indexing(expr) => {
                 self.kv(indent).with_id(PREFIX_INDEXING_EXPR_ID, expr.this.0.index)
@@ -623,8 +613,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.index, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Slicing(expr) => {
                 self.kv(indent).with_id(PREFIX_SLICING_EXPR_ID, expr.this.0.index)
@@ -637,8 +625,6 @@ impl ASTWriter {
                 self.write_expr(heap, expr.to_index, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Select(expr) => {
                 self.kv(indent).with_id(PREFIX_SELECT_EXPR_ID, expr.this.0.index)
@@ -646,20 +632,9 @@ impl ASTWriter {
                 self.kv(indent2).with_s_key("Subject");
                 self.write_expr(heap, expr.subject, indent3);
 
-                match &expr.field {
-                    Field::Length => {
-                        self.kv(indent2).with_s_key("Field").with_s_val("length");
-                    },
-                    Field::Symbolic(field) => {
-                        self.kv(indent2).with_s_key("Field").with_identifier_val(&field.identifier);
-                        self.kv(indent3).with_s_key("Definition").with_opt_disp_val(field.definition.as_ref().map(|v| &v.index));
-                        self.kv(indent3).with_s_key("Index").with_disp_val(&field.field_idx);
-                    }
-                }
+                self.kv(indent2).with_s_key("Field").with_identifier_val(&expr.field_name);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Literal(expr) => {
                 self.kv(indent).with_id(PREFIX_LITERAL_EXPR_ID, expr.this.0.index)
@@ -728,8 +703,6 @@ impl ASTWriter {
 
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Call(expr) => {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)
@@ -760,8 +733,6 @@ impl ASTWriter {
                 // Parent
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             },
             Expression::Variable(expr) => {
                 self.kv(indent).with_id(PREFIX_VARIABLE_EXPR_ID, expr.this.0.index)
@@ -771,8 +742,6 @@ impl ASTWriter {
                     .with_opt_disp_val(expr.declaration.as_ref().map(|v| &v.index));
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
-                self.kv(indent2).with_s_key("ConcreteType")
-                    .with_custom_val(|v| write_concrete_type(v, heap, def_id, &expr.concrete_type));
             }
         }
     }

@@ -52,6 +52,9 @@ fn test_enum_monomorphs() {
         .assert_num_monomorphs(0);
     });
 
+    // Note for reader: because the enum doesn't actually use the polymorphic
+    // variable, we expect to have 0 polymorphs: the type only has to be laid
+    // out once.
     Tester::new_single_source_expect_ok(
         "single polymorph",
         "
@@ -65,10 +68,7 @@ fn test_enum_monomorphs() {
         }
         "
     ).for_enum("Answer", |e| { e
-        .assert_num_monomorphs(3)
-        .assert_has_monomorph("s8")
-        .assert_has_monomorph("s32")
-        .assert_has_monomorph("Answer<Answer<s64>>");
+        .assert_num_monomorphs(0);
     });
 }
 

@@ -15,6 +15,7 @@ use crate::protocol::ast::*;
 use crate::protocol::eval::*;
 use crate::protocol::input_source::*;
 use crate::protocol::parser::*;
+use crate::protocol::type_table::*;
 
 /// A protocol description module
 pub struct Module {
@@ -27,6 +28,7 @@ pub struct Module {
 pub struct ProtocolDescription {
     modules: Vec<Module>,
     heap: Heap,
+    types: TypeTable,
     pool: Mutex<StringPool>,
 }
 #[derive(Debug, Clone)]
@@ -71,6 +73,7 @@ impl ProtocolDescription {
         return Ok(ProtocolDescription {
             modules,
             heap: parser.heap,
+            types: parser.type_table,
             pool: Mutex::new(parser.string_pool),
         });
     }
@@ -138,7 +141,7 @@ impl ProtocolDescription {
         let module_root = self.lookup_module_root(module_name).unwrap();
         let root = &self.heap[module_root];
         let def = root.get_definition_ident(&self.heap, identifier).unwrap();
-        ComponentState { prompt: Prompt::new(&self.heap, def, ValueGroup::new_stack(args)) }
+        ComponentState { prompt: Prompt::new(&self.types, &self.heap, def, 0, ValueGroup::new_stack(args)) }
     }
 
     fn lookup_module_root(&self, module_name: &[u8]) -> Option<RootId> {
@@ -164,7 +167,7 @@ impl ComponentState {
     ) -> NonsyncBlocker {
         let mut context = EvalContext::Nonsync(context);
         loop {
-            let result = self.prompt.step(&pd.heap, &pd.modules, &mut context);
+            let result = self.prompt.step(&pd.types, &pd.heap, &pd.modules, &mut context);
             match result {
                 Err(err) => {
                     println!("Evaluation error:\n{}", err);
@@ -177,7 +180,7 @@ impl ComponentState {
                     EvalContinuation::SyncBlockStart => return NonsyncBlocker::SyncBlockStart,
                     // Not possible to end sync block if never entered one
                     EvalContinuation::SyncBlockEnd => unreachable!(),
-                    EvalContinuation::NewComponent(definition_id, args) => {
+                    EvalContinuation::NewComponent(definition_id, monomorph_idx, args) => {
                         // Look up definition (TODO for now, assume it is a definition)
                         let mut moved_ports = HashSet::new();
                         for arg in args.values.iter() {
@@ -200,8 +203,7 @@ impl ComponentState {
                                 }
                             }
                         }
-                        let h = &pd.heap;
-                        let init_state = ComponentState { prompt: Prompt::new(h, definition_id, args) };
+                        let init_state = ComponentState { prompt: Prompt::new(&pd.types, &pd.heap, definition_id, monomorph_idx, args) };
                         context.new_component(moved_ports, init_state);
                         // Continue stepping
                         continue;
@@ -222,7 +224,7 @@ impl ComponentState {
     ) -> SyncBlocker {
         let mut context = EvalContext::Sync(context);
         loop {
-            let result = self.prompt.step(&pd.heap, &pd.modules, &mut context);
+            let result = self.prompt.step(&pd.types, &pd.heap, &pd.modules, &mut context);
             match result {
                 Err(err) => {
                     println!("Evaluation error:\n{}", err);
@@ -237,7 +239,7 @@ impl ComponentState {
                     EvalContinuation::SyncBlockStart => unreachable!(),
                     EvalContinuation::SyncBlockEnd => return SyncBlocker::SyncBlockEnd,
                     // Not possible to create component in sync block
-                    EvalContinuation::NewComponent(_, _) => unreachable!(),
+                    EvalContinuation::NewComponent(_, _, _) => unreachable!(),
                     EvalContinuation::BlockFires(port) => match port {
                         Value::Output(port) => {
                             return SyncBlocker::CouldntCheckFiring(port);

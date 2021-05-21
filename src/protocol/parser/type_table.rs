@@ -50,28 +50,6 @@ pub struct DefinedType {
     pub(crate) definition: DefinedTypeVariant,
     pub(crate) poly_vars: Vec<PolymorphicVariable>,
     pub(crate) is_polymorph: bool,
-    // TODO: @optimize
-    pub(crate) monomorphs: Vec<Vec<ConcreteType>>,
-}
-
-impl DefinedType {
-    fn add_monomorph(&mut self, types: Vec<ConcreteType>) {
-        debug_assert!(!self.has_monomorph(&types), "monomorph already exists");
-        self.monomorphs.push(types);
-    }
-
-    pub(crate) fn has_any_monomorph(&self) -> bool {
-        !self.monomorphs.is_empty()
-    }
-
-    pub(crate) fn has_monomorph(&self, types: &Vec<ConcreteType>) -> bool {
-        debug_assert_eq!(self.poly_vars.len(), types.len(), "mismatch in number of polymorphic types");
-        for monomorph in &self.monomorphs {
-            if monomorph == types { return true; }
-        }
-
-        return false;
-    }
 }
 
 pub enum DefinedTypeVariant {
@@ -113,11 +91,67 @@ impl DefinedTypeVariant {
             _ => unreachable!("Cannot convert {} to union variant", self.type_class())
         }
     }
+
+    pub(crate) fn data_monomorphs(&self) -> &Vec<DataMonomorph> {
+        use DefinedTypeVariant::*;
+
+        match self {
+            Enum(v) => &v.monomorphs,
+            Union(v) => &v.monomorphs,
+            Struct(v) => &v.monomorphs,
+            _ => unreachable!("cannot get data monomorphs from {}", self.type_class()),
+        }
+    }
+
+    pub(crate) fn data_monomorphs_mut(&mut self) -> &mut Vec<DataMonomorph> {
+        use DefinedTypeVariant::*;
+
+        match self {
+            Enum(v) => &mut v.monomorphs,
+            Union(v) => &mut v.monomorphs,
+            Struct(v) => &mut v.monomorphs,
+            _ => unreachable!("cannot get data monomorphs from {}", self.type_class()),
+        }
+    }
+
+    pub(crate) fn procedure_monomorphs(&self) -> &Vec<ProcedureMonomorph> {
+        use DefinedTypeVariant::*;
+
+        match self {
+            Function(v) => &v.monomorphs,
+            Component(v) => &v.monomorphs,
+            _ => unreachable!("cannot get procedure monomorphs from {}", self.type_class()),
+        }
+    }
+
+    pub(crate) fn procedure_monomorphs_mut(&mut self) -> &mut Vec<ProcedureMonomorph> {
+        use DefinedTypeVariant::*;
+
+        match self {
+            Function(v) => &mut v.monomorphs,
+            Component(v) => &mut v.monomorphs,
+            _ => unreachable!("cannot get procedure monomorphs from {}", self.type_class()),
+        }
+    }
 }
 
 pub struct PolymorphicVariable {
     identifier: Identifier,
     is_in_use: bool, // a polymorphic argument may be defined, but not used by the type definition
+}
+
+/// Data associated with a monomorphized datatype
+pub struct DataMonomorph {
+    pub poly_args: Vec<ConcreteType>,
+}
+
+/// Data associated with a monomorphized procedure type. Has the wrong name,
+/// because it will also be used to store expression data for a non-polymorphic
+/// procedure. (in that case, there will only ever be one)
+pub struct ProcedureMonomorph {
+    // Expression data for one particular monomorph
+    pub poly_args: Vec<ConcreteType>,
+    pub expr_data: Vec<MonomorphExpression>,
 }
 
 /// `EnumType` is the classical C/C++ enum type. It has various variants with
@@ -126,37 +160,40 @@ pub struct PolymorphicVariable {
 /// value multiple times, we assume the user is an expert and we consider both
 /// variants to be equal to one another.
 pub struct EnumType {
-    pub(crate) variants: Vec<EnumVariant>,
-    pub(crate) representation: PrimitiveType,
+    pub variants: Vec<EnumVariant>,
+    pub representation: PrimitiveType,
+    pub monomorphs: Vec<DataMonomorph>,
 }
 
 // TODO: Also support maximum u64 value
 pub struct EnumVariant {
-    pub(crate) identifier: Identifier,
-    pub(crate) value: i64,
+    pub identifier: Identifier,
+    pub value: i64,
 }
 
 /// `UnionType` is the algebraic datatype (or sum type, or discriminated union).
 /// A value is an element of the union, identified by its tag, and may contain
 /// a single subtype.
 pub struct UnionType {
-    pub(crate) variants: Vec<UnionVariant>,
-    pub(crate) tag_representation: PrimitiveType
+    pub variants: Vec<UnionVariant>,
+    pub tag_representation: PrimitiveType,
+    pub monomorphs: Vec<DataMonomorph>,
 }
 
 pub struct UnionVariant {
-    pub(crate) identifier: Identifier,
-    pub(crate) embedded: Vec<ParserType>, // zero-length does not have embedded values
-    pub(crate) tag_value: i64,
+    pub identifier: Identifier,
+    pub embedded: Vec<ParserType>, // zero-length does not have embedded values
+    pub tag_value: i64,
 }
 
 pub struct StructType {
-    pub(crate) fields: Vec<StructField>,
+    pub fields: Vec<StructField>,
+    pub monomorphs: Vec<DataMonomorph>,
 }
 
 pub struct StructField {
-    pub(crate) identifier: Identifier,
-    pub(crate) parser_type: ParserType,
+    pub identifier: Identifier,
+    pub parser_type: ParserType,
 }
 
 pub struct FunctionType {
@@ -168,17 +205,12 @@ pub struct FunctionType {
 pub struct ComponentType {
     pub variant: ComponentVariant,
     pub arguments: Vec<FunctionArgument>,
-    pub monomorphs: Vec<ProcedureMonomorph>,
+    pub monomorphs: Vec<ProcedureMonomorph>
 }
 
 pub struct FunctionArgument {
     identifier: Identifier,
     parser_type: ParserType,
-}
-
-pub struct ProcedureMonomorph {
-    // Expression data for one particular monomorph
-    expr_data: Vec<MonomorphExpression>,
 }
 
 /// Represents the data associated with a single expression after type inference
@@ -192,12 +224,6 @@ pub struct MonomorphExpression {
     // monomorph index for polymorphic function calls or literals. Negative
     // values are never used, but used to catch programming errors.
     pub(crate) field_or_monomorph_idx: i32,
-}
-
-impl Default for MonomorphExpression {
-    fn default() -> Self {
-        Self{ expr_type: ConcreteType::default(), field_or_monomorph_idx: -1 }
-    }
 }
 
 //------------------------------------------------------------------------------
@@ -254,7 +280,7 @@ enum ResolveResult {
     Unresolved(RootId, DefinitionId)
 }
 
-pub(crate) struct TypeTable {
+pub struct TypeTable {
     /// Lookup from AST DefinitionId to a defined type. Considering possible
     /// polymorphs is done inside the `DefinedType` struct.
     lookup: HashMap<DefinitionId, DefinedType>,
@@ -317,26 +343,92 @@ impl TypeTable {
         self.lookup.get(&definition_id)
     }
 
-    /// Instantiates a monomorph for a given base definition.
-    pub(crate) fn add_monomorph(&mut self, definition_id: &DefinitionId, types: Vec<ConcreteType>) {
-        debug_assert!(
-            self.lookup.contains_key(definition_id),
-            "attempting to instantiate monomorph of definition unknown to type table"
-        );
-
-        let definition = self.lookup.get_mut(definition_id).unwrap();
-        definition.add_monomorph(types);
+    /// Returns the index into the monomorph type array if the procedure type
+    /// already has a (reserved) monomorph.
+    pub(crate) fn get_procedure_monomorph_index(&self, definition_id: &DefinitionId, types: &Vec<ConcreteType>) -> Option<i32> {
+        let def = self.lookup.get(definition_id).unwrap();
+        if def.is_polymorph {
+            let monos = def.definition.procedure_monomorphs();
+            return monos.iter()
+                .position(|v| v.poly_args == *types)
+                .map(|v| v as i32);
+        } else {
+            // We don't actually care about the types
+            let monos = def.definition.procedure_monomorphs();
+            if monos.is_empty() {
+                return None
+            } else {
+                return Some(0)
+            }
+        }
     }
 
-    /// Checks if a given definition already has a specific monomorph
-    pub(crate) fn has_monomorph(&mut self, definition_id: &DefinitionId, types: &Vec<ConcreteType>) -> bool {
-        debug_assert!(
-            self.lookup.contains_key(definition_id),
-            "attempting to check monomorph existence of definition unknown to type table"
-        );
+    /// Returns a mutable reference to a procedure's monomorph expression data.
+    /// Used by typechecker to fill in previously reserved type information
+    pub(crate) fn get_procedure_expression_data_mut(&mut self, definition_id: &DefinitionId, monomorph_idx: i32) -> &mut ProcedureMonomorph {
+        debug_assert!(monomorph_idx >= 0);
+        let def = self.lookup.get_mut(definition_id).unwrap();
+        let monomorphs = def.definition.procedure_monomorphs_mut();
+        return &mut monomorphs[monomorph_idx as usize];
+    }
 
-        let definition = self.lookup.get(definition_id).unwrap();
-        definition.has_monomorph(types)
+    pub(crate) fn get_procedure_expression_data(&self, definition_id: &DefinitionId, monomorph_idx: i32) -> &ProcedureMonomorph {
+        debug_assert!(monomorph_idx >= 0);
+        let def = self.lookup.get(definition_id).unwrap();
+        let monomorphs = def.definition.procedure_monomorphs();
+        return &monomorphs[monomorph_idx as usize];
+    }
+
+    /// Reserves space for a monomorph of a polymorphic procedure. The index
+    /// will point into a (reserved) slot of the array of expression types. The
+    /// monomorph may NOT exist yet (because the reservation implies that we're
+    /// going to be performing typechecking on it, and we don't want to
+    /// check the same monomorph twice)
+    pub(crate) fn reserve_procedure_monomorph_index(&mut self, definition_id: &DefinitionId, types: Option<Vec<ConcreteType>>) -> i32 {
+        let def = self.lookup.get_mut(definition_id).unwrap();
+        if let Some(types) = types {
+            // Expecting a polymorphic procedure
+            let monos = def.definition.procedure_monomorphs_mut();
+            debug_assert!(def.is_polymorph);
+            debug_assert!(def.poly_vars.len() == types.len());
+            debug_assert!(monos.iter().find(|v| v.poly_args == types).is_none());
+
+            let mono_idx = monos.len();
+            monos.push(ProcedureMonomorph{ poly_args: types, expr_data: Vec::new() });
+
+            return mono_idx as i32;
+        } else {
+            // Expecting a non-polymorphic procedure
+            let monos = def.definition.procedure_monomorphs_mut();
+            debug_assert!(!def.is_polymorph);
+            debug_assert!(def.poly_vars.is_empty());
+            debug_assert!(monos.is_empty());
+
+            monos.push(ProcedureMonomorph{ poly_args: Vec::new(), expr_data: Vec::new() });
+
+            return 0;
+        }
+    }
+
+    /// Adds a datatype polymorph to the type table. Will not add the
+    /// monomorph if it is already present, or if the type's polymorphic
+    /// variables are all unused.
+    pub(crate) fn add_data_monomorph(&mut self, definition_id: &DefinitionId, types: Vec<ConcreteType>) -> i32 {
+        let def = self.lookup.get_mut(definition_id).unwrap();
+        if !def.is_polymorph {
+            // Not a polymorph, or polyvars are not used in type definition
+            return 0;
+        }
+
+        let monos = def.definition.data_monomorphs_mut();
+        if let Some(index) = monos.iter().position(|v| v.poly_args == types) {
+            // We already know about this monomorph
+            return index as i32;
+        }
+
+        let index = monos.len();
+        monos.push(DataMonomorph{ poly_args: types });
+        return index as i32;
     }
 
     /// This function will resolve just the basic definition of the type, it
@@ -425,11 +517,11 @@ impl TypeTable {
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Enum(EnumType{
                 variants,
-                representation: Self::enum_tag_type(min_enum_value, max_enum_value)
+                representation: Self::enum_tag_type(min_enum_value, max_enum_value),
+                monomorphs: Vec::new(),
             }),
             poly_vars,
             is_polymorph: false,
-            monomorphs: Vec::new()
         });
 
         Ok(true)
@@ -504,10 +596,10 @@ impl TypeTable {
             definition: DefinedTypeVariant::Union(UnionType{
                 variants,
                 tag_representation: Self::enum_tag_type(-1, tag_value),
+                monomorphs: Vec::new(),
             }),
             poly_vars,
             is_polymorph,
-            monomorphs: Vec::new()
         });
 
         Ok(true)
@@ -558,10 +650,10 @@ impl TypeTable {
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Struct(StructType{
                 fields,
+                monomorphs: Vec::new(),
             }),
             poly_vars,
             is_polymorph,
-            monomorphs: Vec::new(),
         });
 
         Ok(true)
@@ -627,7 +719,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            monomorphs: Vec::new(),
         });
 
         Ok(true)
@@ -687,7 +778,6 @@ impl TypeTable {
             }),
             poly_vars,
             is_polymorph,
-            monomorphs: Vec::new(),
         });
 
         Ok(true)

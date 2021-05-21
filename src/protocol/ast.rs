@@ -597,38 +597,6 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Field {
-    Length,
-    Symbolic(FieldSymbolic),
-}
-impl Field {
-    pub fn is_length(&self) -> bool {
-        match self {
-            Field::Length => true,
-            _ => false,
-        }
-    }
-
-    pub fn as_symbolic(&self) -> &FieldSymbolic {
-        match self {
-            Field::Symbolic(v) => v,
-            _ => unreachable!("attempted to get Field::Symbolic from {:?}", self)
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldSymbolic {
-    // Phase 1: Parser
-    pub(crate) identifier: Identifier,
-    // Phase 3: Typing
-    // TODO: @Monomorph These fields cannot be trusted because the last time it
-    //  was typed it may refer to a different monomorph.
-    pub(crate) definition: Option<DefinitionId>,
-    pub(crate) field_idx: usize,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Scope {
     Definition(DefinitionId),
@@ -1562,38 +1530,6 @@ impl Expression {
             Expression::Variable(expr) => expr.parent = parent,
         }
     }
-    pub fn get_type(&self) -> &ConcreteType {
-        match self {
-            Expression::Assignment(expr) => &expr.concrete_type,
-            Expression::Binding(expr) => &expr.concrete_type,
-            Expression::Conditional(expr) => &expr.concrete_type,
-            Expression::Binary(expr) => &expr.concrete_type,
-            Expression::Unary(expr) => &expr.concrete_type,
-            Expression::Indexing(expr) => &expr.concrete_type,
-            Expression::Slicing(expr) => &expr.concrete_type,
-            Expression::Select(expr) => &expr.concrete_type,
-            Expression::Literal(expr) => &expr.concrete_type,
-            Expression::Call(expr) => &expr.concrete_type,
-            Expression::Variable(expr) => &expr.concrete_type,
-        }
-    }
-
-    // TODO: @cleanup
-    pub fn get_type_mut(&mut self) -> &mut ConcreteType {
-        match self {
-            Expression::Assignment(expr) => &mut expr.concrete_type,
-            Expression::Binding(expr) => &mut expr.concrete_type,
-            Expression::Conditional(expr) => &mut expr.concrete_type,
-            Expression::Binary(expr) => &mut expr.concrete_type,
-            Expression::Unary(expr) => &mut expr.concrete_type,
-            Expression::Indexing(expr) => &mut expr.concrete_type,
-            Expression::Slicing(expr) => &mut expr.concrete_type,
-            Expression::Select(expr) => &mut expr.concrete_type,
-            Expression::Literal(expr) => &mut expr.concrete_type,
-            Expression::Call(expr) => &mut expr.concrete_type,
-            Expression::Variable(expr) => &mut expr.concrete_type,
-        }
-    }
 
     pub fn get_unique_id_in_definition(&self) -> i32 {
         match self {
@@ -1638,8 +1574,6 @@ pub struct AssignmentExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1652,8 +1586,6 @@ pub struct BindingExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1667,8 +1599,6 @@ pub struct ConditionalExpression {
     // Validator/Linking
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1705,8 +1635,6 @@ pub struct BinaryExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1731,8 +1659,6 @@ pub struct UnaryExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1745,8 +1671,6 @@ pub struct IndexingExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1760,8 +1684,6 @@ pub struct SlicingExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1770,12 +1692,10 @@ pub struct SelectExpression {
     // Parsing
     pub span: InputSpan, // of the '.'
     pub subject: ExpressionId,
-    pub field: Field,
+    pub field_name: Identifier,
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1790,8 +1710,6 @@ pub struct CallExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType, // of the return type
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1822,8 +1740,6 @@ pub struct LiteralExpression {
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }
 
 #[derive(Debug, Clone)]
@@ -1927,6 +1843,4 @@ pub struct VariableExpression {
     pub declaration: Option<VariableId>,
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
-    // Typing
-    pub concrete_type: ConcreteType,
 }

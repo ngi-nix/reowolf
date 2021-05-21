@@ -838,7 +838,6 @@ impl PassDefinitions {
                     declaration: None,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
-                    concrete_type: Default::default()
                 });
                 let assignment_expr_id = ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
                     this,
@@ -848,7 +847,6 @@ impl PassDefinitions {
                     right: initial_expr_id,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
-                    concrete_type: Default::default(),
                 });
                 let assignment_stmt_id = ctx.heap.alloc_expression_statement(|this| ExpressionStatement{
                     this,
@@ -935,7 +933,6 @@ impl PassDefinitions {
                 this, span, left, operation, right,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast())
         } else {
             Ok(expr)
@@ -958,7 +955,6 @@ impl PassDefinitions {
                 this, span, test, true_expression, false_expression,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast())
         } else {
             Ok(result)
@@ -1142,7 +1138,6 @@ impl PassDefinitions {
                 this, span, operation, expression,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default()
             }).upcast())
         } else {
             self.consume_postfix_expression(module, iter, ctx)
@@ -1176,7 +1171,6 @@ impl PassDefinitions {
                     expression: result,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
-                    concrete_type: ConcreteType::default()
                 }).upcast();
             } else if token == TokenKind::MinusMinus {
                 result = ctx.heap.alloc_unary_expression(|this| UnaryExpression{
@@ -1185,7 +1179,6 @@ impl PassDefinitions {
                     expression: result,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
-                    concrete_type: ConcreteType::default()
                 }).upcast();
             } else if token == TokenKind::OpenSquare {
                 let subject = result;
@@ -1204,7 +1197,6 @@ impl PassDefinitions {
                         this, span, subject, from_index, to_index,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
-                        concrete_type: ConcreteType::default()
                     }).upcast();
                 } else if Some(TokenKind::CloseSquare) == next {
                     let end_span = consume_token(&module.source, iter, TokenKind::CloseSquare)?;
@@ -1215,7 +1207,6 @@ impl PassDefinitions {
                         index: from_index,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
-                        concrete_type: ConcreteType::default()
                     }).upcast();
                 } else {
                     return Err(ParseError::new_error_str_at_pos(
@@ -1225,20 +1216,12 @@ impl PassDefinitions {
             } else {
                 debug_assert_eq!(token, TokenKind::Dot);
                 let subject = result;
-                let (field_text, field_span) = consume_ident(&module.source, iter)?;
-                let field = if field_text == b"length" {
-                    Field::Length
-                } else {
-                    let value = ctx.pool.intern(field_text);
-                    let identifier = Identifier{ value, span: field_span };
-                    Field::Symbolic(FieldSymbolic{ identifier, definition: None, field_idx: 0 })
-                };
+                let field_name = consume_ident_interned(&module.source, iter, ctx)?;
 
                 result = ctx.heap.alloc_select_expression(|this| SelectExpression{
-                    this, span, subject, field,
+                    this, span, subject, field_name,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
-                    concrete_type: ConcreteType::default()
                 }).upcast();
             }
 
@@ -1276,7 +1259,6 @@ impl PassDefinitions {
                 value: Literal::Array(scoped_section.into_vec()),
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Integer) {
             let (literal, span) = consume_integer_literal(&module.source, iter, &mut self.buffer)?;
@@ -1286,7 +1268,6 @@ impl PassDefinitions {
                 value: Literal::Integer(LiteralInteger{ unsigned_value: literal, negated: false }),
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::String) {
             let span = consume_string_literal(&module.source, iter, &mut self.buffer)?;
@@ -1297,7 +1278,6 @@ impl PassDefinitions {
                 value: Literal::String(interned),
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Character) {
             let (character, span) = consume_character_literal(&module.source, iter)?;
@@ -1307,7 +1287,6 @@ impl PassDefinitions {
                 value: Literal::Character(character),
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default(),
             }).upcast()
         } else if next == Some(TokenKind::Ident) {
             // May be a variable, a type instantiation or a function call. If we
@@ -1359,7 +1338,6 @@ impl PassDefinitions {
                                     }),
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
-                                    concrete_type: ConcreteType::default(),
                                 }).upcast()
                             },
                             Definition::Enum(_) => {
@@ -1378,7 +1356,6 @@ impl PassDefinitions {
                                     }),
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
-                                    concrete_type: ConcreteType::default()
                                 }).upcast()
                             },
                             Definition::Union(_) => {
@@ -1404,7 +1381,6 @@ impl PassDefinitions {
                                     }),
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
-                                    concrete_type: ConcreteType::default()
                                 }).upcast()
                             },
                             Definition::Component(_) => {
@@ -1420,7 +1396,6 @@ impl PassDefinitions {
                                     definition: target_definition_id,
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
-                                    concrete_type: ConcreteType::default(),
                                 }).upcast()
                             },
                             Definition::Function(function_definition) => {
@@ -1451,7 +1426,6 @@ impl PassDefinitions {
                                     definition: target_definition_id,
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
-                                    concrete_type: ConcreteType::default(),
                                 }).upcast()
                             }
                         }
@@ -1483,7 +1457,6 @@ impl PassDefinitions {
                         value,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
-                        concrete_type: ConcreteType::default(),
                     }).upcast()
                 } else {
                     // Not a builtin literal, but also not a known type. So we
@@ -1518,7 +1491,6 @@ impl PassDefinitions {
                         declaration: None,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
-                        concrete_type: ConcreteType::default()
                     }).upcast()
                 }
             }
@@ -1554,7 +1526,6 @@ impl PassDefinitions {
                 this, span, left, operation, right,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
-                concrete_type: ConcreteType::default()
             }).upcast();
         }
 
