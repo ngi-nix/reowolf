@@ -46,15 +46,15 @@
 ///     maybe there is a better way then flattened trees + markers?
 
 macro_rules! debug_log_enabled {
-    () => { true };
+    () => { false };
 }
 
 macro_rules! debug_log {
     ($format:literal) => {
-        enabled_debug_print!(true, "types", $format);
+        enabled_debug_print!(false, "types", $format);
     };
     ($format:literal, $($args:expr),*) => {
-        enabled_debug_print!(true, "types", $format, $($args),*);
+        enabled_debug_print!(false, "types", $format, $($args),*);
     };
 }
 
@@ -1487,7 +1487,7 @@ impl PassTyping {
 
         let target = ctx.types.get_procedure_expression_data_mut(&definition_id, self.reserved_idx);
         debug_assert!(target.poly_args == self.poly_vars);
-        debug_assert!(target.expr_data.is_empty());
+        debug_assert!(target.expr_data.is_empty()); // makes sure we never queue something twice
 
         target.expr_data.reserve(self.expr_types.len());
         for infer_expr in self.expr_types.iter() {
@@ -2083,7 +2083,10 @@ impl PassTyping {
 
                 // For all field expressions
                 for field_idx in 0..extra.embedded.len() {
-                    debug_assert_eq!(field_idx, data.fields[field_idx].field_idx, "confusing, innit?");
+                    // Note: fields in extra.embedded are in the same order as
+                    // they are specified in the literal. Whereas
+                    // `data.fields[...].field_idx` points to the field in the
+                    // struct definition.
                     let signature_type: *mut _ = &mut extra.embedded[field_idx];
                     let field_expr_id = data.fields[field_idx].value;
                     let field_expr_idx = ctx.heap[field_expr_id].get_unique_id_in_definition();

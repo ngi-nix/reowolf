@@ -35,7 +35,7 @@ impl<T: Sized> ScopedBuffer<T> {
         ScopedSection {
             inner: &mut self.inner,
             start_size,
-            cur_size: start_size
+            #[cfg(debug_assertions)] cur_size: start_size
         }
     }
 }
@@ -48,7 +48,7 @@ impl<T: Clone> ScopedBuffer<T> {
         ScopedSection{
             inner: &mut self.inner,
             start_size,
-            cur_size: start_size + data_size,
+            #[cfg(debug_assertions)] cur_size: start_size + data_size,
         }
     }
 }
@@ -65,21 +65,21 @@ impl<T: Sized> ScopedSection<T> {
     #[inline]
     pub(crate) fn push(&mut self, value: T) {
         let vec = unsafe{&mut *self.inner};
-        debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to push onto section, but size is larger than expected");
+        #[cfg(debug_assertions)] debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to push onto section, but size is larger than expected");
         vec.push(value);
-        if cfg!(debug_assertions) { self.cur_size += 1; }
+        #[cfg(debug_assertions)] { self.cur_size += 1; }
     }
 
     pub(crate) fn len(&self) -> usize {
         let vec = unsafe{&mut *self.inner};
-        debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to get section length, but size is larger than expected");
+        #[cfg(debug_assertions)] debug_assert_eq!(vec.len(), self.cur_size as usize, "trying to get section length, but size is larger than expected");
         return vec.len() - self.start_size as usize;
     }
 
     #[inline]
     pub(crate) fn forget(mut self) {
         let vec = unsafe{&mut *self.inner};
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)] {
             debug_assert_eq!(
                 vec.len(), self.cur_size as usize,
                 "trying to forget section, but size is larger than expected"
@@ -92,7 +92,7 @@ impl<T: Sized> ScopedSection<T> {
     #[inline]
     pub(crate) fn into_vec(mut self) -> Vec<T> {
         let vec = unsafe{&mut *self.inner};
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]  {
             debug_assert_eq!(
                 vec.len(), self.cur_size as usize,
                 "trying to turn section into vec, but size is larger than expected"
@@ -117,7 +117,7 @@ impl<T: Sized> std::ops::Index<usize> for ScopedSection<T> {
 impl<T: Sized> Drop for ScopedSection<T> {
     fn drop(&mut self) {
         let vec = unsafe{&mut *self.inner};
-        debug_assert_eq!(vec.len(), self.cur_size as usize);
+        #[cfg(debug_assertions)] debug_assert_eq!(vec.len(), self.cur_size as usize);
         vec.truncate(self.start_size as usize);
     }
 }

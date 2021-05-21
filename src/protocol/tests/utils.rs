@@ -906,7 +906,7 @@ fn has_monomorph(ctx: TestCtx, definition_id: DefinitionId, serialized_monomorph
 
     full_buffer.push('[');
     let mut append_to_full_buffer = |buffer: String| {
-        if buffer.len() == 1 {
+        if full_buffer.len() != 1 {
             full_buffer.push_str(", ");
         }
         full_buffer.push('"');

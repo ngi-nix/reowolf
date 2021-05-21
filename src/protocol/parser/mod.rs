@@ -227,9 +227,9 @@ impl Parser {
             }
         }
 
-        let mut writer = ASTWriter::new();
-        let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
-        writer.write_ast(&mut file, &self.heap);
+        // let mut writer = ASTWriter::new();
+        // let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
+        // writer.write_ast(&mut file, &self.heap);
 
         Ok(())
     }

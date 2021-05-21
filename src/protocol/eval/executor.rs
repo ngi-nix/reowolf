@@ -8,13 +8,13 @@ use crate::protocol::*;
 use crate::protocol::ast::*;
 use crate::protocol::type_table::*;
 
-macro_rules! debug_enabled { () => { true }; }
+macro_rules! debug_enabled { () => { false }; }
 macro_rules! debug_log {
     ($format:literal) => {
-        enabled_debug_print!(true, "exec", $format);
+        enabled_debug_print!(false, "exec", $format);
     };
     ($format:literal, $($args:expr),*) => {
-        enabled_debug_print!(true, "exec", $format, $($args),*);
+        enabled_debug_print!(false, "exec", $format, $($args),*);
     };
 }
 
@@ -122,10 +122,21 @@ impl Frame {
                         // No subexpressions
                     },
                     Literal::Struct(literal) => {
-                        for field in &literal.fields {
-                            self.expr_stack.push_back(ExprInstruction::PushValToFront);
-                            self.serialize_expression(heap, field.value);
+                        // Note: fields expressions are evaluated in programmer-
+                        // specified order. But struct construction expects them
+                        // in type-defined order. I might want to come back to
+                        // this.
+                        let mut _num_pushed = 0;
+                        for want_field_idx in 0..literal.fields.len() {
+                            for field in &literal.fields {
+                                if field.field_idx == want_field_idx {
+                                    _num_pushed += 1;
+                                    self.expr_stack.push_back(ExprInstruction::PushValToFront);
+                                    self.serialize_expression(heap, field.value);
+                                }
+                            }
                         }
+                        debug_assert_eq!(_num_pushed, literal.fields.len())
                     },
                     Literal::Union(literal) => {
                         for value_expr_id in &literal.values {

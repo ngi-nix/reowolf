@@ -96,18 +96,53 @@ fn test_slicing_magic() {
             return left[0..1] @ right[0..1];
         }
 
-        func foo() -> u32 {
-            // left array will be [0, 1, 2, ...] and right array will be [2, 3, 4, ...]
-            auto created = create_holder(0, 5, 2, 8);
+        func foo() -> bool {
+            // Preliminaries:
+            // 1. construct a holder, where:
+            //      - left array will be [0, 1, 2, ...]
+            //      - right array will be [2, 3, 4, ...]
+            // 2. Perform slicing magic, always returning an array [3, 3]
+            // 3. Make sure result is 6
 
-            // in a convoluted fashion select the value 3 from the lhs and the value 3 from the rhs
-            auto result = slicing_magic(created, 3, 2, 1, 2);
+            // But ofcourse, because we want to be silly, we will check this for
+            // any possible integer type.
+            auto created_u08 = create_holder<u8> (0, 5, 2, 8);
+            auto created_u16 = create_holder<u16>(0, 5, 2, 8);
+            auto created_u32 = create_holder<u32>(0, 5, 2, 8);
+            auto created_u64 = create_holder<u64>(0, 5, 2, 8);
 
-            // and return 3 + 3
-            return result[0] + result[1];
+            auto result_u08 = slicing_magic(created_u08, 3, 2, 1, 2);
+            auto result_u16 = slicing_magic(created_u16, 3, 2, 1, 2);
+            auto result_u32 = slicing_magic(created_u32, 3, 2, 1, 2);
+            auto result_u64 = slicing_magic(created_u64, 3, 2, 1, 2);
+
+            auto result_s08 = slicing_magic(create_holder<s8> (0, 5, 2, 8), 3, 2, 1, 2);
+            auto result_s16 = slicing_magic(create_holder<s16>(0, 5, 2, 8), 3, 2, 1, 2);
+            auto result_s32 = slicing_magic(create_holder<s32>(0, 5, 2, 8), 3, 2, 1, 2);
+            auto result_s64 = slicing_magic(create_holder<s64>(0, 5, 2, 8), 3, 2, 1, 2);
+
+            return
+                result_u08[0] + result_u08[1] == 6 &&
+                result_u16[0] + result_u16[1] == 6 &&
+                result_u32[0] + result_u32[1] == 6 &&
+                result_u64[0] + result_u64[1] == 6 &&
+                result_s08[0] + result_s08[1] == 6 &&
+                result_s16[0] + result_s16[1] == 6 &&
+                result_s32[0] + result_s32[1] == 6 &&
+                result_s64[0] + result_s64[1] == 6;
         }
     ").for_function("foo", |f| {
-        f.call_ok(Some(Value::UInt32(6)));
+        f.call_ok(Some(Value::Bool(true)));
+    }).for_struct("Holder", |s| { s
+        .assert_num_monomorphs(8)
+        .assert_has_monomorph("u8")
+        .assert_has_monomorph("u16")
+        .assert_has_monomorph("u32")
+        .assert_has_monomorph("u64")
+        .assert_has_monomorph("s8")
+        .assert_has_monomorph("s16")
+        .assert_has_monomorph("s32")
+        .assert_has_monomorph("s64");
     });
 }
 
@@ -141,6 +176,40 @@ fn test_struct_fields() {
             return success1 && success2;
         }
     ").for_function("foo", |f| {
+        f.call_ok(Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn test_field_selection_polymorphism() {
+    // Bit silly, but just to be sure
+    Tester::new_single_source_expect_ok("struct field shuffles", "
+struct VecXYZ<T> { T x, T y, T z }
+struct VecYZX<T> { T y, T z, T x }
+struct VecZXY<T> { T z, T x, T y }
+func modify_x<T>(T input) -> T {
+    input.x = 1337;
+    return input;
+}
+
+func foo() -> bool {
+    auto xyz = VecXYZ<u16>{ x: 1, y: 2, z: 3 };
+    auto yzx = VecYZX<u32>{ y: 2, z: 3, x: 1 };
+    auto zxy = VecZXY<u64>{ x: 1, y: 2, z: 3 };
+
+    auto mod_xyz = modify_x(xyz);
+    auto mod_yzx = modify_x(yzx);
+    auto mod_zxy = modify_x(zxy);
+
+    return
+        xyz.x == 1 && xyz.y == 2 && xyz.z == 3 &&
+        yzx.x == 1 && yzx.y == 2 && yzx.z == 3 &&
+        zxy.x == 1 && zxy.y == 2 && zxy.z == 3 &&
+        mod_xyz.x == 1337 && mod_xyz.y == 2 && mod_xyz.z == 3 &&
+        mod_yzx.x == 1337 && mod_yzx.y == 2 && mod_yzx.z == 3 &&
+        mod_zxy.x == 1337 && mod_zxy.y == 2 && mod_zxy.z == 3;
+}
+").for_function("foo", |f| {
         f.call_ok(Some(Value::Bool(true)));
     });
 }
