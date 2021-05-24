@@ -152,8 +152,8 @@ impl Frame {
                     }
                 }
             },
-            Expression::Cast(_) => {
-                todo!("casting expression");
+            Expression::Cast(expr) => {
+                self.serialize_expression(heap, expr.subject);
             }
             Expression::Call(expr) => {
                 for arg_expr_id in &expr.arguments {
@@ -491,8 +491,14 @@ impl Prompt {
 
                             cur_frame.expr_values.push_back(value);
                         },
-                        Expression::Cast(_) => {
-                            todo!("casting expression evaluation");
+                        Expression::Cast(expr) => {
+                            let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                            let output_type = &mono_data.expr_data[expr.unique_id_in_definition as usize].expr_type;
+
+                            // Typechecking reduced this to two cases: either we
+                            // have casting noop (same types), or we're casting
+                            // between integer/bool/char types.
+
                         }
                         Expression::Call(expr) => {
                             // Push a new frame. Note that all expressions have

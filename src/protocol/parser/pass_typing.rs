@@ -16,34 +16,23 @@
 /// is progressed we queue the related expressions for further type progression.
 /// Once no more expressions are in the queue the algorithm is finished. At this
 /// point either all types are inferred (or can be trivially implicitly
-/// determined), or we have incomplete types. In the latter casee we return an
+/// determined), or we have incomplete types. In the latter case we return an
 /// error.
 ///
-/// Inference may be applied on non-polymorphic procedures and on polymorphic
-/// procedures. When dealing with a non-polymorphic procedure we apply the type
-/// resolver and annotate the AST with the `ConcreteType`s. When dealing with
-/// polymorphic procedures we will only annotate the AST once, preserving
-/// references to polymorphic variables. Any later pass will perform just the
-/// type checking.
-///
 /// TODO: Needs a thorough rewrite:
-///  0. polymorph_progress is intentionally broken at the moment.
-///  1. For polymorphic type inference we need to have an extra datastructure
-///     for progressing the polymorphic variables and mapping them back to each
-///     signature type that uses that polymorphic type. The two types of markers
-///     became somewhat of a mess.
+///  0. polymorph_progress is intentionally broken at the moment. Make it work
+///     again and use a normal VecSomething.
+///  1. The foundation for doing all of the work with predetermined indices
+///     instead of with HashMaps is there, but it is not really used because of
+///     time constraints. When time is available, rewrite the system such that
+///     AST IDs are not needed, and only indices into arrays are used.
 ///  2. We're doing a lot of extra work. It seems better to apply the initial
-///     type based on expression parents, then to apply forced constraints (arg
-///     to a fires() call must be port-like), only then to start progressing the
-///     types.
-///     Furthermore, queueing of expressions can be more intelligent, currently
-///     every child/parent of an expression is inferred again when queued. Hence
-///     we need to queue only specific children/parents of expressions.
+///     type based on expression parents, and immediately apply forced
+///     constraints (arg to a fires() call must be port-like). All of the \
+///     progress_xxx calls should then only be concerned with "transmitting"
+///     type inference across their parent/child expressions.
 ///  3. Remove the `msg` type?
 ///  4. Disallow certain types in certain operations (e.g. `Void`).
-///  5. Implement implicit and explicit casting.
-///  6. Investigate different ways of performing the type-on-type inference,
-///     maybe there is a better way then flattened trees + markers?
 
 macro_rules! debug_log_enabled {
     () => { false };
@@ -1413,12 +1402,13 @@ impl PassTyping {
 
         // Inference is now done. But we may still have uninferred types. So we
         // check for these.
-        for infer_expr in self.expr_types.iter_mut() {
+        for (infer_expr_idx, infer_expr) in self.expr_types.iter_mut().enumerate() {
             let expr_type = &mut infer_expr.expr_type;
             if !expr_type.is_done {
                 // Auto-infer numberlike/integerlike types to a regular int
                 if expr_type.parts.len() == 1 && expr_type.parts[0] == InferenceTypePart::IntegerLike {
                     expr_type.parts[0] = InferenceTypePart::SInt32;
+                    self.expr_queued.push_back(infer_expr_idx as i32);
                 } else {
                     let expr = &ctx.heap[infer_expr.expr_id];
                     return Err(ParseError::new_error_at_span(
@@ -1488,6 +1478,13 @@ impl PassTyping {
                     unreachable!("handling extra data for expression {:?}", &ctx.heap[extra_data.expr_id]);
                 }
             }
+        }
+
+        // If we did any implicit type forcing, then our queue isn't empty
+        // anymore
+        while !self.expr_queued.is_empty() {
+            let expr_idx = self.expr_queued.pop_back().unwrap();
+            self.progress_expr(ctx, expr_idx)?;
         }
 
         // Every expression checked, and new monomorphs are queued. Transfer the
@@ -2302,6 +2299,7 @@ impl PassTyping {
         // TODO: FIX!!!!
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
+
         Ok(())
     }
 
@@ -2310,9 +2308,60 @@ impl PassTyping {
         let expr = &ctx.heap[id];
         let expr_idx = expr.unique_id_in_definition;
 
-        // The cast expression acts like a blocker for two-way inference. The
-        // only thing we can do is wait until both the input and the output
-        // TODO: Continue here
+        // The cast expression might have its output type fixed by the
+        // programmer, so apply that type to the output. Apart from that casting
+        // acts like a blocker for two-way inference. So we'll just have to wait
+        // until we know if the cast is valid.
+        // TODO: Another thing that has to be updated the moment the type
+        //  inferencer is fully index/job-based
+        let infer_type = self.determine_inference_type_from_parser_type_elements(&expr.to_type.elements, true);
+        let expr_progress = self.apply_forced_constraint(ctx, upcast_id, &infer_type.parts)?;
+
+        if expr_progress {
+            self.queue_expr_parent(ctx, upcast_id);
+        }
+
+        // Check if the two types are compatible
+        let subject_idx = ctx.heap[expr.subject].get_unique_id_in_definition();
+        let expr_type = &self.expr_types[expr_idx as usize].expr_type;
+        let subject_type = &self.expr_types[subject_idx as usize].expr_type;
+        if !expr_type.is_done || !subject_type.is_done {
+            // Not yet done
+            return Ok(())
+        }
+
+        // Valid casts: (bool, integer, character) can always be cast to one
+        // another. A cast from a type to itself is also valid.
+        fn is_bool_int_or_char(parts: &[InferenceTypePart]) -> bool {
+            return parts.len() == 1 && (
+                parts[0] == InferenceTypePart::Bool ||
+                parts[0] == InferenceTypePart::Character ||
+                parts[0].is_concrete_integer()
+            );
+        }
+
+        let is_valid = if is_bool_int_or_char(&expr_type.parts) && is_bool_int_or_char(&subject_type.parts) {
+            true
+        } else if expr_type.parts == subject_type.parts {
+            true
+        } else {
+            false
+        };
+
+        if !is_valid {
+            let cast_expr = &ctx.heap[id];
+            let subject_expr = &ctx.heap[cast_expr.subject];
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, cast_expr.span, "invalid casting operation"
+            ).with_info_at_span(
+                &ctx.module.source, subject_expr.span(), format!(
+                    "cannot cast this type '{}' to the cast type '{}'",
+                    subject_type.display_name(&ctx.heap),
+                    expr_type.display_name(&ctx.heap)
+                )
+            ));
+        }
+
         Ok(())
     }
 

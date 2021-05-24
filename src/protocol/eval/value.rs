@@ -5,6 +5,8 @@ use crate::protocol::ast::{
     AssignmentOperator,
     BinaryOperator,
     UnaryOperator,
+    ConcreteType,
+    ConcreteTypePart,
 };
 
 pub type StackPos = u32;
@@ -492,6 +494,57 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
         UO::PreDecrement => { todo!("implement") },
         UO::PostIncrement => { todo!("implement") },
         UO::PostDecrement => { todo!("implement") },
+    }
+}
+
+pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subject: &Value) -> Value {
+    // To simplify the casting logic: if the output type is not a simple
+    // integer/boolean/character, then the type checker made sure that the two
+    // types must be equal, hence we can do a simple clone.
+    use ConcreteTypePart as CTP;
+    let part = &output_type.parts[0];
+    if output_type.parts.len() > 1 || (
+        part != CTP::Bool &&
+        part != CTP::Character &&
+        part != CTP::UInt8 && part != CTP::UInt16 && part != CTP::UInt32 && part != CTP::UInt64 &&
+        part != CTP::SInt8 && part != CTP::SInt16 && part != CTP::SInt32 && part != CTP::SInt64
+    ) {
+        // Complex thingamajig
+        return store.clone_value(subject.clone());
+    }
+
+    macro_rules! unchecked_cast {
+        ($input: expr, $output_part: expr) => {
+            match $output_part {
+                CTP::Bool => Value::Bool($input as bool),
+                CTP::Character => Value::Char($input as char),
+                CTP::UInt8 => Value::UInt8($input as u8),
+                CTP::UInt16 => Value::UInt16($input as u16),
+                CTP::UInt32 => Value::UInt32($input as u32),
+                CTP::UInt64 => Value::UInt64($input as u64),
+                CTP::SInt8 => Value::SInt8($input as i8),
+                CTP::SInt16 => Value::SInt16($input as i16),
+                CTP::SInt32 => Value::SInt32($input as i32),
+                CTP::SInt64 => Value::SInt64($input as i64),
+                _ => unreachable!()
+            }
+        }
+    };
+
+    // If here, then the types might still be equal, but at least we're dealing
+    // with a simple integer/boolean/character input and output type.
+    let subject = store.maybe_read_ref(subject);
+    match subject {
+        Value::Bool(val) => unchecked_cast!(*val, part),
+        Value::Char(val) => unchecked_cast!(*val, part),
+        Value::UInt8(val) => {},
+        Value::UInt16(val) => {},
+        Value::UInt32(val) => {},
+        Value::UInt64(val) => {},
+        Value::SInt8(val) => {},
+        Value::SInt16(val) => {},
+        Value::SInt32(val) => {},
+        Value::SInt64(val) => {},
     }
 }
 
