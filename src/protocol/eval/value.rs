@@ -8,6 +8,7 @@ use crate::protocol::ast::{
     ConcreteType,
     ConcreteTypePart,
 };
+use crate::protocol::parser::token_parsing::*;
 
 pub type StackPos = u32;
 pub type HeapPos = u32;
@@ -497,27 +498,28 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
     }
 }
 
-pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subject: &Value) -> Value {
+pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subject: &Value) -> Result<Value, String> {
     // To simplify the casting logic: if the output type is not a simple
     // integer/boolean/character, then the type checker made sure that the two
     // types must be equal, hence we can do a simple clone.
     use ConcreteTypePart as CTP;
     let part = &output_type.parts[0];
-    if output_type.parts.len() > 1 || (
-        part != CTP::Bool &&
-        part != CTP::Character &&
-        part != CTP::UInt8 && part != CTP::UInt16 && part != CTP::UInt32 && part != CTP::UInt64 &&
-        part != CTP::SInt8 && part != CTP::SInt16 && part != CTP::SInt32 && part != CTP::SInt64
-    ) {
-        // Complex thingamajig
-        return store.clone_value(subject.clone());
+    match part {
+        CTP::Bool | CTP::Character |
+        CTP::UInt8 | CTP::UInt16 | CTP::UInt32 | CTP::UInt64 |
+        CTP::SInt8 | CTP::SInt16 | CTP::SInt32 | CTP::SInt64 => {
+            // Do the checking of these below
+            debug_assert_eq!(output_type.parts.len(), 1);
+        },
+        _ => {
+            return Ok(store.clone_value(subject.clone()));
+        },
     }
 
+    // Note: character is not included, needs per-type checking
     macro_rules! unchecked_cast {
         ($input: expr, $output_part: expr) => {
-            match $output_part {
-                CTP::Bool => Value::Bool($input as bool),
-                CTP::Character => Value::Char($input as char),
+            return Ok(match $output_part {
                 CTP::UInt8 => Value::UInt8($input as u8),
                 CTP::UInt16 => Value::UInt16($input as u16),
                 CTP::UInt32 => Value::UInt32($input as u32),
@@ -527,24 +529,180 @@ pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subje
                 CTP::SInt32 => Value::SInt32($input as i32),
                 CTP::SInt64 => Value::SInt64($input as i64),
                 _ => unreachable!()
-            }
+            })
         }
     };
+
+    macro_rules! from_unsigned_cast {
+        ($input:expr, $input_type:ty, $output_part:expr) => {
+            {
+                let target_type_name = match $output_part {
+                    CTP::Bool => return Ok(Value::Bool($input != 0)),
+                    CTP::Character => if $input <= u8::MAX as $input_type {
+                        return Ok(Value::Char(($input as u8) as char))
+                    } else {
+                        KW_TYPE_CHAR_STR
+                    },
+                    CTP::UInt8 => if $input <= u8::MAX as $input_type {
+                        return Ok(Value::UInt8($input as u8))
+                    } else {
+                        KW_TYPE_UINT8_STR
+                    },
+                    CTP::UInt16 => if $input <= u16::MAX as $input_type {
+                        return Ok(Value::UInt16($input as u16))
+                    } else {
+                        KW_TYPE_UINT16_STR
+                    },
+                    CTP::UInt32 => if $input <= u32::MAX as $input_type {
+                        return Ok(Value::UInt32($input as u32))
+                    } else {
+                        KW_TYPE_UINT32_STR
+                    },
+                    CTP::UInt64 => return Ok(Value::UInt64($input as u64)), // any unsigned int to u64 is fine
+                    CTP::SInt8 => if $input <= i8::MAX as $input_type {
+                        return Ok(Value::SInt8($input as i8))
+                    } else {
+                        KW_TYPE_SINT8_STR
+                    },
+                    CTP::SInt16 => if $input <= i16::MAX as $input_type {
+                        return Ok(Value::SInt16($input as i16))
+                    } else {
+                        KW_TYPE_SINT16_STR
+                    },
+                    CTP::SInt32 => if $input <= i32::MAX as $input_type {
+                        return Ok(Value::SInt32($input as i32))
+                    } else {
+                        KW_TYPE_SINT32_STR
+                    },
+                    CTP::SInt64 => if $input <= i64::MAX as $input_type {
+                        return Ok(Value::SInt64($input as i64))
+                    } else {
+                        KW_TYPE_SINT64_STR
+                    },
+                    _ => unreachable!(),
+                };
+
+                return Err(format!("value is '{}' which doesn't fit in a type '{}'", $input, target_type_name));
+            }
+        }
+    }
+
+    macro_rules! from_signed_cast {
+        // Programmer note: for signed checking we cannot do
+        //  output_type::MAX as input_type,
+        //
+        // because if the output type's width is larger than the input type,
+        // then the cast results in a negative number. So we mask with the
+        // maximum possible value the input type can become. As in:
+        //  (output_type::MAX as input_type) & input_type::MAX
+        //
+        // This way:
+        // 1. output width is larger than input width: fine in all cases, we
+        //  simply compare against the max input value, which is always true.
+        // 2. output width is equal to input width: by masking we "remove the
+        //  signed bit from the unsigned number" and again compare against the
+        //  maximum input value.
+        // 3. output width is smaller than the input width: masking does nothing
+        //  because the signed bit is never set, and we simply compare against
+        //  the maximum possible output value.
+        //
+        // A similar kind of mechanism for the minimum value, but here we do
+        // a binary OR. We do a:
+        //  (output_type::MIN as input_type) & input_type::MIN
+        //
+        // This way:
+        // 1. output width is larger than input width: initial cast truncates to
+        //  0, then we OR with the actual minimum value, so we attain the
+        //  minimum value of the input type.
+        // 2. output width is equal to input width: we OR the minimum value with
+        //  itself.
+        // 3. output width is smaller than input width: the cast produces the
+        //  min value of the output type, the subsequent OR does nothing, as it
+        //  essentially just sets the signed bit (which must already be set,
+        //  since we're dealing with a signed minimum value)
+        //
+        // After all of this expanding, we simply hope the compiler does a best
+        // effort constant expression evaluation, and presto!
+        ($input:expr, $input_type:ty, $output_type:expr) => {
+            {
+                let target_type_name = match $output_type {
+                    CTP::Bool => return Ok(Value::Bool($input != 0)),
+                    CTP::Character => if $input >= 0 && $input <= (u8::max as $input_type & <$input_type>::MAX) {
+                        return Ok(Value::Char(($input as u8) as char))
+                    } else {
+                        KW_TYPE_CHAR_STR
+                    },
+                    CTP::UInt8 => if $input >= 0 && $input <= ((u8::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::UInt8($input as u8));
+                    } else {
+                        KW_TYPE_UINT8_STR
+                    },
+                    CTP::UInt16 => if $input >= 0 && $input <= ((u16::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::UInt16($input as u16));
+                    } else {
+                        KW_TYPE_UINT16_STR
+                    },
+                    CTP::UInt32 => if $input >= 0 && $input <= ((u32::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::UInt32($input as u32));
+                    } else {
+                        KW_TYPE_UINT32_STR
+                    },
+                    CTP::UInt64 => if $input >= 0 && $input <= ((u64::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::UInt64($input as u64));
+                    } else {
+                        KW_TYPE_UINT64_STR
+                    },
+                    CTP::SInt8 => if $input >= ((i8::MIN as $input_type) | <$input_type>::MIN) && $input <= ((i8::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::SInt8($input as i8));
+                    } else {
+                        KW_TYPE_SINT8_STR
+                    },
+                    CTP::SInt16 => if $input >= ((i16::MIN as $input_type | <$input_type>::MIN)) && $input <= ((i16::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::SInt16($input as i16));
+                    } else {
+                        KW_TYPE_SINT16_STR
+                    },
+                    CTP::SInt32 => if $input >= ((i32::MIN as $input_type | <$input_type>::MIN)) && $input <= ((i32::MAX as $input_type) & <$input_type>::MAX) {
+                        return Ok(Value::SInt32($input as i32));
+                    } else {
+                        KW_TYPE_SINT32_STR
+                    },
+                    CTP::SInt64 => return Ok(Value::SInt64($input as i64)),
+                    _ => unreachable!(),
+                };
+
+                return Err(format!("value is '{}' which doesn't fit in a type '{}'", $input, target_type_name));
+            }
+        }
+    }
 
     // If here, then the types might still be equal, but at least we're dealing
     // with a simple integer/boolean/character input and output type.
     let subject = store.maybe_read_ref(subject);
     match subject {
-        Value::Bool(val) => unchecked_cast!(*val, part),
-        Value::Char(val) => unchecked_cast!(*val, part),
-        Value::UInt8(val) => {},
-        Value::UInt16(val) => {},
-        Value::UInt32(val) => {},
-        Value::UInt64(val) => {},
-        Value::SInt8(val) => {},
-        Value::SInt16(val) => {},
-        Value::SInt32(val) => {},
-        Value::SInt64(val) => {},
+        Value::Bool(val) => {
+            match part {
+                CTP::Bool => return Ok(Value::Bool(*val)),
+                CTP::Character => return Ok(Value::Char(1 as char)),
+                _ => unchecked_cast!(*val, part),
+            }
+        },
+        Value::Char(val) => {
+            match part {
+                CTP::Bool => return Ok(Value::Bool(*val != 0 as char)),
+                CTP::Character => return Ok(Value::Char(*val)),
+                _ => unchecked_cast!(*val, part),
+            }
+        },
+        Value::UInt8(val) => from_unsigned_cast!(*val, u8, part),
+        Value::UInt16(val) => from_unsigned_cast!(*val, u16, part),
+        Value::UInt32(val) => from_unsigned_cast!(*val, u32, part),
+        Value::UInt64(val) => from_unsigned_cast!(*val, u64, part),
+        Value::SInt8(val) => from_signed_cast!(*val, i8, part),
+        Value::SInt16(val) => from_signed_cast!(*val, i16, part),
+        Value::SInt32(val) => from_signed_cast!(*val, i32, part),
+        Value::SInt64(val) => from_signed_cast!(*val, i64, part),
+        _ => unreachable!("mismatch between 'cast' type checking and 'cast' evaluation"),
     }
 }
 

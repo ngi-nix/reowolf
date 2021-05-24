@@ -498,7 +498,15 @@ impl Prompt {
                             // Typechecking reduced this to two cases: either we
                             // have casting noop (same types), or we're casting
                             // between integer/bool/char types.
+                            let subject = cur_frame.expr_values.pop_back().unwrap();
+                            match apply_casting(&mut self.store, output_type, &subject) {
+                                Ok(value) => cur_frame.expr_values.push_back(value),
+                                Err(msg) => {
+                                    return Err(EvalError::new_error_at_expr(self, modules, heap, expr.this.upcast(), msg));
+                                }
+                            }
 
+                            self.store.drop_value(subject.get_heap_pos());
                         }
                         Expression::Call(expr) => {
                             // Push a new frame. Note that all expressions have

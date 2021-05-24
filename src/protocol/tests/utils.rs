@@ -592,6 +592,7 @@ impl<'a> FunctionTester<'a> {
                 );
             },
             Err(err) => {
+                println!("DEBUG: Formatted error:\n{}", err);
                 assert!(
                     false,
                     "[{}] Expected call to succeed, but got {:?} for {}",

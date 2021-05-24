@@ -1635,6 +1635,10 @@ fn consume_parser_type(
             }
         }
 
+        for _ in 0..first_angle_depth {
+            consume_token(source, iter, TokenKind::CloseAngle);
+        }
+
         return Ok(ParserType{ elements });
     };
 

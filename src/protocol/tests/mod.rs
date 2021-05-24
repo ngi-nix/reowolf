@@ -16,6 +16,7 @@ mod parser_monomorphs;
 mod parser_imports;
 mod eval_operators;
 mod eval_calls;
+mod eval_casting;
 mod eval_silly;
 
 pub(crate) use utils::{Tester}; // the testing harness
