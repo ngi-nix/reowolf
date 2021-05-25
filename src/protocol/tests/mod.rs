@@ -14,6 +14,7 @@ mod parser_validation;
 mod parser_inference;
 mod parser_monomorphs;
 mod parser_imports;
+mod parser_binding;
 mod eval_operators;
 mod eval_calls;
 mod eval_casting;

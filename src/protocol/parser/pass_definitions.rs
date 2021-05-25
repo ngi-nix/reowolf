@@ -358,7 +358,7 @@ impl PassDefinitions {
                 span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
                 statements,
                 end_block: EndBlockStatementId::new_invalid(),
-                parent_scope: Scope::Definition(DefinitionId::new_invalid()),
+                scope_node: ScopeNode::new_invalid(),
                 first_unique_id_in_scope: -1,
                 next_unique_id_in_scope: -1,
                 relative_pos_in_parent: 0,
@@ -496,7 +496,7 @@ impl PassDefinitions {
             span: block_span,
             statements,
             end_block: EndBlockStatementId::new_invalid(),
-            parent_scope: Scope::Definition(DefinitionId::new_invalid()),
+            scope_node: ScopeNode::new_invalid(),
             first_unique_id_in_scope: -1,
             next_unique_id_in_scope: -1,
             relative_pos_in_parent: 0,
@@ -556,7 +556,7 @@ impl PassDefinitions {
             test,
             body,
             end_while: EndWhileStatementId::new_invalid(),
-            in_sync: None,
+            in_sync: SynchronousStatementId::new_invalid(),
         }))
     }
 
@@ -609,7 +609,6 @@ impl PassDefinitions {
             span: synchronous_span,
             body,
             end_sync: EndSynchronousStatementId::new_invalid(),
-            parent_scope: None,
         }))
     }
 
@@ -767,7 +766,7 @@ impl PassDefinitions {
             label,
             body: inner_section[0],
             relative_pos_in_block: 0,
-            in_sync: None,
+            in_sync: SynchronousStatementId::new_invalid(),
         });
 
         if inner_section.len() == 1 {
@@ -1455,6 +1454,23 @@ impl PassDefinitions {
                         this,
                         span: ident_span,
                         value,
+                        parent: ExpressionParent::None,
+                        unique_id_in_definition: -1,
+                    }).upcast()
+                } else if ident_text == KW_LET {
+                    // Binding expression
+                    let keyword_span = iter.next_span();
+                    iter.consume();
+
+                    let bound_to = self.consume_expression(module, iter, ctx)?;
+                    consume_token(&module.source, iter, TokenKind::Equal)?;
+                    let bound_from = self.consume_expression(module, iter, ctx)?;
+
+                    ctx.heap.alloc_binding_expression(|this| BindingExpression{
+                        this,
+                        span: keyword_span,
+                        bound_to,
+                        bound_from,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast()

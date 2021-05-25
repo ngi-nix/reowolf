@@ -424,8 +424,8 @@ fn recursive_binding_expression<T: Visitor>(
     h: &mut Heap,
     expr: BindingExpressionId,
 ) -> VisitorResult {
-    this.visit_expression(h, h[expr].left.upcast())?;
-    this.visit_expression(h, h[expr].right)
+    this.visit_expression(h, h[expr].bound_from)?;
+    this.visit_expression(h, h[expr].bound_to)
 }
 
 fn recursive_conditional_expression<T: Visitor>(

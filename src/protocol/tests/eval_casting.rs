@@ -63,16 +63,22 @@ fn test_invalid_casting() {
 
     // Not exhaustive, good enough
     let tests = [
+        // Unsigned large to small width
         ("u16", "256", "u8"),
         ("u32", "256", "u8"),
         ("u64", "256", "u8"),
         ("u32", "65536", "u16"),
         ("u64", "65536", "u16"),
+        // Signed to unsigned
         ("s8", "-1", "u8"),
         ("s32", "-1", "u16"),
         ("s32", "65536", "u16"),
+        // Signed to signed of smaller width
         ("s16", "-129", "s8"),
-        ("s16", "128", "s8")
+        ("s16", "128", "s8"),
+        // Unsigned to signed
+        ("u8", "128", "s8"),
+        ("u16", "32768", "s16")
     ];
 
     for (input_type, input_value, output_type) in &tests {

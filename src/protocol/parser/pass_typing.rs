@@ -1170,6 +1170,20 @@ impl Visitor2 for PassTyping {
         self.progress_assignment_expr(ctx, id)
     }
 
+    fn visit_binding_expr(&mut self, ctx: &mut Ctx, id: BindingExpressionId) -> VisitorResult {
+        let upcast_id = id.upcast();
+        self.insert_initial_expr_inference_type(ctx, upcast_id)?;
+
+        let binding_expr = &ctx.heap[id];
+        let bound_to_id = binding_expr.bound_to;
+        let bound_from_id = binding_expr.bound_from;
+
+        self.visit_expr(ctx, bound_to_id)?;
+        self.visit_expr(ctx, bound_from_id)?;
+
+        self.progress_binding_expr(ctx, id)
+    }
+
     fn visit_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
         self.insert_initial_expr_inference_type(ctx, upcast_id)?;
@@ -1518,8 +1532,9 @@ impl PassTyping {
                 let id = expr.this;
                 self.progress_assignment_expr(ctx, id)
             },
-            Expression::Binding(_expr) => {
-                unimplemented!("progress binding expression");
+            Expression::Binding(expr) => {
+                let id = expr.this;
+                self.progress_binding_expr(ctx, id)
             },
             Expression::Conditional(expr) => {
                 let id = expr.this;
@@ -1609,6 +1624,10 @@ impl PassTyping {
         if progress_arg2 { self.queue_expr(ctx, arg2_expr_id); }
 
         Ok(())
+    }
+
+    fn progress_binding_expr(&mut self, ctx: &mut Ctx, id: BindingExpressionId) -> Result<(), ParseError> {
+
     }
 
     fn progress_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> Result<(), ParseError> {

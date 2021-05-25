@@ -592,7 +592,7 @@ impl<'a> FunctionTester<'a> {
                 );
             },
             Err(err) => {
-                println!("DEBUG: Formatted error:\n{}", err);
+                println!("DEBUG: Formatted evaluation error:\n{}", err);
                 assert!(
                     false,
                     "[{}] Expected call to succeed, but got {:?} for {}",
@@ -628,7 +628,7 @@ impl<'a> FunctionTester<'a> {
                 );
             },
             Err(err) => {
-                println!("DEBUG: Got evaluation error:\n{}", err);
+                println!("DEBUG: Formatted evaluation error:\n{}", err);
                 debug_assert_eq!(err.statements.len(), 1);
                 assert!(
                     err.statements[0].message.contains(&expected_result),
@@ -1151,8 +1151,8 @@ fn seek_expr_in_expr<F: Fn(&Expression) -> bool>(heap: &Heap, start: ExpressionI
         },
         Expression::Binding(expr) => {
             None
-            .or_else(|| seek_expr_in_expr(heap, expr.left.upcast(), f))
-            .or_else(|| seek_expr_in_expr(heap, expr.right, f))
+            .or_else(|| seek_expr_in_expr(heap, expr.bound_to, f))
+            .or_else(|| seek_expr_in_expr(heap, expr.bound_from, f))
         }
         Expression::Conditional(expr) => {
             None

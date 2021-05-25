@@ -622,10 +622,29 @@ impl Scope {
     }
 }
 
+/// `ScopeNode` is a helper that links scopes in two directions. It doesn't
+/// actually contain any information associated with the scope, this may be
+/// found on the AST elements that `Scope` points to.
+#[derive(Debug, Clone)]
+pub struct ScopeNode {
+    pub parent: Scope,
+    pub nested: Vec<Scope>,
+}
+
+impl ScopeNode {
+    pub(crate) fn new_invalid() -> Self {
+        ScopeNode{
+            parent: Scope::Definition(DefinitionId::new_invalid()),
+            nested: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum VariableKind {
-    Parameter,
-    Local,
+    Parameter,      // in parameter list of function/component
+    Local,          // declared in function/component body
+    Binding,        // may be bound to in a binding expression (determined in validator/linker)
 }
 
 #[derive(Debug, Clone)]
@@ -820,11 +839,11 @@ pub struct EnumVariantDefinition {
 pub struct EnumDefinition {
     pub this: EnumDefinitionId,
     pub defined_in: RootId,
-    // Phase 1: symbol scanning
+    // Symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
-    // Phase 2: parsing
+    // Parsing
     pub variants: Vec<EnumVariantDefinition>,
 }
 
@@ -1172,7 +1191,7 @@ pub struct BlockStatement {
     pub statements: Vec<StatementId>,
     pub end_block: EndBlockStatementId,
     // Phase 2: linker
-    pub parent_scope: Scope,
+    pub scope_node: ScopeNode,
     pub first_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
     pub next_unique_id_in_scope: i32, // Temporary fix until proper bytecode/asm is generated
     pub relative_pos_in_parent: u32,
@@ -1257,7 +1276,7 @@ pub struct LabeledStatement {
     pub body: StatementId,
     // Phase 2: linker
     pub relative_pos_in_block: u32,
-    pub in_sync: Option<SynchronousStatementId>,
+    pub in_sync: SynchronousStatementId, // may be invalid
 }
 
 #[derive(Debug, Clone)]
@@ -1286,7 +1305,7 @@ pub struct WhileStatement {
     pub test: ExpressionId,
     pub body: BlockStatementId,
     pub end_while: EndWhileStatementId,
-    pub in_sync: Option<SynchronousStatementId>,
+    pub in_sync: SynchronousStatementId, // may be invalid
 }
 
 #[derive(Debug, Clone)]
@@ -1325,7 +1344,6 @@ pub struct SynchronousStatement {
     pub body: BlockStatementId,
     // Phase 2: linker
     pub end_sync: EndSynchronousStatementId,
-    pub parent_scope: Option<Scope>,
 }
 
 #[derive(Debug, Clone)]
@@ -1586,9 +1604,9 @@ pub struct AssignmentExpression {
 pub struct BindingExpression {
     pub this: BindingExpressionId,
     // Parsing
-    pub span: InputSpan,
-    pub left: LiteralExpressionId,
-    pub right: ExpressionId,
+    pub span: InputSpan, // of the binding keyword
+    pub bound_to: ExpressionId,
+    pub bound_from: ExpressionId,
     // Validator/Linker
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,

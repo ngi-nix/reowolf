@@ -472,7 +472,7 @@ impl ASTWriter {
 
                 self.kv(indent2).with_s_key("EndWhile").with_disp_val(&stmt.end_while.0.index);
                 self.kv(indent2).with_s_key("InSync")
-                    .with_opt_disp_val(stmt.in_sync.as_ref().map(|v| &v.0.index));
+                    .with_disp_val(&stmt.in_sync.0.index);
                 self.kv(indent2).with_s_key("Condition");
                 self.write_expr(heap, stmt.test, indent3);
                 self.kv(indent2).with_s_key("Body");
@@ -565,10 +565,10 @@ impl ASTWriter {
             Expression::Binding(expr) => {
                 self.kv(indent).with_id(PREFIX_BINARY_EXPR_ID, expr.this.0.index)
                     .with_s_key("BindingExpr");
-                self.kv(indent2).with_s_key("LeftExpression");
-                self.write_expr(heap, expr.left.upcast(), indent3);
-                self.kv(indent2).with_s_key("RightExpression");
-                self.write_expr(heap, expr.right, indent3);
+                self.kv(indent2).with_s_key("BindToExpression");
+                self.write_expr(heap, expr.bound_to, indent3);
+                self.kv(indent2).with_s_key("BindFromExpression");
+                self.write_expr(heap, expr.bound_from, indent3);
                 self.kv(indent2).with_s_key("Parent")
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
