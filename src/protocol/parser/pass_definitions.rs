@@ -1430,7 +1430,6 @@ impl PassDefinitions {
                         }
                     },
                     _ => {
-                        // TODO: Casting expressions
                         return Err(ParseError::new_error_str_at_span(
                             &module.source, parser_type.elements[0].full_span,
                             "unexpected type in expression, note that casting expressions are not yet implemented"
@@ -1462,9 +1461,9 @@ impl PassDefinitions {
                     let keyword_span = iter.next_span();
                     iter.consume();
 
-                    let bound_to = self.consume_expression(module, iter, ctx)?;
+                    let bound_to = self.consume_prefix_expression(module, iter, ctx)?;
                     consume_token(&module.source, iter, TokenKind::Equal)?;
-                    let bound_from = self.consume_expression(module, iter, ctx)?;
+                    let bound_from = self.consume_prefix_expression(module, iter, ctx)?;
 
                     ctx.heap.alloc_binding_expression(|this| BindingExpression{
                         this,
@@ -1652,7 +1651,7 @@ fn consume_parser_type(
         }
 
         for _ in 0..first_angle_depth {
-            consume_token(source, iter, TokenKind::CloseAngle);
+            consume_token(source, iter, TokenKind::CloseAngle)?;
         }
 
         return Ok(ParserType{ elements });

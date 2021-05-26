@@ -482,10 +482,10 @@ impl Visitor2 for PassValidationLinking {
         // Visit the children themselves
         self.in_binding_expr_lhs = true;
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
-        self.visit_expr(ctx, bound_to_id);
+        self.visit_expr(ctx, bound_to_id)?;
         self.in_binding_expr_lhs = false;
         self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
-        self.visit_expr(ctx, bound_from_id);
+        self.visit_expr(ctx, bound_from_id)?;
 
         self.expr_parent = old_expr_parent;
         self.in_binding_expr = BindingExpressionId::new_invalid();
@@ -980,6 +980,8 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_variable_expr(&mut self, ctx: &mut Ctx, id: VariableExpressionId) -> VisitorResult {
         let var_expr = &ctx.heap[id];
+        println!("DEBUG: Visiting:\nname: {}\nat:  {:?}", var_expr.identifier.value.as_str(), var_expr.identifier.span);
+
         let variable_id = match self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier) {
             Ok(variable_id) => {
                 // Regular variable
@@ -989,6 +991,7 @@ impl Visitor2 for PassValidationLinking {
                 // Couldn't find variable, but if we're in a binding expression,
                 // then this may be the thing we're binding to.
                 if self.in_binding_expr.is_invalid() || !self.in_binding_expr_lhs {
+                    println!("DEBUG: INVAALLIIIIIIID ({})", var_expr.identifier.value.as_str());
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, var_expr.identifier.span, "unresolved variable"
                     ));
@@ -1385,7 +1388,7 @@ impl PassValidationLinking {
             for local_id in &block.locals {
                 let local = &ctx.heap[*local_id];
                 
-                if local.relative_pos_in_block < relative_pos && identifier == &local.identifier {
+                if local.relative_pos_in_block <= relative_pos && identifier == &local.identifier {
                     return Ok(*local_id);
                 }
             }

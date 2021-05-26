@@ -465,14 +465,14 @@ impl<'a> FunctionTester<'a> {
     }
 
     pub(crate) fn for_variable<F: Fn(VariableTester)>(self, name: &str, f: F) -> Self {
-        // Find the memory statement in order to find the local
-        let mem_stmt_id = seek_stmt(
+        // Seek through the blocks in order to find the variable
+        let wrapping_block_id = seek_stmt(
             self.ctx.heap, self.def.body.upcast(),
             &|stmt| {
-                if let Statement::Local(local) = stmt {
-                    if let LocalStatement::Memory(memory) = local {
-                        let local = &self.ctx.heap[memory.variable];
-                        if local.identifier.value.as_str() == name {
+                if let Statement::Block(block) = stmt {
+                    for local_id in &block.locals {
+                        let var = &self.ctx.heap[*local_id];
+                        if var.identifier.value.as_str() == name {
                             return true;
                         }
                     }
@@ -482,24 +482,32 @@ impl<'a> FunctionTester<'a> {
             }
         );
 
+        let mut found_local_id = None;
+        if let Some(block_id) = wrapping_block_id {
+            let block_stmt = self.ctx.heap[block_id].as_block();
+            for local_id in &block_stmt.locals {
+                let var = &self.ctx.heap[*local_id];
+                if var.identifier.value.as_str() == name {
+                    found_local_id = Some(*local_id);
+                }
+            }
+        }
+
         assert!(
-            mem_stmt_id.is_some(), "[{}] Failed to find variable '{}' in {}",
+            found_local_id.is_some(), "[{}] Failed to find variable '{}' in {}",
             self.ctx.test_name, name, self.assert_postfix()
         );
 
-        let mem_stmt_id = mem_stmt_id.unwrap();
-        let local_id = self.ctx.heap[mem_stmt_id].as_memory().variable;
-        let local = &self.ctx.heap[local_id];
+        let local = &self.ctx.heap[found_local_id.unwrap()];
 
-        // Find the assignment expression that follows it
-        let assignment_id = seek_expr_in_stmt(
+        // Find an instance of the variable expression so we can determine its
+        // type.
+        let var_expr = seek_expr_in_stmt(
             self.ctx.heap, self.def.body.upcast(),
             &|expr| {
-                if let Expression::Assignment(assign_expr) = expr {
-                    if let Expression::Variable(variable_expr) = &self.ctx.heap[assign_expr.left] {
-                        if variable_expr.identifier.span.begin.offset == local.identifier.span.begin.offset {
-                            return true;
-                        }
+                if let Expression::Variable(variable_expr) = expr {
+                    if variable_expr.identifier.value.as_str() == name {
+                        return true;
                     }
                 }
 
@@ -508,17 +516,18 @@ impl<'a> FunctionTester<'a> {
         );
 
         assert!(
-            assignment_id.is_some(), "[{}] Failed to find assignment to variable '{}' in {}",
+            var_expr.is_some(), "[{}] Failed to find variable expression of '{}' in {}",
             self.ctx.test_name, name, self.assert_postfix()
         );
 
-        let assignment = &self.ctx.heap[assignment_id.unwrap()];
+        let var_expr = &self.ctx.heap[var_expr.unwrap()];
 
         // Construct tester and pass to tester function
         let tester = VariableTester::new(
-            self.ctx, self.def.this.upcast(), local, 
-            assignment.as_assignment()
+            self.ctx, self.def.this.upcast(), local,
+            var_expr.as_variable()
         );
+
         f(tester);
 
         self
@@ -665,14 +674,14 @@ pub(crate) struct VariableTester<'a> {
     ctx: TestCtx<'a>,
     definition_id: DefinitionId,
     variable: &'a Variable,
-    assignment: &'a AssignmentExpression,
+    var_expr: &'a VariableExpression,
 }
 
 impl<'a> VariableTester<'a> {
     fn new(
-        ctx: TestCtx<'a>, definition_id: DefinitionId, variable: &'a Variable, assignment: &'a AssignmentExpression
+        ctx: TestCtx<'a>, definition_id: DefinitionId, variable: &'a Variable, var_expr: &'a VariableExpression
     ) -> Self {
-        Self{ ctx, definition_id, variable, assignment }
+        Self{ ctx, definition_id, variable, var_expr }
     }
 
     pub(crate) fn assert_parser_type(self, expected: &str) -> Self {
@@ -690,8 +699,7 @@ impl<'a> VariableTester<'a> {
     pub(crate) fn assert_concrete_type(self, expected: &str) -> Self {
         // Lookup concrete type in type table
         let mono_data = self.ctx.types.get_procedure_expression_data(&self.definition_id, 0);
-        let lhs = self.ctx.heap[self.assignment.left].as_variable();
-        let concrete_type = &mono_data.expr_data[lhs.unique_id_in_definition as usize].expr_type;
+        let concrete_type = &mono_data.expr_data[self.var_expr.unique_id_in_definition as usize].expr_type;
 
         // Serialize and check
         let mut serialized = String::new();

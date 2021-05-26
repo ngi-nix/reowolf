@@ -66,6 +66,8 @@ use super::visitor::{
 const VOID_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Void ];
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
+const BOOLLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::BoolLike ];
+const BINDING_BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::BindingBool ];
 const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
 const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
@@ -90,6 +92,7 @@ pub(crate) enum InferenceTypePart {
     // Partially known type, may be inferred to to be the appropriate related 
     // type.
     // IndexLike,      // index into array/slice
+    BoolLike,       // boolean or binding boolean
     NumberLike,     // any kind of integer/float
     IntegerLike,    // any kind of integer
     ArrayLike,      // array or slice. Note that this must have a subtype
@@ -97,6 +100,7 @@ pub(crate) enum InferenceTypePart {
     // Special types that cannot be instantiated by the user
     Void, // For builtin functions that do not return anything
     // Concrete types without subtypes
+    BindingBool,    // boolean result from a binding expression
     Bool,
     UInt8,
     UInt16,
@@ -131,8 +135,8 @@ impl InferenceTypePart {
     fn is_concrete(&self) -> bool {
         use InferenceTypePart as ITP;
         match self {
-            ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | 
-            ITP::ArrayLike | ITP::PortLike => false,
+            ITP::Unknown | ITP::BoolLike | ITP::NumberLike |
+            ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => false,
             _ => true
         }
     }
@@ -180,8 +184,12 @@ impl InferenceTypePart {
         (*self == ITP::IntegerLike && arg.is_concrete_integer()) ||
         (*self == ITP::NumberLike && (arg.is_concrete_number() || *arg == ITP::IntegerLike)) ||
         (*self == ITP::ArrayLike && arg.is_concrete_msg_array_or_slice()) ||
-        (*self == ITP::PortLike && arg.is_concrete_port())
+        (*self == ITP::PortLike && arg.is_concrete_port()) ||
+        (*self == ITP::BoolLike && (*arg == ITP::Bool || *arg == ITP::BindingBool)) ||
+        (*self == ITP::Bool && *arg == ITP::BindingBool)
     }
+
+    /// Checks if a part is more specific
 
     /// Returns the change in "iteration depth" when traversing this particular
     /// part. The iteration depth is used to traverse the tree in a linear 
@@ -190,7 +198,7 @@ impl InferenceTypePart {
         use InferenceTypePart as ITP;
         match &self {
             ITP::Unknown | ITP::NumberLike | ITP::IntegerLike |
-            ITP::Void | ITP::Bool |
+            ITP::Void | ITP::BoolLike | ITP::Bool | ITP::BindingBool |
             ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
             ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 |
             ITP::Character | ITP::String => {
@@ -594,7 +602,8 @@ impl InferenceType {
                     idx += 1;
                     continue;
                 },
-                ITP::Unknown | ITP::NumberLike | ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => {
+                ITP::Unknown | ITP::BoolLike | ITP::NumberLike |
+                ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => {
                     // Should not happen if type inferencing works correctly: we
                     // should have returned a programmer-readable error or have
                     // inferred all types.
@@ -602,6 +611,7 @@ impl InferenceType {
                 },
                 ITP::Void => CTP::Void,
                 ITP::Message => CTP::Message,
+                ITP::BindingBool => CTP::Bool,
                 ITP::Bool => CTP::Bool,
                 ITP::UInt8 => CTP::UInt8,
                 ITP::UInt16 => CTP::UInt16,
@@ -640,6 +650,7 @@ impl InferenceType {
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
             },
             ITP::Unknown => buffer.push_str("?"),
+            ITP::BoolLike => buffer.push_str("boollike"),
             ITP::NumberLike => buffer.push_str("numberlike"),
             ITP::IntegerLike => buffer.push_str("integerlike"),
             ITP::ArrayLike => {
@@ -652,6 +663,7 @@ impl InferenceType {
                 buffer.push('>');
             }
             ITP::Void => buffer.push_str("void"),
+            ITP::BindingBool => buffer.push_str("binding result"),
             ITP::Bool => buffer.push_str(KW_TYPE_BOOL_STR),
             ITP::UInt8 => buffer.push_str(KW_TYPE_UINT8_STR),
             ITP::UInt16 => buffer.push_str(KW_TYPE_UINT16_STR),
@@ -1357,8 +1369,24 @@ impl Visitor2 for PassTyping {
 
         let var_expr = &ctx.heap[id];
         debug_assert!(var_expr.declaration.is_some());
-        let var_data = self.var_types.get_mut(var_expr.declaration.as_ref().unwrap()).unwrap();
-        var_data.used_at.push(upcast_id);
+
+        // Not pretty: if a binding expression, then this is the first time we
+        // encounter the variable, so we still need to insert the variable data.
+        let declaration = &ctx.heap[var_expr.declaration.unwrap()];
+        if !self.var_types.contains_key(&declaration.this)  {
+            debug_assert!(declaration.kind == VariableKind::Binding);
+            let var_type = self.determine_inference_type_from_parser_type_elements(
+                &declaration.parser_type.elements, true
+            );
+            self.var_types.insert(declaration.this, VarData{
+                var_type,
+                used_at: vec![upcast_id],
+                linked_var: None
+            });
+        } else {
+            let var_data = self.var_types.get_mut(&declaration.this).unwrap();
+            var_data.used_at.push(upcast_id);
+        }
 
         self.progress_variable_expr(ctx, id)
     }
@@ -1627,7 +1655,21 @@ impl PassTyping {
     }
 
     fn progress_binding_expr(&mut self, ctx: &mut Ctx, id: BindingExpressionId) -> Result<(), ParseError> {
+        let upcast_id = id.upcast();
+        let binding_expr = &ctx.heap[id];
+        let bound_from_id = binding_expr.bound_from;
+        let bound_to_id = binding_expr.bound_to;
 
+        // Output of a binding expression is a special kind of boolean that can
+        // only be used in binary-and expressions
+        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BINDING_BOOL_TEMPLATE)?;
+        let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, bound_from_id, 0, bound_to_id, 0)?;
+
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_from { self.queue_expr(ctx, bound_from_id); }
+        if progress_to { self.queue_expr(ctx, bound_to_id); }
+
+        Ok(())
     }
 
     fn progress_conditional_expr(&mut self, ctx: &mut Ctx, id: ConditionalExpressionId) -> Result<(), ParseError> {
@@ -1688,7 +1730,19 @@ impl PassTyping {
 
                 (progress_expr || subtype_expr, progress_arg1 || subtype_arg1, progress_arg2 || subtype_arg2)
             },
-            BO::LogicalOr | BO::LogicalAnd => {
+            BO::LogicalAnd => {
+                // Logical AND may operate both on normal booleans and on
+                // booleans that are the result of a binding expression. So we
+                // force the expression to bool-like, then apply an equal-3
+                // constraint. Any BindingBool will promote all the other Bool
+                // types.
+                let base_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
+                let (progress_expr, progress_arg1, progress_arg2) =
+                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
+
+                (base_expr || progress_expr, progress_arg1, progress_arg2)
+            },
+            BO::LogicalOr => {
                 // Forced boolean on all
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let progress_arg1 = self.apply_forced_constraint(ctx, arg1_id, &BOOL_TEMPLATE)?;
@@ -2924,9 +2978,10 @@ impl PassTyping {
 
         let expr = &ctx.heap[expr_id];
         let inference_type = match expr.parent() {
-            EP::None =>
+            EP::None => {
                 // Should have been set by linker
-                unreachable!(),
+                println!("DEBUG: CRAP!\n{:?}", expr);
+                unreachable!() },
             EP::ExpressionStmt(_) =>
                 // Determined during type inference
                 InferenceType::new(false, false, vec![ITP::Unknown]),

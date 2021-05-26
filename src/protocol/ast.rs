@@ -640,7 +640,7 @@ impl ScopeNode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariableKind {
     Parameter,      // in parameter list of function/component
     Local,          // declared in function/component body
