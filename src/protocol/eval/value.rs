@@ -29,6 +29,7 @@ pub enum Value {
     Unassigned,                 // Marker when variables are first declared, immediately followed by assignment
     PrevStackBoundary(isize),   // Marker for stack frame beginning, so we can pop stack values
     Ref(ValueId),               // Reference to a value, used by expressions producing references
+    Binding(StackPos),          // Reference to a binding variable (reserved on the stack)
     // Builtin types
     Input(PortId),
     Output(PortId),
@@ -531,7 +532,7 @@ pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subje
                 _ => unreachable!()
             })
         }
-    };
+    }
 
     macro_rules! from_unsigned_cast {
         ($input:expr, $input_type:ty, $output_part:expr) => {
@@ -706,6 +707,7 @@ pub(crate) fn apply_casting(store: &mut Store, output_type: &ConcreteType, subje
     }
 }
 
+/// Recursively checks for equality.
 pub(crate) fn apply_equality_operator(store: &Store, lhs: &Value, rhs: &Value) -> bool {
     let lhs = store.maybe_read_ref(lhs);
     let rhs = store.maybe_read_ref(rhs);
@@ -759,6 +761,7 @@ pub(crate) fn apply_equality_operator(store: &Store, lhs: &Value, rhs: &Value) -
     }
 }
 
+/// Recursively checks for inequality
 pub(crate) fn apply_inequality_operator(store: &Store, lhs: &Value, rhs: &Value) -> bool {
     let lhs = store.maybe_read_ref(lhs);
     let rhs = store.maybe_read_ref(rhs);
@@ -808,5 +811,70 @@ pub(crate) fn apply_inequality_operator(store: &Store, lhs: &Value, rhs: &Value)
         },
         Value::String(lhs_pos) => eval_inequality_heap(store, *lhs_pos, rhs.as_struct()),
         _ => unreachable!("apply_inequality_operator to lhs {:?}", lhs)
+    }
+}
+
+/// Recursively applies binding operator. Essentially an equality operator with
+/// special handling if the LHS contains a binding reference to a stack
+/// stack variable.
+// Note: that there is a lot of `Value.clone()` going on here. As always: this
+// is potentially cloning the references to heap values, not actually cloning
+// those heap regions into a new heap region.
+pub(crate) fn apply_binding_operator(store: &mut Store, lhs: Value, rhs: Value) -> bool {
+    let lhs = store.maybe_read_ref(&lhs).clone();
+    let rhs = store.maybe_read_ref(&rhs).clone();
+
+    fn eval_binding_heap(store: &mut Store, lhs_pos: HeapPos, rhs_pos: HeapPos) -> bool {
+        let lhs_len = store.heap_regions[lhs_pos as usize].values.len();
+        let rhs_len = store.heap_regions[rhs_pos as usize].values.len();
+        if lhs_len != rhs_len {
+            return false;
+        }
+
+        for idx in 0..lhs_len {
+            // More rust shenanigans... I'm going to calm myself by saying that
+            // this is just a temporary evaluator implementation.
+            let lhs_val = store.heap_regions[lhs_pos as usize].values[idx].clone();
+            let rhs_val = store.heap_regions[rhs_pos as usize].values[idx].clone();
+            if !apply_binding_operator(store, lhs_val, rhs_val) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    match lhs {
+        Value::Binding(var_pos) => {
+            let to_write = store.clone_value(rhs.clone());
+            store.write(ValueId::Stack(var_pos), to_write);
+            return true;
+        },
+        Value::Input(v) => v == rhs.as_input(),
+        Value::Output(v) => v == rhs.as_output(),
+        Value::Message(lhs_pos) => eval_binding_heap(store, lhs_pos, rhs.as_message()),
+        Value::Null => todo!("remove null"),
+        Value::Bool(v) => v == rhs.as_bool(),
+        Value::Char(v) => v == rhs.as_char(),
+        Value::String(lhs_pos) => eval_binding_heap(store, lhs_pos, rhs.as_string()),
+        Value::UInt8(v) => v == rhs.as_uint8(),
+        Value::UInt16(v) => v == rhs.as_uint16(),
+        Value::UInt32(v) => v == rhs.as_uint32(),
+        Value::UInt64(v) => v == rhs.as_uint64(),
+        Value::SInt8(v) => v == rhs.as_sint8(),
+        Value::SInt16(v) => v == rhs.as_sint16(),
+        Value::SInt32(v) => v == rhs.as_sint32(),
+        Value::SInt64(v) => v == rhs.as_sint64(),
+        Value::Array(lhs_pos) => eval_binding_heap(store, lhs_pos, rhs.as_array()),
+        Value::Enum(v) => v == rhs.as_enum(),
+        Value::Union(lhs_tag, lhs_pos) => {
+            let (rhs_tag, rhs_pos) = rhs.as_union();
+            if lhs_tag != rhs_tag {
+                return false;
+            }
+            eval_binding_heap(store, lhs_pos, rhs_pos)
+        },
+        Value::Struct(lhs_pos) => eval_binding_heap(store, lhs_pos, rhs.as_struct()),
+        _ => unreachable!("apply_binding_operator to lhs {:?}", lhs),
     }
 }

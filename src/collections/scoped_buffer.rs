@@ -77,6 +77,7 @@ impl<T: Sized> ScopedSection<T> {
     }
 
     #[inline]
+    #[allow(unused_mut)] // used in debug mode
     pub(crate) fn forget(mut self) {
         let vec = unsafe{&mut *self.inner};
         #[cfg(debug_assertions)] {
@@ -90,6 +91,7 @@ impl<T: Sized> ScopedSection<T> {
     }
 
     #[inline]
+    #[allow(unused_mut)] // used in debug mode
     pub(crate) fn into_vec(mut self) -> Vec<T> {
         let vec = unsafe{&mut *self.inner};
         #[cfg(debug_assertions)]  {

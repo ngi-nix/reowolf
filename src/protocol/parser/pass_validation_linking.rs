@@ -980,18 +980,16 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_variable_expr(&mut self, ctx: &mut Ctx, id: VariableExpressionId) -> VisitorResult {
         let var_expr = &ctx.heap[id];
-        println!("DEBUG: Visiting:\nname: {}\nat:  {:?}", var_expr.identifier.value.as_str(), var_expr.identifier.span);
 
-        let variable_id = match self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier) {
+        let (variable_id, is_binding_target) = match self.find_variable(ctx, self.relative_pos_in_block, &var_expr.identifier) {
             Ok(variable_id) => {
                 // Regular variable
-                variable_id
+                (variable_id, false)
             },
             Err(()) => {
                 // Couldn't find variable, but if we're in a binding expression,
                 // then this may be the thing we're binding to.
                 if self.in_binding_expr.is_invalid() || !self.in_binding_expr_lhs {
-                    println!("DEBUG: INVAALLIIIIIIID ({})", var_expr.identifier.value.as_str());
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, var_expr.identifier.span, "unresolved variable"
                     ));
@@ -1067,12 +1065,13 @@ impl Visitor2 for PassValidationLinking {
                 let body_scope = Scope::Regular(body_stmt_id);
                 self.checked_at_single_scope_add_local(ctx, body_scope, 0, bound_variable_id)?;
 
-                bound_variable_id
+                (bound_variable_id, true)
             }
         };
 
         let var_expr = &mut ctx.heap[id];
         var_expr.declaration = Some(variable_id);
+        var_expr.used_as_binding_target = is_binding_target;
         var_expr.parent = self.expr_parent;
         var_expr.unique_id_in_definition = self.next_expr_index;
         self.next_expr_index += 1;

@@ -39,8 +39,8 @@ impl Store {
     /// Resizes(!) the stack to fit the required number of values. Any
     /// unallocated slots are initialized to `Unassigned`. The specified stack
     /// index is exclusive.
-    pub(crate) fn reserve_stack(&mut self, unique_stack_idx: usize) {
-        let new_size = self.cur_stack_boundary + unique_stack_idx + 1;
+    pub(crate) fn reserve_stack(&mut self, unique_stack_idx: u32) {
+        let new_size = self.cur_stack_boundary + unique_stack_idx as usize + 1;
         if new_size > self.stack.len() {
             self.stack.resize(new_size, Value::Unassigned);
         }
@@ -53,8 +53,8 @@ impl Store {
         let new_size = self.cur_stack_boundary + unique_stack_idx + 1;
         for idx in new_size..self.stack.len() {
             self.drop_value(self.stack[idx].get_heap_pos());
+            self.stack[idx] = Value::Unassigned;
         }
-        self.stack.truncate(new_size);
     }
 
     /// Reads a value and takes ownership. This is different from a move because

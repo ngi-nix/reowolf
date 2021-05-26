@@ -624,9 +624,6 @@ impl<'a> FunctionTester<'a> {
 
     // Keeping this simple for now, will likely change
     pub(crate) fn call_err(self, expected_result: &str) -> Self {
-        use crate::protocol::*;
-        use crate::runtime::*;
-
         let (_, result) = self.eval_until_end();
         match result {
             Ok(_) => {
@@ -652,7 +649,6 @@ impl<'a> FunctionTester<'a> {
 
     fn eval_until_end(&self) -> (Prompt, Result<EvalContinuation, EvalError>) {
         use crate::protocol::*;
-        use crate::runtime::*;
 
         let mut prompt = Prompt::new(&self.ctx.types, &self.ctx.heap, self.def.this.upcast(), 0, ValueGroup::new_stack(Vec::new()));
         let mut call_context = EvalContext::None;

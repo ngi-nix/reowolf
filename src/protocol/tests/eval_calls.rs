@@ -13,8 +13,6 @@ fn test_function_call() {
         f.call_ok(Some(Value::UInt32(7)));
     });
 
-    println!("\n\n\n\n\n\n\n");
-
     Tester::new_single_source_expect_ok("with variable arg", "
     func add_two(u32 value) -> u32 {
         value += 1;

@@ -1877,6 +1877,7 @@ pub struct VariableExpression {
     pub identifier: Identifier,
     // Validator/Linker
     pub declaration: Option<VariableId>,
+    pub used_as_binding_target: bool,
     pub parent: ExpressionParent,
     pub unique_id_in_definition: i32,
 }

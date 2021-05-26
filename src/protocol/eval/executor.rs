@@ -31,6 +31,7 @@ pub(crate) struct Frame {
     pub(crate) position: StatementId,
     pub(crate) expr_stack: VecDeque<ExprInstruction>, // hack for expression evaluation, evaluated by popping from back
     pub(crate) expr_values: VecDeque<Value>, // hack for expression results, evaluated by popping from front/back
+    pub(crate) max_stack_size: u32,
 }
 
 impl Frame {
@@ -43,12 +44,32 @@ impl Frame {
             _ => unreachable!("initializing frame with {:?} instead of a function/component", definition),
         };
 
+        // Another not-so-pretty thing that has to be replaced somewhere in the
+        // future...
+        fn determine_max_stack_size(heap: &Heap, block_id: BlockStatementId, max_size: &mut u32) {
+            let block_stmt = &heap[block_id];
+            debug_assert!(block_stmt.next_unique_id_in_scope >= 0);
+
+            // Check current block
+            let cur_size = block_stmt.next_unique_id_in_scope as u32;
+            if cur_size > *max_size { *max_size = cur_size; }
+
+            // And child blocks
+            for child_scope in &block_stmt.scope_node.nested {
+                determine_max_stack_size(heap, child_scope.to_block(), max_size);
+            }
+        }
+
+        let mut max_stack_size = 0;
+        determine_max_stack_size(heap, first_statement, &mut max_stack_size);
+
         Frame{
             definition: definition_id,
             monomorph_idx,
             position: first_statement.upcast(),
             expr_stack: VecDeque::with_capacity(128),
             expr_values: VecDeque::with_capacity(128),
+            max_stack_size,
         }
     }
 
@@ -89,7 +110,8 @@ impl Frame {
                 self.serialize_expression(heap, expr.right);
             },
             Expression::Binding(expr) => {
-                todo!("implement binding expression");
+                self.serialize_expression(heap, expr.bound_to);
+                self.serialize_expression(heap, expr.bound_from);
             },
             Expression::Conditional(expr) => {
                 self.serialize_expression(heap, expr.test);
@@ -199,8 +221,11 @@ impl Prompt {
 
         // Maybe do typechecking in the future?
         debug_assert!((monomorph_idx as usize) < _types.get_base_definition(&def).unwrap().definition.procedure_monomorphs().len());
-        prompt.frames.push(Frame::new(heap, def, monomorph_idx));
+        let new_frame = Frame::new(heap, def, monomorph_idx);
+        let max_stack_size = new_frame.max_stack_size;
+        prompt.frames.push(new_frame);
         args.into_store(&mut prompt.store);
+        prompt.store.reserve_stack(max_stack_size);
 
         prompt
     }
@@ -279,7 +304,15 @@ impl Prompt {
                             apply_assignment_operator(&mut self.store, to, expr.operation, rhs);
                         },
                         Expression::Binding(_expr) => {
-                            todo!("Binding expression");
+                            let bind_to = cur_frame.expr_values.pop_back().unwrap();
+                            let bind_from = cur_frame.expr_values.pop_back().unwrap();
+                            let bind_to_heap_pos = bind_to.get_heap_pos();
+                            let bind_from_heap_pos = bind_from.get_heap_pos();
+
+                            let result = apply_binding_operator(&mut self.store, bind_to, bind_from);
+                            self.store.drop_value(bind_to_heap_pos);
+                            self.store.drop_value(bind_from_heap_pos);
+                            cur_frame.expr_values.push_back(Value::Bool(result));
                         },
                         Expression::Conditional(expr) => {
                             // Evaluate testing expression, then extend the
@@ -509,46 +542,84 @@ impl Prompt {
                             self.store.drop_value(subject.get_heap_pos());
                         }
                         Expression::Call(expr) => {
-                            // Push a new frame. Note that all expressions have
-                            // been pushed to the front, so they're in the order
-                            // of the definition.
-                            let num_args = expr.arguments.len();
+                            // If we're dealing with a builtin we don't do any
+                            // fancy shenanigans at all, just push the result.
+                            match expr.method {
+                                Method::Length => {
+                                    let value = cur_frame.expr_values.pop_front().unwrap();
+                                    let value_heap_pos = value.get_heap_pos();
+                                    let value = self.store.maybe_read_ref(&value);
 
-                            // Determine stack boundaries
-                            let cur_stack_boundary = self.store.cur_stack_boundary;
-                            let new_stack_boundary = self.store.stack.len();
+                                    let heap_pos = match value {
+                                        Value::Array(pos) => *pos,
+                                        Value::String(pos) => *pos,
+                                        _ => unreachable!("length(...) on {:?}", value),
+                                    };
 
-                            // Push new boundary and function arguments for new frame
-                            self.store.stack.push(Value::PrevStackBoundary(cur_stack_boundary as isize));
-                            for _ in 0..num_args {
-                                let argument = self.store.read_take_ownership(cur_frame.expr_values.pop_front().unwrap());
-                                self.store.stack.push(argument);
+                                    let len = self.store.heap_regions[heap_pos as usize].values.len();
+
+                                    // TODO: @PtrInt
+                                    cur_frame.expr_values.push_back(Value::UInt32(len as u32));
+                                    self.store.drop_value(value_heap_pos);
+                                },
+                                Method::UserComponent => todo!("component creation"),
+                                Method::UserFunction => {
+                                    // Push a new frame. Note that all expressions have
+                                    // been pushed to the front, so they're in the order
+                                    // of the definition.
+                                    let num_args = expr.arguments.len();
+
+                                    // Determine stack boundaries
+                                    let cur_stack_boundary = self.store.cur_stack_boundary;
+                                    let new_stack_boundary = self.store.stack.len();
+
+                                    // Push new boundary and function arguments for new frame
+                                    self.store.stack.push(Value::PrevStackBoundary(cur_stack_boundary as isize));
+                                    for _ in 0..num_args {
+                                        let argument = self.store.read_take_ownership(cur_frame.expr_values.pop_front().unwrap());
+                                        self.store.stack.push(argument);
+                                    }
+
+                                    // Determine the monomorph index of the function we're calling
+                                    let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
+                                    let call_data = &mono_data.expr_data[expr.unique_id_in_definition as usize];
+
+                                    // Push the new frame and reserve its stack size
+                                    let new_frame = Frame::new(heap, expr.definition, call_data.field_or_monomorph_idx);
+                                    let new_stack_size = new_frame.max_stack_size;
+                                    self.frames.push(new_frame);
+                                    self.store.cur_stack_boundary = new_stack_boundary;
+                                    self.store.reserve_stack(new_stack_size);
+
+                                    // To simplify the logic a little bit we will now
+                                    // return and ask our caller to call us again
+                                    return Ok(EvalContinuation::Stepping);
+                                },
+                                _ => todo!("other builtins"),
                             }
-
-                            // Determine the monomorph index of the function we're calling
-                            let mono_data = types.get_procedure_expression_data(&cur_frame.definition, cur_frame.monomorph_idx);
-                            let call_data = &mono_data.expr_data[expr.unique_id_in_definition as usize];
-
-                            // Push the new frame
-                            self.frames.push(Frame::new(heap, expr.definition, call_data.field_or_monomorph_idx));
-                            self.store.cur_stack_boundary = new_stack_boundary;
-
-                            // To simplify the logic a little bit we will now
-                            // return and ask our caller to call us again
-                            return Ok(EvalContinuation::Stepping);
                         },
                         Expression::Variable(expr) => {
                             let variable = &heap[expr.declaration.unwrap()];
-                            cur_frame.expr_values.push_back(Value::Ref(ValueId::Stack(variable.unique_id_in_scope as StackPos)));
+                            let ref_value = if expr.used_as_binding_target {
+                                Value::Binding(variable.unique_id_in_scope as StackPos)
+                            } else {
+                                Value::Ref(ValueId::Stack(variable.unique_id_in_scope as StackPos))
+                            };
+                            cur_frame.expr_values.push_back(ref_value);
                         }
                     }
                 }
             }
         }
 
-        debug_log!("Frame [{:?}] at {:?}, stack size = {}", cur_frame.definition, cur_frame.position, self.store.stack.len());
+        debug_log!("Frame [{:?}] at {:?}", cur_frame.definition, cur_frame.position);
         if debug_enabled!() {
-            debug_log!("Stack:");
+            debug_log!("Expression value stack (size = {}):", cur_frame.expr_values.len());
+            for (stack_idx, stack_val) in cur_frame.expr_values.iter().enumerate() {
+                debug_log!("  [{:03}] {:?}", stack_idx, stack_val);
+            }
+
+            debug_log!("Stack (size = {}):", self.store.stack.len());
             for (stack_idx, stack_val) in self.store.stack.iter().enumerate() {
                 debug_log!("  [{:03}] {:?}", stack_idx, stack_val);
             }
@@ -564,12 +635,7 @@ impl Prompt {
         let stmt = &heap[cur_frame.position];
         let return_value = match stmt {
             Statement::Block(stmt) => {
-                // Reserve space on stack, but also make sure excess stack space
-                // is cleared
-                self.store.clear_stack(stmt.first_unique_id_in_scope as usize);
-                self.store.reserve_stack(stmt.next_unique_id_in_scope as usize);
                 cur_frame.position = stmt.statements[0];
-
                 Ok(EvalContinuation::Stepping)
             },
             Statement::EndBlock(stmt) => {
@@ -676,6 +742,7 @@ impl Prompt {
 
                 // Clean up our section of the stack
                 self.store.clear_stack(0);
+                self.store.stack.truncate(self.store.cur_stack_boundary + 1);
                 let prev_stack_idx = self.store.stack.pop().unwrap().as_stack_boundary();
 
                 // TODO: Temporary hack for testing, remove at some point

@@ -485,9 +485,18 @@ impl InferenceType {
     /// Attempts to infer the first subtree based on the template. Like
     /// `infer_subtrees_for_both_types`, but now only applying inference to
     /// `to_infer` based on the type information in `template`.
+    ///
+    /// The `forced_template` flag controls whether `to_infer` is considered
+    /// valid if it is more specific then the template. When `forced_template`
+    /// is false, then as long as the `to_infer` and `template` types are
+    /// compatible the inference will succeed. If `forced_template` is true,
+    /// then `to_infer` MUST be less specific than `template` (e.g.
+    /// `IntegerLike` is less specific than `UInt32`. Likewise `Bool` is less
+    /// specific than `BindingBool`)
     fn infer_subtree_for_single_type(
         to_infer: &mut InferenceType, mut to_infer_idx: usize,
         template: &[InferenceTypePart], mut template_idx: usize,
+        forced_template: bool,
     ) -> SingleInferenceResult {
         let mut modified = false;
         let mut depth = 1;
@@ -517,13 +526,15 @@ impl InferenceType {
                 continue;
             }
 
-            // We cannot infer anything, but the template may still be 
-            // compatible with the type we're inferring
-            if let Some(depth_change) = Self::check_part_for_single_type(
-                template, &mut template_idx, &to_infer.parts, &mut to_infer_idx
-            ) {
-                depth += depth_change;
-                continue;
+            if !forced_template {
+                // We cannot infer anything, but the template may still be
+                // compatible with the type we're inferring
+                if let Some(depth_change) = Self::check_part_for_single_type(
+                    template, &mut template_idx, &to_infer.parts, &mut to_infer_idx
+                ) {
+                    depth += depth_change;
+                    continue;
+                }
             }
 
             return SingleInferenceResult::Incompatible
@@ -1630,10 +1641,10 @@ impl PassTyping {
             AO::Set =>
                 false,
             AO::Multiplied | AO::Divided | AO::Added | AO::Subtracted =>
-                self.apply_forced_constraint(ctx, arg1_expr_id, &NUMBERLIKE_TEMPLATE)?,
+                self.apply_template_constraint(ctx, arg1_expr_id, &NUMBERLIKE_TEMPLATE)?,
             AO::Remained | AO::ShiftedLeft | AO::ShiftedRight |
             AO::BitwiseAnded | AO::BitwiseXored | AO::BitwiseOred =>
-                self.apply_forced_constraint(ctx, arg1_expr_id, &INTEGERLIKE_TEMPLATE)?,
+                self.apply_template_constraint(ctx, arg1_expr_id, &INTEGERLIKE_TEMPLATE)?,
         };
 
         let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(
@@ -1720,9 +1731,9 @@ impl PassTyping {
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
                 // Arguments may be arrays/slices, output is always an array
-                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
-                let progress_arg1 = self.apply_forced_constraint(ctx, arg1_id, &ARRAYLIKE_TEMPLATE)?;
-                let progress_arg2 = self.apply_forced_constraint(ctx, arg2_id, &ARRAYLIKE_TEMPLATE)?;
+                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
+                let progress_arg1 = self.apply_template_constraint(ctx, arg1_id, &ARRAYLIKE_TEMPLATE)?;
+                let progress_arg2 = self.apply_template_constraint(ctx, arg2_id, &ARRAYLIKE_TEMPLATE)?;
 
                 // If they're all arraylike, then we want the subtype to match
                 let (subtype_expr, subtype_arg1, subtype_arg2) =
@@ -1733,10 +1744,10 @@ impl PassTyping {
             BO::LogicalAnd => {
                 // Logical AND may operate both on normal booleans and on
                 // booleans that are the result of a binding expression. So we
-                // force the expression to bool-like, then apply an equal-3
+                // force the expression to bool-like, then apply an equal_3
                 // constraint. Any BindingBool will promote all the other Bool
                 // types.
-                let base_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
+                let base_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg1, progress_arg2) =
                     self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
 
@@ -1752,7 +1763,7 @@ impl PassTyping {
             },
             BO::BitwiseOr | BO::BitwiseXor | BO::BitwiseAnd | BO::Remainder | BO::ShiftLeft | BO::ShiftRight => {
                 // All equal of integer type
-                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
+                let progress_base = self.apply_template_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg1, progress_arg2) =
                     self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
 
@@ -1760,7 +1771,7 @@ impl PassTyping {
             },
             BO::Equality | BO::Inequality => {
                 // Equal2 on args, forced boolean output
-                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
+                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
                 let (progress_arg1, progress_arg2) =
                     self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
 
@@ -1768,8 +1779,8 @@ impl PassTyping {
             },
             BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
                 // Equal2 on args with numberlike type, forced boolean output
-                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
-                let progress_arg_base = self.apply_forced_constraint(ctx, arg1_id, &NUMBERLIKE_TEMPLATE)?;
+                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
+                let progress_arg_base = self.apply_template_constraint(ctx, arg1_id, &NUMBERLIKE_TEMPLATE)?;
                 let (progress_arg1, progress_arg2) =
                     self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
 
@@ -1777,7 +1788,7 @@ impl PassTyping {
             },
             BO::Add | BO::Subtract | BO::Multiply | BO::Divide => {
                 // All equal of number type
-                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
+                let progress_base = self.apply_template_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg1, progress_arg2) =
                     self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
 
@@ -1812,7 +1823,7 @@ impl PassTyping {
         let (progress_expr, progress_arg) = match expr.operation {
             UO::Positive | UO::Negative => {
                 // Equal types of numeric class
-                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
+                let progress_base = self.apply_template_constraint(ctx, upcast_id, &NUMBERLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg) =
                     self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, arg_id, 0)?;
 
@@ -1820,7 +1831,7 @@ impl PassTyping {
             },
             UO::BitwiseNot | UO::PreIncrement | UO::PreDecrement | UO::PostIncrement | UO::PostDecrement => {
                 // Equal types of integer class
-                let progress_base = self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
+                let progress_base = self.apply_template_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg) =
                     self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, arg_id, 0)?;
 
@@ -1857,8 +1868,8 @@ impl PassTyping {
         debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and index is integerlike
-        let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
-        let progress_index = self.apply_forced_constraint(ctx, index_id, &INTEGERLIKE_TEMPLATE)?;
+        let progress_subject_base = self.apply_template_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
+        let progress_index = self.apply_template_constraint(ctx, index_id, &INTEGERLIKE_TEMPLATE)?;
 
         // Make sure if output is of T then subject is Array<T>
         let (progress_expr, progress_subject) =
@@ -1891,12 +1902,12 @@ impl PassTyping {
         debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and indices are of equal integerlike
-        let progress_subject_base = self.apply_forced_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
-        let progress_idx_base = self.apply_forced_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
+        let progress_subject_base = self.apply_template_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
+        let progress_idx_base = self.apply_template_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
         let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, from_id, 0, to_id, 0)?;
 
         // Make sure if output is of Slice<T> then subject is Array<T>
-        let progress_expr_base = self.apply_forced_constraint(ctx, upcast_id, &SLICE_TEMPLATE)?;
+        let progress_expr_base = self.apply_template_constraint(ctx, upcast_id, &SLICE_TEMPLATE)?;
         let (progress_expr, progress_subject) =
             self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 1, subject_id, 1)?;
 
@@ -2091,10 +2102,10 @@ impl PassTyping {
 
         let progress_expr = match &expr.value {
             Literal::Null => {
-                self.apply_forced_constraint(ctx, upcast_id, &MESSAGE_TEMPLATE)?
+                self.apply_template_constraint(ctx, upcast_id, &MESSAGE_TEMPLATE)?
             },
             Literal::Integer(_) => {
-                self.apply_forced_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?
+                self.apply_template_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?
             },
             Literal::True | Literal::False => {
                 self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?
@@ -2344,7 +2355,7 @@ impl PassTyping {
                 }
 
                 // And the output should be an array of the element types
-                let mut progress_expr = self.apply_forced_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
+                let mut progress_expr = self.apply_template_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
                 if !expr_elements.is_empty() {
                     let first_arg_id = expr_elements[0];
                     let (inner_expr_progress, arg_progress) = self.apply_equal2_constraint(
@@ -2369,9 +2380,7 @@ impl PassTyping {
         debug_log!(" * After:");
         debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
-        // TODO: FIX!!!!
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
-
 
         Ok(())
     }
@@ -2381,6 +2390,11 @@ impl PassTyping {
         let expr = &ctx.heap[id];
         let expr_idx = expr.unique_id_in_definition;
 
+        debug_log!("Casting expr: {}", upcast_id.index);
+        debug_log!(" * Before:");
+        debug_log!("   - Expr type:    {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, expr.subject));
+
         // The cast expression might have its output type fixed by the
         // programmer, so apply that type to the output. Apart from that casting
         // acts like a blocker for two-way inference. So we'll just have to wait
@@ -2388,18 +2402,24 @@ impl PassTyping {
         // TODO: Another thing that has to be updated the moment the type
         //  inferencer is fully index/job-based
         let infer_type = self.determine_inference_type_from_parser_type_elements(&expr.to_type.elements, true);
-        let expr_progress = self.apply_forced_constraint(ctx, upcast_id, &infer_type.parts)?;
+        let expr_progress = self.apply_template_constraint(ctx, upcast_id, &infer_type.parts)?;
 
         if expr_progress {
             self.queue_expr_parent(ctx, upcast_id);
         }
 
         // Check if the two types are compatible
+        debug_log!(" * After:");
+        debug_log!("   - Expr type [{}]: {}", expr_progress, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Note that the subject type can never be inferred");
+        debug_log!(" * Decision:");
+
         let subject_idx = ctx.heap[expr.subject].get_unique_id_in_definition();
         let expr_type = &self.expr_types[expr_idx as usize].expr_type;
         let subject_type = &self.expr_types[subject_idx as usize].expr_type;
         if !expr_type.is_done || !subject_type.is_done {
             // Not yet done
+            debug_log!("   - Casting is valid: unknown as the types are not yet complete");
             return Ok(())
         }
 
@@ -2420,6 +2440,8 @@ impl PassTyping {
         } else {
             false
         };
+
+        debug_log!("   - Casting is valid: {}", is_valid);
 
         if !is_valid {
             let cast_expr = &ctx.heap[id];
@@ -2615,7 +2637,7 @@ impl PassTyping {
                     link_data.var_type.parts[0] == InferenceTypePart::Input ||
                     link_data.var_type.parts[0] == InferenceTypePart::Output
                 );
-                match InferenceType::infer_subtree_for_single_type(&mut link_data.var_type, 1, &unsafe{&*var_type}.parts, 1) {
+                match InferenceType::infer_subtree_for_single_type(&mut link_data.var_type, 1, &unsafe{&*var_type}.parts, 1, false) {
                     SingleInferenceResult::Modified => {
                         for other_expr in &link_data.used_at {
                             let other_expr_idx = ctx.heap[*other_expr].get_unique_id_in_definition();
@@ -2666,16 +2688,17 @@ impl PassTyping {
         self.expr_queued.push_back(expr_idx);
     }
 
-    /// Applies a forced type constraint: the type associated with the supplied
-    /// expression will be molded into the provided "template". The template may
-    /// be fully specified (e.g. a bool) or contain "inference" variables (e.g.
-    /// an array of T)
-    fn apply_forced_constraint(
+    /// Applies a template type constraint: the type associated with the
+    /// supplied expression will be molded into the provided `template`. But
+    /// will be considered valid if the template could've been molded into the
+    /// expression type as well. Hence the template may be fully specified (e.g.
+    /// a bool) or contain "inference" variables (e.g. an array of T)
+    fn apply_template_constraint(
         &mut self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
     ) -> Result<bool, ParseError> {
         let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition(); // TODO: @Temp
         let expr_type = &mut self.expr_types[expr_idx as usize].expr_type;
-        match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0) {
+        match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0, false) {
             SingleInferenceResult::Modified => Ok(true),
             SingleInferenceResult::Unmodified => Ok(false),
             SingleInferenceResult::Incompatible => Err(
@@ -2684,17 +2707,33 @@ impl PassTyping {
         }
     }
 
-    fn apply_forced_constraint_types(
+    fn apply_template_constraint_to_types(
         to_infer: *mut InferenceType, to_infer_start_idx: usize,
         template: &[InferenceTypePart], template_start_idx: usize
     ) -> Result<bool, ()> {
         match InferenceType::infer_subtree_for_single_type(
             unsafe{ &mut *to_infer }, to_infer_start_idx,
-            template, template_start_idx
+            template, template_start_idx, false
         ) {
             SingleInferenceResult::Modified => Ok(true),
             SingleInferenceResult::Unmodified => Ok(false),
             SingleInferenceResult::Incompatible => Err(()),
+        }
+    }
+
+    /// Applies a forced constraint: the supplied expression's type MUST be
+    /// inferred from the template, the other way around is considered invalid.
+    fn apply_forced_constraint(
+        &mut self, ctx: &Ctx, expr_id: ExpressionId, template: &[InferenceTypePart]
+    ) -> Result<bool, ParseError> {
+        let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition();
+        let expr_type = &mut self.expr_types[expr_idx as usize].expr_type;
+        match InferenceType::infer_subtree_for_single_type(expr_type, 0, template, 0, true) {
+            SingleInferenceResult::Modified => Ok(true),
+            SingleInferenceResult::Unmodified => Ok(false),
+            SingleInferenceResult::Incompatible => Err(
+                self.construct_template_type_error(ctx, expr_id, template)
+            )
         }
     }
 
@@ -2783,7 +2822,7 @@ impl PassTyping {
             );
             for (poly_idx, poly_section) in signature_type.marker_iter() {
                 let polymorph_type = &mut polymorph_data.poly_vars[poly_idx as usize];
-                match Self::apply_forced_constraint_types(
+                match Self::apply_template_constraint_to_types(
                     polymorph_type, 0, poly_section, 0
                 ) {
                     Ok(true) => { polymorph_progress.insert(poly_idx); },
@@ -2824,7 +2863,7 @@ impl PassTyping {
             // if polymorph_progress.contains(&poly_idx) {
                 // Need to match subtrees
                 let polymorph_type = &polymorph_data.poly_vars[poly_idx as usize];
-                let modified_at_marker = Self::apply_forced_constraint_types(
+                let modified_at_marker = Self::apply_template_constraint_to_types(
                     signature_type, start_idx, 
                     &polymorph_type.parts, 0
                 ).expect("no failure when applying polyvar constraints");
@@ -2839,7 +2878,7 @@ impl PassTyping {
         // apply it to the expression that is supposed to match the signature.
         if modified_sig {
             match InferenceType::infer_subtree_for_single_type(
-                expr_type, 0, &signature_type.parts, 0
+                expr_type, 0, &signature_type.parts, 0, true
             ) {
                 SingleInferenceResult::Modified => true,
                 SingleInferenceResult::Unmodified => false,
@@ -2978,10 +3017,9 @@ impl PassTyping {
 
         let expr = &ctx.heap[expr_id];
         let inference_type = match expr.parent() {
-            EP::None => {
+            EP::None =>
                 // Should have been set by linker
-                println!("DEBUG: CRAP!\n{:?}", expr);
-                unreachable!() },
+                unreachable!(),
             EP::ExpressionStmt(_) =>
                 // Determined during type inference
                 InferenceType::new(false, false, vec![ITP::Unknown]),
@@ -3044,7 +3082,7 @@ impl PassTyping {
             // We already have an entry
             debug_assert!(false, "does this ever happen?");
             if let SingleInferenceResult::Incompatible = InferenceType::infer_subtree_for_single_type(
-                &mut infer_expr.expr_type, 0, &inference_type.parts, 0
+                &mut infer_expr.expr_type, 0, &inference_type.parts, 0, false
             ) {
                 return Err(self.construct_expr_type_error(ctx, expr_id, expr_id));
             }
@@ -3363,9 +3401,9 @@ impl PassTyping {
             match &element.variant {
                 // Compiler-only types
                 PTV::Void => { infer_type.push(ITP::Void); },
-                PTV::InputOrOutput => { infer_type.push(ITP::PortLike); },
-                PTV::ArrayLike => { infer_type.push(ITP::ArrayLike); },
-                PTV::IntegerLike => { infer_type.push(ITP::IntegerLike); },
+                PTV::InputOrOutput => { infer_type.push(ITP::PortLike); has_inferred = true },
+                PTV::ArrayLike => { infer_type.push(ITP::ArrayLike); has_inferred = true },
+                PTV::IntegerLike => { infer_type.push(ITP::IntegerLike); has_inferred = true },
                 // Builtins
                 PTV::Message => {
                     // TODO: @types Remove the Message -> Byte hack at some point...
@@ -3711,7 +3749,7 @@ mod tests {
             let mut lhs_type = IT::new(false, false, vec![lhs.clone()]);
             let rhs_type = IT::new(false, true, vec![rhs.clone()]);
             let result = IT::infer_subtree_for_single_type(
-                &mut lhs_type, 0, &rhs_type.parts, 0
+                &mut lhs_type, 0, &rhs_type.parts, 0, false
             );
             assert_eq!(SingleInferenceResult::Modified, result);
             assert_eq!(lhs_type.parts, rhs_type.parts);
@@ -3743,7 +3781,7 @@ mod tests {
             let mut lhs_type = IT::new(false, false, lhs.clone());
             let rhs_type = IT::new(false, true, rhs.clone());
             let result = IT::infer_subtree_for_single_type(
-                &mut lhs_type, 0, &rhs_type.parts, 0
+                &mut lhs_type, 0, &rhs_type.parts, 0, false
             );
             assert_eq!(SingleInferenceResult::Modified, result);
             assert_eq!(lhs_type.parts, rhs_type.parts)

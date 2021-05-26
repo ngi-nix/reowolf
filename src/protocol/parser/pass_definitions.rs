@@ -349,7 +349,6 @@ impl PassDefinitions {
             self.consume_statement(module, iter, ctx, &mut statements)?;
             let wrap_end_pos = iter.last_valid_pos();
 
-            debug_assert_eq!(statements.len(), 1);
             let statements = statements.into_vec();
 
             let id = ctx.heap.alloc_block_statement(|this| BlockStatement{
@@ -835,6 +834,7 @@ impl PassDefinitions {
                     this,
                     identifier,
                     declaration: None,
+                    used_as_binding_target: false,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
                 });
@@ -1536,6 +1536,7 @@ impl PassDefinitions {
                         this,
                         identifier,
                         declaration: None,
+                        used_as_binding_target: false,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast()

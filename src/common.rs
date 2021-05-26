@@ -15,7 +15,6 @@ pub(crate) use mio::{
 };
 pub(crate) use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    convert::TryInto,
     io::{Read, Write},
     net::SocketAddr,
     sync::Arc,

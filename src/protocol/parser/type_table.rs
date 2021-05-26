@@ -319,15 +319,12 @@ impl TypeTable {
         let reserve_size = ctx.heap.definitions.len();
         self.lookup.reserve(reserve_size);
 
-        for root_idx in 0..modules.len() {
-            let last_definition_idx = ctx.heap[modules[root_idx].root_id].definitions.len();
-            for definition_idx in 0..last_definition_idx {
-                let definition_id = ctx.heap[modules[root_idx].root_id].definitions[definition_idx];
-                self.resolve_base_definition(modules, ctx, definition_id)?;
-            }
+        for definition_idx in 0..ctx.heap.definitions.len() {
+            let definition_id = ctx.heap.definitions.get_id(definition_idx);
+            self.resolve_base_definition(modules, ctx, definition_id)?;
         }
 
-        debug_assert_eq!(self.lookup.len() + 6, reserve_size, "mismatch in reserved size of type table"); // NOTE: Temp fix for builtin functions
+        debug_assert_eq!(self.lookup.len(), reserve_size, "mismatch in reserved size of type table"); // NOTE: Temp fix for builtin functions
         for module in modules {
             module.phase = ModuleCompilationPhase::TypesAddedToTable;
         }
@@ -543,7 +540,7 @@ impl TypeTable {
                 UnionVariantValue::None => {},
                 UnionVariantValue::Embedded(embedded) => {
                     for parser_type in embedded {
-                        let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, parser_type)?;
+                        let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, parser_type, false)?;
                         if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
                             return Ok(false)
                         }
@@ -616,7 +613,7 @@ impl TypeTable {
 
         // Make sure all fields point to resolvable types
         for field_definition in &definition.fields {
-            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &field_definition.parser_type)?;
+            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &field_definition.parser_type, false)?;
             if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -670,7 +667,7 @@ impl TypeTable {
 
         // Check the return type
         debug_assert_eq!(definition.return_types.len(), 1, "not one return type"); // TODO: @ReturnValues
-        let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &definition.return_types[0])?;
+        let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &definition.return_types[0], definition.builtin)?;
         if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
             return Ok(false)
         }
@@ -678,7 +675,7 @@ impl TypeTable {
         // Check the argument types
         for param_id in &definition.parameters {
             let param = &ctx.heap[*param_id];
-            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &param.parser_type)?;
+            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &param.parser_type, definition.builtin)?;
             if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -737,7 +734,7 @@ impl TypeTable {
         // Check argument types
         for param_id in &definition.parameters {
             let param = &ctx.heap[*param_id];
-            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &param.parser_type)?;
+            let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &param.parser_type, false)?;
             if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
                 return Ok(false)
             }
@@ -833,7 +830,10 @@ impl TypeTable {
     /// Hence if one checks a particular parser type for being resolved, one may
     /// get back a result value indicating an embedded type (with a different
     /// DefinitionId) is unresolved.
-    fn resolve_base_parser_type(&mut self, modules: &[Module], ctx: &PassCtx, root_id: RootId, parser_type: &ParserType) -> Result<ResolveResult, ParseError> {
+    fn resolve_base_parser_type(
+        &mut self, modules: &[Module], ctx: &PassCtx, root_id: RootId,
+        parser_type: &ParserType, is_builtin: bool
+    ) -> Result<ResolveResult, ParseError> {
         // Note that as we iterate over the elements of a
         use ParserTypeVariant as PTV;
 
@@ -847,7 +847,11 @@ impl TypeTable {
         for element in parser_type.elements.iter() {
             match element.variant {
                 PTV::Void | PTV::InputOrOutput | PTV::ArrayLike | PTV::IntegerLike => {
-                    unreachable!("compiler-only ParserTypeVariant within type definition");
+                    if is_builtin {
+                        set_resolve_result(ResolveResult::Builtin);
+                    } else {
+                        unreachable!("compiler-only ParserTypeVariant within type definition");
+                    }
                 },
                 PTV::Message | PTV::Bool |
                 PTV::UInt8 | PTV::UInt16 | PTV::UInt32 | PTV::UInt64 |

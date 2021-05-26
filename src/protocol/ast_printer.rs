@@ -51,6 +51,7 @@ const PREFIX_INDEXING_EXPR_ID: &'static str = "EIdx";
 const PREFIX_SLICING_EXPR_ID: &'static str = "ESli";
 const PREFIX_SELECT_EXPR_ID: &'static str = "ESel";
 const PREFIX_LITERAL_EXPR_ID: &'static str = "ELit";
+const PREFIX_CAST_EXPR_ID: &'static str = "ECas";
 const PREFIX_CALL_EXPR_ID: &'static str = "ECll";
 const PREFIX_VARIABLE_EXPR_ID: &'static str = "EVar";
 
@@ -705,7 +706,14 @@ impl ASTWriter {
                     .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             },
             Expression::Cast(expr) => {
-                todo!("print casting expression")
+                self.kv(indent).with_id(PREFIX_CAST_EXPR_ID, expr.this.0.index)
+                    .with_s_key("CallExpr");
+                self.kv(indent2).with_s_key("ToType")
+                    .with_custom_val(|t| write_parser_type(t, heap, &expr.to_type));
+                self.kv(indent2).with_s_key("Subject");
+                self.write_expr(heap, expr.subject, indent3);
+                self.kv(indent2).with_s_key("Parent")
+                    .with_custom_val(|v| write_expression_parent(v, &expr.parent));
             }
             Expression::Call(expr) => {
                 self.kv(indent).with_id(PREFIX_CALL_EXPR_ID, expr.this.0.index)

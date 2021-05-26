@@ -129,7 +129,7 @@ impl Parser {
             vec![
                 ("array", quick_type(&[PTV::ArrayLike, PTV::PolymorphicArgument(id.upcast(), 0)]))
             ],
-            quick_type(&[PTV::IntegerLike])
+            quick_type(&[PTV::UInt32]) // TODO: @PtrInt
         ));
         insert_builtin_function(&mut parser, "assert", &[], |id| (
             vec![
