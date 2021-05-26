@@ -342,12 +342,11 @@ impl EvalContext<'_> {
                     unreachable!();
                 }
                 Value::Input(port) => {
-                    let heap_pos = store.alloc_heap();
-                    let heap_pos_usize = heap_pos as usize;
-
                     let payload = context.read_msg(port);
                     if payload.is_none() { return None; }
 
+                    let heap_pos = store.alloc_heap();
+                    let heap_pos_usize = heap_pos as usize;
                     let payload = payload.unwrap();
                     store.heap_regions[heap_pos_usize].values.reserve(payload.0.len());
                     for value in payload.0.iter() {

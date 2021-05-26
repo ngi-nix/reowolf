@@ -359,7 +359,12 @@ impl Prompt {
                                     // exists in the normal stack/heap. We don't want to deallocate
                                     // this thing. Rather we want to return a reference to it.
                                     let subject = self.store.read_ref(value_ref);
-                                    let subject_heap_pos = subject.as_array();
+                                    let subject_heap_pos = match subject {
+                                        Value::String(v) => *v,
+                                        Value::Array(v) => *v,
+                                        Value::Message(v) => *v,
+                                        _ => unreachable!(),
+                                    };
 
                                     if array_inclusive_index_is_invalid(&self.store, subject_heap_pos, index) {
                                         return Err(construct_array_error(self, modules, heap, expr_id, subject_heap_pos, index));
@@ -370,7 +375,12 @@ impl Prompt {
                                 _ => {
                                     // Our value lives on the expression stack, hence we need to
                                     // clone whatever we're referring to. Then drop the subject.
-                                    let subject_heap_pos = subject.as_array();
+                                    let subject_heap_pos = match &subject {
+                                        Value::String(v) => *v,
+                                        Value::Array(v) => *v,
+                                        Value::Message(v) => *v,
+                                        _ => unreachable!(),
+                                    };
 
                                     if array_inclusive_index_is_invalid(&self.store, subject_heap_pos, index) {
                                         return Err(construct_array_error(self, modules, heap, expr_id, subject_heap_pos, index));
@@ -409,7 +419,14 @@ impl Prompt {
 
                             // Slicing needs to produce a copy anyway (with the
                             // current evaluator implementation)
-                            let array_heap_pos = deref_subject.as_array();
+                            enum ValueKind{ Array, String, Message }
+                            let (value_kind, array_heap_pos) = match deref_subject {
+                                Value::Array(v) => (ValueKind::Array, *v),
+                                Value::String(v) => (ValueKind::String, *v),
+                                Value::Message(v) => (ValueKind::Message, *v),
+                                _ => unreachable!()
+                            };
+
                             if array_inclusive_index_is_invalid(&self.store, array_heap_pos, from_index) {
                                 return Err(construct_array_error(self, modules, heap, expr.from_index, array_heap_pos, from_index));
                             }
@@ -433,7 +450,11 @@ impl Prompt {
 
                             } // else: empty range
 
-                            cur_frame.expr_values.push_back(Value::Array(new_heap_pos));
+                            cur_frame.expr_values.push_back(match value_kind {
+                                ValueKind::Array => Value::Array(new_heap_pos),
+                                ValueKind::String => Value::String(new_heap_pos),
+                                ValueKind::Message => Value::Message(new_heap_pos),
+                            });
 
                             // Dropping the original subject, because we don't
                             // want to drop something on the stack
@@ -545,6 +566,76 @@ impl Prompt {
                             // If we're dealing with a builtin we don't do any
                             // fancy shenanigans at all, just push the result.
                             match expr.method {
+                                Method::Get => {
+                                    let value = cur_frame.expr_values.pop_front().unwrap();
+                                    let value = self.store.maybe_read_ref(&value).clone();
+
+                                    match ctx.get(value.clone(), &mut self.store) {
+                                        Some(result) => {
+                                            cur_frame.expr_values.push_back(result)
+                                        },
+                                        None => {
+                                            cur_frame.expr_values.push_front(value.clone());
+                                            cur_frame.expr_stack.push_back(ExprInstruction::EvalExpr(expr_id));
+                                            return Ok(EvalContinuation::BlockGet(value));
+                                        }
+                                    }
+                                },
+                                Method::Put => {
+                                    let port_value = cur_frame.expr_values.pop_front().unwrap();
+                                    let deref_port_value = self.store.maybe_read_ref(&port_value).clone();
+                                    let msg_value = cur_frame.expr_values.pop_front().unwrap();
+                                    let deref_msg_value = self.store.maybe_read_ref(&msg_value).clone();
+
+                                    if ctx.did_put(deref_port_value.clone()) {
+                                        // We're fine, deallocate in case the expression value stack
+                                        // held an owned value
+                                        self.store.drop_value(msg_value.get_heap_pos());
+                                    } else {
+                                        cur_frame.expr_values.push_front(msg_value);
+                                        cur_frame.expr_values.push_front(port_value);
+                                        cur_frame.expr_stack.push_back(ExprInstruction::EvalExpr(expr_id));
+                                        return Ok(EvalContinuation::Put(deref_port_value, deref_msg_value));
+                                    }
+                                },
+                                Method::Fires => {
+                                    let port_value = cur_frame.expr_values.pop_front().unwrap();
+                                    let port_value_deref = self.store.maybe_read_ref(&port_value).clone();
+                                    match ctx.fires(port_value_deref.clone()) {
+                                        None => {
+                                            cur_frame.expr_values.push_front(port_value);
+                                            cur_frame.expr_stack.push_back(ExprInstruction::EvalExpr(expr_id));
+                                            return Ok(EvalContinuation::BlockFires(port_value_deref));
+                                        },
+                                        Some(value) => {
+                                            cur_frame.expr_values.push_back(value);
+                                        }
+                                    }
+                                },
+                                Method::Create => {
+                                    let length_value = cur_frame.expr_values.pop_front().unwrap();
+                                    let length_value = self.store.maybe_read_ref(&length_value);
+                                    let length = if length_value.is_signed_integer() {
+                                        let length_value = length_value.as_signed_integer();
+                                        if length_value < 0 {
+                                            return Err(EvalError::new_error_at_expr(
+                                                self, modules, heap, expr_id,
+                                                format!("got length '{}', can only create a message with a non-negative length", length_value)
+                                            ));
+                                        }
+
+                                        length_value as u64
+                                    } else {
+                                        debug_assert!(length_value.is_unsigned_integer());
+                                        length_value.as_unsigned_integer()
+                                    };
+
+                                    let heap_pos = self.store.alloc_heap();
+                                    let values = &mut self.store.heap_regions[heap_pos as usize].values;
+                                    debug_assert!(values.is_empty());
+                                    values.resize(length as usize, Value::UInt8(0));
+                                    cur_frame.expr_values.push_back(Value::Message(heap_pos));
+                                },
                                 Method::Length => {
                                     let value = cur_frame.expr_values.pop_front().unwrap();
                                     let value_heap_pos = value.get_heap_pos();
@@ -562,7 +653,19 @@ impl Prompt {
                                     cur_frame.expr_values.push_back(Value::UInt32(len as u32));
                                     self.store.drop_value(value_heap_pos);
                                 },
-                                Method::UserComponent => todo!("component creation"),
+                                Method::Assert => {
+                                    let value = cur_frame.expr_values.pop_front().unwrap();
+                                    let value = self.store.maybe_read_ref(&value).clone();
+                                    if !value.as_bool() {
+                                        return Ok(EvalContinuation::Inconsistent)
+                                    }
+                                },
+                                Method::UserComponent => {
+                                    // This is actually handled by the evaluation
+                                    // of the statement.
+                                    debug_assert_eq!(heap[expr.definition].parameters().len(), cur_frame.expr_values.len());
+                                    debug_assert_eq!(heap[cur_frame.position].as_new().expression, expr.this)
+                                },
                                 Method::UserFunction => {
                                     // Push a new frame. Note that all expressions have
                                     // been pushed to the front, so they're in the order
@@ -595,7 +698,6 @@ impl Prompt {
                                     // return and ask our caller to call us again
                                     return Ok(EvalContinuation::Stepping);
                                 },
-                                _ => todo!("other builtins"),
                             }
                         },
                         Expression::Variable(expr) => {
@@ -671,7 +773,8 @@ impl Prompt {
             },
             Statement::If(stmt) => {
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for if statement");
-                let test_value = cur_frame.expr_values.pop_back().unwrap().as_bool();
+                let test_value = cur_frame.expr_values.pop_back().unwrap();
+                let test_value = self.store.maybe_read_ref(&test_value).as_bool();
                 if test_value {
                     cur_frame.position = stmt.true_body.upcast();
                 } else if let Some(false_body) = stmt.false_body {
@@ -689,7 +792,8 @@ impl Prompt {
             },
             Statement::While(stmt) => {
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for while statement");
-                let test_value = cur_frame.expr_values.pop_back().unwrap().as_bool();
+                let test_value = cur_frame.expr_values.pop_back().unwrap();
+                let test_value = self.store.maybe_read_ref(&test_value).as_bool();
                 if test_value {
                     cur_frame.position = stmt.body.upcast();
                 } else {
@@ -798,13 +902,12 @@ impl Prompt {
 
                 cur_frame.position = stmt.next;
 
-                todo!("Make sure this is handled correctly, transfer 'heap' values to another Prompt");
                 Ok(EvalContinuation::NewComponent(call_expr.definition, expr_data.field_or_monomorph_idx, argument_group))
             },
             Statement::Expression(stmt) => {
                 // The expression has just been completely evaluated. Some
                 // values might have remained on the expression value stack.
-                cur_frame.expr_values.clear();
+                // cur_frame.expr_values.clear(); PROPER CLEARING
                 cur_frame.position = stmt.next;
 
                 Ok(EvalContinuation::Stepping)

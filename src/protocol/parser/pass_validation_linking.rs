@@ -403,6 +403,7 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_assignment_expr(&mut self, ctx: &mut Ctx, id: AssignmentExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
+
         let assignment_expr = &mut ctx.heap[id];
 
         let left_expr_id = assignment_expr.left;
@@ -586,8 +587,12 @@ impl Visitor2 for PassValidationLinking {
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
+
+        let old_assignable = self.must_be_assignable.take();
         self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, index_expr_id)?;
+
+        self.must_be_assignable = old_assignable;
         self.expr_parent = old_expr_parent;
 
         Ok(())
@@ -608,10 +613,14 @@ impl Visitor2 for PassValidationLinking {
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
         self.visit_expr(ctx, subject_expr_id)?;
+
+        let old_assignable = self.must_be_assignable.take();
         self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.visit_expr(ctx, from_expr_id)?;
         self.expr_parent = ExpressionParent::Expression(upcast_id, 2);
         self.visit_expr(ctx, to_expr_id)?;
+
+        self.must_be_assignable = old_assignable;
         self.expr_parent = old_expr_parent;
 
         Ok(())
@@ -865,7 +874,7 @@ impl Visitor2 for PassValidationLinking {
                         "a call to 'get' may only occur in primitive component definitions"
                     ));
                 }
-                if !self.in_sync.is_invalid() {
+                if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'get' may only occur inside synchronous blocks"
@@ -879,7 +888,7 @@ impl Visitor2 for PassValidationLinking {
                         "a call to 'put' may only occur in primitive component definitions"
                     ));
                 }
-                if !self.in_sync.is_invalid() {
+                if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'put' may only occur inside synchronous blocks"
@@ -893,7 +902,7 @@ impl Visitor2 for PassValidationLinking {
                         "a call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
-                if !self.in_sync.is_invalid() {
+                if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "a call to 'fires' may only occur inside synchronous blocks"
@@ -909,7 +918,7 @@ impl Visitor2 for PassValidationLinking {
                         "assert statement may only occur in components"
                     ));
                 }
-                if !self.in_sync.is_invalid() {
+                if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
                         &ctx.module.source, call_expr.span,
                         "assert statements may only occur inside synchronous blocks"

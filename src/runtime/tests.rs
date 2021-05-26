@@ -37,6 +37,19 @@ fn file_logged_configured_connector(
     Connector::new(file_logger, pd, connector_id)
 }
 static MINIMAL_PDL: &'static [u8] = b"
+primitive sync(in<msg> a, out<msg> b) {
+    while (true) {
+        synchronous {
+            if (fires(a) && fires(b)) {
+            	msg x = get(a);
+            	put(b, x);
+            } else {
+                assert(!fires(a) && !fires(b));
+            }
+        }
+    }
+}
+
 primitive together(in<msg> ia, in<msg> ib, out<msg> oa, out<msg> ob){
   while(true) synchronous {
     if(fires(ia)) {
@@ -970,13 +983,15 @@ fn pdl_reo_fifo1full() {
     let test_log_path = Path::new("./logs/pdl_reo_fifo1full");
     let pdl = b"
     primitive fifo1full(in<msg> a, out<msg> b) {
+        bool is_set = true;
         msg m = create(0);
         while(true) synchronous {
-            if(m == null) {
+            if(!is_set) {
                 if(fires(a)) m=get(a);
+                is_set = false;
             } else {
                 if(fires(b)) put(b, m);
-                m = null;
+                is_set = true;
             }
         }
     }
@@ -1024,7 +1039,7 @@ fn sequencer3_prim() {
     let test_log_path = Path::new("./logs/sequencer3_prim");
     let pdl = b"
     primitive sequencer3(out<msg> a, out<msg> b, out<msg> c) {
-        int i = 0;
+        u32 i = 0;
         while(true) synchronous {
             out to = a;
             if     (i==1) to = b;
@@ -1070,21 +1085,35 @@ fn sequencer3_prim() {
 fn sequencer3_comp() {
     let test_log_path = Path::new("./logs/sequencer3_comp");
     let pdl = b"
-    primitive fifo1_init<T>(T m, in<T> a, out<T> b) {
+    primitive replicator<T>(in<T> a, out<T> b, out<T> c) {
+        while (true) {
+            synchronous {
+                if (fires(a) && fires(b) && fires(c)) {
+                    msg x = get(a);
+                    put(b, x);
+                    put(c, x);
+                } else {
+                    assert(!fires(a) && !fires(b) && !fires(c));
+                }
+            }
+        }
+    }
+    primitive fifo1_init<T>(bool has_value, T m, in<T> a, out<T> b) {
         while(true) synchronous {
-            if(m != null && fires(b)) {
+            if(has_value && fires(b)) {
                 put(b, m);
-                m = null;
-            } else if (m == null && fires(a)) {
+                has_value = false;
+            } else if (!has_value && fires(a)) {
                 m = get(a);
+                has_value = true;
             }
         }
     }
     composite fifo1_full<T>(in<T> a, out<T> b) {
-        new fifo1_init(create(0), a, b);
+        new fifo1_init(true, create(0), a, b);
     }
     composite fifo1<T>(in<T> a, out<T> b) {
-        new fifo1_init(null, a, b);
+        new fifo1_init(false, create(0), a, b);
     }
     composite sequencer3(out<msg> a, out<msg> b, out<msg> c) {
         channel d -> e;
@@ -1191,6 +1220,34 @@ fn xrouter_prim() {
 fn xrouter_comp() {
     let test_log_path = Path::new("./logs/xrouter_comp");
     let pdl = b"
+    primitive replicator<T>(in<T> a, out<T> b, out<T> c) {
+        while (true) {
+            synchronous {
+                if (fires(a) && fires(b) && fires(c)) {
+                    msg x = get(a);
+                    put(b, x);
+                    put(c, x);
+                } else {
+                    assert(!fires(a) && !fires(b) && !fires(c));
+                }
+            }
+        }
+    }
+
+    primitive merger(in<msg> a, in<msg> b, out<msg> c) {
+        while (true) {
+            synchronous {
+                if (fires(a) && !fires(b) && fires(c)) {
+                    put(c, get(a));
+                } else if (!fires(a) && fires(b) && fires(c)) {
+                    put(c, get(b));
+                } else {
+                    assert(!fires(a) && !fires(b) && !fires(c));
+                }
+            }
+        }
+    }
+
     primitive lossy<T>(in<T> a, out<T> b) {
         while(true) synchronous {
             if(fires(a)) {
@@ -1202,8 +1259,8 @@ fn xrouter_comp() {
     primitive sync_drain<T>(in<T> a, in<T> b) {
         while(true) synchronous {
             if(fires(a)) {
-                get(a);
-                get(b);
+                msg drop_it = get(a);
+                msg on_the_floor = get(b);
             }
         }
     }
@@ -1289,13 +1346,13 @@ fn for_msg_byte() {
     let test_log_path = Path::new("./logs/for_msg_byte");
     let pdl = b"
     primitive for_msg_byte(out<msg> o) {
-        byte i = 0;
-        int idx = 0;
+        u8 i = 0;
+        u32 idx = 0;
         while(i<8) {
             msg m = create(1);
             m[idx] = i;
             synchronous put(o, m);
-            i++;
+            i += 1;
         }
     }
     ";
@@ -1320,8 +1377,8 @@ fn eq_causality() {
     let test_log_path = Path::new("./logs/eq_causality");
     let pdl = b"
     primitive eq(in<msg> a, in<msg> b, out<msg> c) {
-        msg ma = null;
-        msg mb = null;
+        msg ma = create(0);
+        msg mb = create(0);
         while(true) synchronous {
             if(fires(a)) {
                 // b and c also fire!
@@ -1376,8 +1433,8 @@ fn eq_no_causality() {
         new eqinner(a, b, c, leftfirsto, leftfirsti);
     }
     primitive eqinner(in<msg> a, in<msg> b, out<msg> c, out<msg> leftfirsto, in<msg> leftfirsti) {
-        msg ma = null;
-        msg mb = null;
+        msg ma = create(0);
+        msg mb = create(0);
         while(true) synchronous {
             if(fires(a)) {
                 // b and c also fire!
@@ -1389,7 +1446,7 @@ fn eq_no_causality() {
 
                     // using dummy!
                     put(leftfirsto, ma);
-                    get(leftfirsti);
+                    auto drop_it = get(leftfirsti);
                 } else {
                     // right first! DON'T USE DUMMY
                     mb = get(b);
@@ -1397,27 +1454,6 @@ fn eq_no_causality() {
                     ma = get(a);
                 }
                 assert(ma == mb);
-            }
-        }
-    }
-    T some_function<T>(int a, int b) {
-        T something = a;
-        return something;
-    }
-    primitive quick_test(in<int> a, in<int> b) {
-        // msg ma = null;
-        auto test1 = 0;
-        auto test2 = 0;
-        auto ma = some_function(test1, test2);
-        while(true) synchronous {
-            if (fires(a)) {
-                ma = get(a);
-            }
-            if (fires(b)) {
-                ma = get(b);
-            }
-            if (fires(a) && fires(b)) {
-                ma = get(a) + get(b);
             }
         }
     }

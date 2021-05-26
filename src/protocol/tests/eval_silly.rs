@@ -210,7 +210,7 @@ fn test_field_selection_polymorphism() {
                 mod_yzx.x == 1337 && mod_yzx.y == 2 && mod_yzx.z == 3 &&
                 mod_zxy.x == 1337 && mod_zxy.y == 2 && mod_zxy.z == 3;
         }
-").for_function("foo", |f| {
+    ").for_function("foo", |f| {
         f.call_ok(Some(Value::Bool(true)));
     });
 }

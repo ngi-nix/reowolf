@@ -83,6 +83,53 @@ fn test_binding_from_array() {
 }
 
 #[test]
+fn test_binding_from_union() {
+    Tester::new_single_source_expect_ok("option type", "
+        union Option<T> { Some(T), None }
+
+        func is_some<T>(Option<T> opt) -> bool {
+            if (let Option::Some(throwaway) = opt) return true;
+            else                                   return false;
+        }
+        func is_none<T>(Option<T> opt) -> bool {
+            if (let Option::Some(throwaway) = opt) return false;
+            else                                   return true;
+        }
+
+        func foo() -> u32 {
+            // Hey look, we're so modern, we have algebraic discriminated sum datauniontypes
+            auto something = Option::Some(5);
+            auto nonething = Option<u32>::None;
+
+            bool success1 = false;
+            if (let Option::Some(value) = something && let Option::None = nonething) {
+                success1 = value == 5;
+            }
+
+            bool success2 = false;
+            if (is_some(something) && is_none(nonething)) {
+                success2 = true;
+            }
+
+            bool success3 = true;
+            if (let Option::None = something) success3 = false;
+            if (let Option::Some(value) = nonething) success3 = false;
+
+            bool success4 = true;
+            if (is_none(something) || is_some(nonething)) success4 = false;
+
+            if (success1 && success2 && success3 && success4) {
+                if (let Option::Some(value) = something) return value;
+            }
+
+            return 0;
+        }
+    ").for_function("foo", |f| { f
+        .call_ok(Some(Value::UInt32(5)));
+    });
+}
+
+#[test]
 fn test_binding_fizz_buzz() {
     Tester::new_single_source_expect_ok("am I employable?", "
         union Fizzable { Number(u32), FizzBuzz, Fizz, Buzz }

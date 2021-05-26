@@ -190,6 +190,7 @@ impl ValueGroup {
     /// heap allocations (if any) stored in the ValueGroup. Calling this
     /// function will not store the returned value in the `values` member.
     fn retrieve_value(&mut self, value: &Value, from_store: &Store) -> Value {
+        let value = from_store.maybe_read_ref(value);
         if let Some(heap_pos) = value.get_heap_pos() {
             // Value points to a heap allocation, so transfer the heap values
             // internally.

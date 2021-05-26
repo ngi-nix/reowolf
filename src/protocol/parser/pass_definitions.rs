@@ -693,7 +693,7 @@ impl PassDefinitions {
     ) -> Result<ChannelStatementId, ParseError> {
         // Consume channel specification
         let channel_span = consume_exact_ident(&module.source, iter, KW_STMT_CHANNEL)?;
-        let channel_type = if Some(TokenKind::OpenAngle) == iter.next() {
+        let inner_port_type = if Some(TokenKind::OpenAngle) == iter.next() {
             // Retrieve the type of the channel, we're cheating a bit here by
             // consuming the first '<' and setting the initial angle depth to 1
             // such that our final '>' will be consumed as well.
@@ -719,19 +719,27 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::SemiColon)?;
 
         // Construct ports
+        let port_type_len = inner_port_type.elements.len() + 1;
+        let mut from_port_type = ParserType{ elements: Vec::with_capacity(port_type_len) };
+        from_port_type.elements.push(ParserTypeElement{ full_span: channel_span, variant: ParserTypeVariant::Output });
+        from_port_type.elements.extend_from_slice(&inner_port_type.elements);
         let from = ctx.heap.alloc_variable(|this| Variable{
             this,
             kind: VariableKind::Local,
             identifier: from_identifier,
-            parser_type: channel_type.clone(),
+            parser_type: from_port_type,
             relative_pos_in_block: 0,
             unique_id_in_scope: -1,
         });
+
+        let mut to_port_type = ParserType{ elements: Vec::with_capacity(port_type_len) };
+        to_port_type.elements.push(ParserTypeElement{ full_span: channel_span, variant: ParserTypeVariant::Input });
+        to_port_type.elements.extend_from_slice(&inner_port_type.elements);
         let to = ctx.heap.alloc_variable(|this|Variable{
             this,
             kind: VariableKind::Local,
             identifier: to_identifier,
-            parser_type: channel_type,
+            parser_type: to_port_type,
             relative_pos_in_block: 0,
             unique_id_in_scope: -1,
         });
