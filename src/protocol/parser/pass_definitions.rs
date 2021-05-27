@@ -1128,24 +1128,34 @@ impl PassDefinitions {
             match token {
                 Some(TK::Plus) => Some(UO::Positive),
                 Some(TK::Minus) => Some(UO::Negative),
-                Some(TK::PlusPlus) => Some(UO::PreIncrement),
-                Some(TK::MinusMinus) => Some(UO::PreDecrement),
                 Some(TK::Tilde) => Some(UO::BitwiseNot),
                 Some(TK::Exclamation) => Some(UO::LogicalNot),
                 _ => None
             }
         }
 
-        if let Some(operation) = parse_prefix_token(iter.next()) {
+        let next = iter.next();
+        if let Some(operation) = parse_prefix_token(next) {
             let span = iter.next_span();
             iter.consume();
 
             let expression = self.consume_prefix_expression(module, iter, ctx)?;
             Ok(ctx.heap.alloc_unary_expression(|this| UnaryExpression {
-                this, span, operation, expression,
+                this,
+                span,
+                operation,
+                expression,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
             }).upcast())
+        } else if next == Some(TokenKind::PlusPlus) {
+            return Err(ParseError::new_error_str_at_span(
+                &module.source, iter.next_span(), "prefix increment is not supported in the language"
+            ));
+        } else if next == Some(TokenKind::MinusMinus) {
+            return Err(ParseError::new_error_str_at_span(
+                &module.source, iter.next_span(), "prefix decrement is not supported in this language"
+            ));
         } else {
             self.consume_postfix_expression(module, iter, ctx)
         }
@@ -1172,21 +1182,13 @@ impl PassDefinitions {
             iter.consume();
 
             if token == TokenKind::PlusPlus {
-                result = ctx.heap.alloc_unary_expression(|this| UnaryExpression{
-                    this, span,
-                    operation: UnaryOperator::PostIncrement,
-                    expression: result,
-                    parent: ExpressionParent::None,
-                    unique_id_in_definition: -1,
-                }).upcast();
+                return Err(ParseError::new_error_str_at_span(
+                    &module.source, span, "postfix increment is not supported in this language"
+                ));
             } else if token == TokenKind::MinusMinus {
-                result = ctx.heap.alloc_unary_expression(|this| UnaryExpression{
-                    this, span,
-                    operation: UnaryOperator::PostDecrement,
-                    expression: result,
-                    parent: ExpressionParent::None,
-                    unique_id_in_definition: -1,
-                }).upcast();
+                return Err(ParseError::new_error_str_at_span(
+                    &module.source, span, "prefix increment is not supported in this language"
+                ));
             } else if token == TokenKind::OpenSquare {
                 let subject = result;
                 let from_index = self.consume_expression(module, iter, ctx)?;

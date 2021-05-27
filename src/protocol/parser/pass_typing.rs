@@ -1829,7 +1829,7 @@ impl PassTyping {
 
                 (progress_base || progress_expr, progress_base || progress_arg)
             },
-            UO::BitwiseNot | UO::PreIncrement | UO::PreDecrement | UO::PostIncrement | UO::PostDecrement => {
+            UO::BitwiseNot => {
                 // Equal types of integer class
                 let progress_base = self.apply_template_constraint(ctx, upcast_id, &INTEGERLIKE_TEMPLATE)?;
                 let (progress_expr, progress_arg) =

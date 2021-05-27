@@ -404,8 +404,7 @@ impl ParserTypeVariant {
 
 #[derive(Debug, Clone)]
 pub struct ParserTypeElement {
-    // TODO: @cleanup, do we ever need the span of a user-defined type after
-    //  constructing it?
+    // TODO: @Fix span
     pub full_span: InputSpan, // full span of type, including any polymorphic arguments
     pub variant: ParserTypeVariant,
 }
@@ -1667,10 +1666,6 @@ pub enum UnaryOperator {
     Negative,
     BitwiseNot,
     LogicalNot,
-    PreIncrement,
-    PreDecrement,
-    PostIncrement,
-    PostDecrement,
 }
 
 #[derive(Debug, Clone)]

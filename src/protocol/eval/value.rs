@@ -493,10 +493,6 @@ pub(crate) fn apply_unary_operator(store: &mut Store, op: UnaryOperator, value: 
         },
         UO::BitwiseNot => { apply_int_expr_and_return!(value, !, op)},
         UO::LogicalNot => { return Value::Bool(!value.as_bool()); },
-        UO::PreIncrement => { todo!("implement") },
-        UO::PreDecrement => { todo!("implement") },
-        UO::PostIncrement => { todo!("implement") },
-        UO::PostDecrement => { todo!("implement") },
     }
 }
 
