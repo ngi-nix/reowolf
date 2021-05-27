@@ -183,7 +183,7 @@ impl Frame {
                     self.serialize_expression(heap, *arg_expr_id);
                 }
             },
-            Expression::Variable(expr) => {
+            Expression::Variable(_expr) => {
                 // No subexpressions
             }
         }
@@ -338,7 +338,7 @@ impl Prompt {
                             cur_frame.expr_values.push_back(result);
                             self.store.drop_value(val.get_heap_pos());
                         },
-                        Expression::Indexing(expr) => {
+                        Expression::Indexing(_expr) => {
                             // Evaluate index. Never heap allocated so we do
                             // not have to drop it.
                             let index = cur_frame.expr_values.pop_back().unwrap();
@@ -353,7 +353,7 @@ impl Prompt {
 
                             let subject = cur_frame.expr_values.pop_back().unwrap();
 
-                            let (deallocate_heap_pos, value_to_push, subject_heap_pos) = match subject {
+                            let (deallocate_heap_pos, value_to_push) = match subject {
                                 Value::Ref(value_ref) => {
                                     // Our expression stack value is a reference to something that
                                     // exists in the normal stack/heap. We don't want to deallocate
@@ -370,7 +370,7 @@ impl Prompt {
                                         return Err(construct_array_error(self, modules, heap, expr_id, subject_heap_pos, index));
                                     }
 
-                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, index as u32)), subject_heap_pos)
+                                    (None, Value::Ref(ValueId::Heap(subject_heap_pos, index as u32)))
                                 },
                                 _ => {
                                     // Our value lives on the expression stack, hence we need to
@@ -387,7 +387,7 @@ impl Prompt {
                                     }
 
                                     let subject_indexed = Value::Ref(ValueId::Heap(subject_heap_pos, index as u32));
-                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed), subject_heap_pos)
+                                    (Some(subject_heap_pos), self.store.clone_value(subject_indexed))
                                 },
                             };
 
@@ -717,19 +717,19 @@ impl Prompt {
         debug_log!("Frame [{:?}] at {:?}", cur_frame.definition, cur_frame.position);
         if debug_enabled!() {
             debug_log!("Expression value stack (size = {}):", cur_frame.expr_values.len());
-            for (stack_idx, stack_val) in cur_frame.expr_values.iter().enumerate() {
-                debug_log!("  [{:03}] {:?}", stack_idx, stack_val);
+            for (_stack_idx, _stack_val) in cur_frame.expr_values.iter().enumerate() {
+                debug_log!("  [{:03}] {:?}", _stack_idx, _stack_val);
             }
 
             debug_log!("Stack (size = {}):", self.store.stack.len());
-            for (stack_idx, stack_val) in self.store.stack.iter().enumerate() {
-                debug_log!("  [{:03}] {:?}", stack_idx, stack_val);
+            for (_stack_idx, _stack_val) in self.store.stack.iter().enumerate() {
+                debug_log!("  [{:03}] {:?}", _stack_idx, _stack_val);
             }
 
             debug_log!("Heap:");
-            for (heap_idx, heap_region) in self.store.heap_regions.iter().enumerate() {
-                let is_free = self.store.free_regions.iter().any(|idx| *idx as usize == heap_idx);
-                debug_log!("  [{:03}] in_use: {}, len: {}, vals: {:?}", heap_idx, !is_free, heap_region.values.len(), &heap_region.values);
+            for (_heap_idx, _heap_region) in self.store.heap_regions.iter().enumerate() {
+                let _is_free = self.store.free_regions.iter().any(|idx| *idx as usize == _heap_idx);
+                debug_log!("  [{:03}] in_use: {}, len: {}, vals: {:?}", _heap_idx, !_is_free, heap_region.values.len(), &_heap_region.values);
             }
         }
         // No (more) expressions to evaluate. So evaluate statement (that may
@@ -827,7 +827,7 @@ impl Prompt {
 
                 Ok(EvalContinuation::SyncBlockEnd)
             },
-            Statement::Return(stmt) => {
+            Statement::Return(_stmt) => {
                 debug_assert!(heap[cur_frame.definition].is_function());
                 debug_assert_eq!(cur_frame.expr_values.len(), 1, "expected one expr value for return statement");
 

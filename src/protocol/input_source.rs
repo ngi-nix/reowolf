@@ -446,22 +446,9 @@ impl ParseError {
         )) }
     }
 
-    pub fn with_at_pos(mut self, error_type: StatementKind, source: &InputSource, position: InputPosition, message: String) -> Self {
-        self.statements.push(ErrorStatement::from_source_at_pos(error_type, source, position, message));
-        self
-    }
-
     pub fn with_at_span(mut self, error_type: StatementKind, source: &InputSource, span: InputSpan, message: String) -> Self {
         self.statements.push(ErrorStatement::from_source_at_span(error_type, source, span, message.to_string()));
         self
-    }
-
-    pub fn with_info_at_pos(self, source: &InputSource, position: InputPosition, msg: String) -> Self {
-        self.with_at_pos(StatementKind::Info, source, position, msg)
-    }
-
-    pub fn with_info_str_at_pos(self, source: &InputSource, position: InputPosition, msg: &str) -> Self {
-        self.with_at_pos(StatementKind::Info, source, position, msg.to_string())
     }
 
     pub fn with_info_at_span(self, source: &InputSource, span: InputSpan, msg: String) -> Self {

@@ -31,7 +31,6 @@ use crate::protocol::ast_printer::ASTWriter;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModuleCompilationPhase {
-    Source,                 // only source is set
     Tokenized,              // source is tokenized
     SymbolsScanned,         // all definitions are linked to their type class
     ImportsResolved,        // all imports are added to the symbol table
@@ -59,18 +58,22 @@ pub struct PassCtx<'a> {
 }
 
 pub struct Parser {
+    // Storage of all information created/gathered during compilation.
     pub(crate) heap: Heap,
-    pub(crate) string_pool: StringPool,
+    pub(crate) string_pool: StringPool, // Do not deallocate, holds all strings
     pub(crate) modules: Vec<Module>,
     pub(crate) symbol_table: SymbolTable,
     pub(crate) type_table: TypeTable,
-    // Compiler passes
+    // Compiler passes, used as little state machine that keep their memory
+    // around.
     pass_tokenizer: PassTokenizer,
     pass_symbols: PassSymbols,
     pass_import: PassImport,
     pass_definitions: PassDefinitions,
     pass_validation: PassValidationLinking,
     pass_typing: PassTyping,
+    // Compiler options
+    pub write_ast_to: Option<String>,
 }
 
 impl Parser {
@@ -87,6 +90,7 @@ impl Parser {
             pass_definitions: PassDefinitions::new(),
             pass_validation: PassValidationLinking::new(),
             pass_typing: PassTyping::new(),
+            write_ast_to: None,
         };
 
         parser.symbol_table.insert_scope(None, SymbolScope::Global);
@@ -131,7 +135,7 @@ impl Parser {
             ],
             quick_type(&[PTV::UInt32]) // TODO: @PtrInt
         ));
-        insert_builtin_function(&mut parser, "assert", &[], |id| (
+        insert_builtin_function(&mut parser, "assert", &[], |_id| (
             vec![
                 ("condition", quick_type(&[PTV::Bool])),
             ],
@@ -227,9 +231,11 @@ impl Parser {
             }
         }
 
-        // let mut writer = ASTWriter::new();
-        // let mut file = std::fs::File::create(std::path::Path::new("ast.txt")).unwrap();
-        // writer.write_ast(&mut file, &self.heap);
+        if let Some(filename) = &self.write_ast_to {
+            let mut writer = ASTWriter::new();
+            let mut file = std::fs::File::create(std::path::Path::new(filename)).unwrap();
+            writer.write_ast(&mut file, &self.heap);
+        }
 
         Ok(())
     }

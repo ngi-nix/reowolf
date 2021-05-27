@@ -1,3 +1,5 @@
+#![allow(dead_code)] // For now, come back to this when compiler has matured -- MH 27/05/21
+
 use std::collections::VecDeque;
 
 /// Simple double ended queue that ensures that all elements are unique. Queue

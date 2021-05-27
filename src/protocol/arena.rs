@@ -58,9 +58,6 @@ impl<T> Arena<T> {
     }
 
     // Compiler-internal direct retrieval
-    pub(crate) fn get(&self, idx: usize) -> &T {
-        return &self.store[idx]
-    }
     pub(crate) fn get_id(&self, idx: usize) -> Id<T> {
         debug_assert!(idx < self.store.len());
         return Id::new(idx as i32);

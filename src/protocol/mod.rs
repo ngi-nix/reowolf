@@ -337,10 +337,6 @@ impl EvalContext<'_> {
             EvalContext::None => unreachable!(),
             EvalContext::Nonsync(_) => unreachable!(),
             EvalContext::Sync(context) => match port {
-                Value::Output(port) => {
-                    debug_assert!(false, "Getting from an output port? Am I mad?");
-                    unreachable!();
-                }
                 Value::Input(port) => {
                     let payload = context.read_msg(port);
                     if payload.is_none() { return None; }
@@ -367,8 +363,7 @@ impl EvalContext<'_> {
                 Value::Output(port) => {
                     context.did_put_or_get(port)
                 },
-                Value::Input(_) => unreachable!("did_put on input port"),
-                _ => unreachable!("did_put on non-port value")
+                _ => unreachable!("did_put on non-output port value")
             }
         }
     }

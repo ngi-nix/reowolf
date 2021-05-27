@@ -55,7 +55,6 @@ impl DefinitionClass {
 }
 
 struct ScopedSymbols {
-    scope: SymbolScope,
     parent_scope: Option<SymbolScope>,
     child_scopes: Vec<SymbolScope>,
     symbols: Vec<Symbol>,
@@ -197,7 +196,6 @@ impl SymbolTable {
         }
 
         let scope = ScopedSymbols {
-            scope: new_scope,
             parent_scope,
             child_scopes: Vec::with_capacity(RESERVED_SYMBOLS),
             symbols: Vec::with_capacity(RESERVED_SYMBOLS)

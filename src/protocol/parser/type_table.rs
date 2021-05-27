@@ -1,5 +1,5 @@
 use std::fmt::{Formatter, Result as FmtResult};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use crate::protocol::ast::*;
 use crate::protocol::parser::symbol_table::SymbolScope;
@@ -161,7 +161,6 @@ pub struct ProcedureMonomorph {
 /// variants to be equal to one another.
 pub struct EnumType {
     pub variants: Vec<EnumVariant>,
-    pub representation: PrimitiveType,
     pub monomorphs: Vec<DataMonomorph>,
 }
 
@@ -176,7 +175,6 @@ pub struct EnumVariant {
 /// a single subtype.
 pub struct UnionType {
     pub variants: Vec<UnionVariant>,
-    pub tag_representation: PrimitiveType,
     pub monomorphs: Vec<DataMonomorph>,
 }
 
@@ -287,9 +285,6 @@ pub struct TypeTable {
     /// Iterator over `(module, definition)` tuples used as workspace to make sure
     /// that each base definition of all a type's subtypes are resolved.
     iter: TypeIterator,
-    /// Iterator over `parser type`s during the process where `parser types` are
-    /// resolved into a `(module, definition)` tuple.
-    parser_type_iter: VecDeque<ParserTypeId>,
 }
 
 impl TypeTable {
@@ -297,8 +292,7 @@ impl TypeTable {
     pub(crate) fn new() -> Self {
         Self{ 
             lookup: HashMap::new(), 
-            iter: TypeIterator::new(), 
-            parser_type_iter: VecDeque::with_capacity(64), 
+            iter: TypeIterator::new(),
         }
     }
 
@@ -307,7 +301,6 @@ impl TypeTable {
         debug_assert!(modules.iter().all(|m| m.phase >= ModuleCompilationPhase::DefinitionsParsed));
         debug_assert!(self.lookup.is_empty());
         debug_assert!(self.iter.top().is_none());
-        debug_assert!(self.parser_type_iter.is_empty());
 
         if cfg!(debug_assertions) {
             for (index, module) in modules.iter().enumerate() {
@@ -514,7 +507,6 @@ impl TypeTable {
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Enum(EnumType{
                 variants,
-                representation: Self::enum_tag_type(min_enum_value, max_enum_value),
                 monomorphs: Vec::new(),
             }),
             poly_vars,
@@ -592,7 +584,6 @@ impl TypeTable {
             ast_definition: definition_id,
             definition: DefinedTypeVariant::Union(UnionType{
                 variants,
-                tag_representation: Self::enum_tag_type(-1, tag_value),
                 monomorphs: Vec::new(),
             }),
             poly_vars,
@@ -976,21 +967,6 @@ impl TypeTable {
             if let ParserTypeVariant::PolymorphicArgument(_, idx) = &element.variant {
                 poly_vars[*idx as usize].is_in_use = true;
             }
-        }
-    }
-
-    fn enum_tag_type(min_tag_value: i64, max_tag_value: i64) -> PrimitiveType {
-        // TODO: @consistency tag values should be handled correctly
-        debug_assert!(min_tag_value <= max_tag_value);
-        let abs_max_value = min_tag_value.abs().max(max_tag_value.abs());
-        if abs_max_value <= u8::max_value() as i64 {
-            PrimitiveType::Byte
-        } else if abs_max_value <= u16::max_value() as i64 {
-            PrimitiveType::Short
-        } else if abs_max_value <= u32::max_value() as i64 {
-            PrimitiveType::Int
-        } else {
-            PrimitiveType::Long
         }
     }
 }

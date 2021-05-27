@@ -589,7 +589,6 @@ impl<'a> FunctionTester<'a> {
 
     pub(crate) fn call_ok(self, expected_result: Option<Value>) -> Self {
         use crate::protocol::*;
-        use crate::runtime::*;
 
         let (prompt, result) = self.eval_until_end();
         match result {

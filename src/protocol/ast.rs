@@ -114,7 +114,6 @@ macro_rules! define_new_ast_id {
 define_aliased_ast_id!(RootId, Id<Root>, index(Root, protocol_descriptions), alloc(alloc_protocol_description));
 define_aliased_ast_id!(PragmaId, Id<Pragma>, index(Pragma, pragmas), alloc(alloc_pragma));
 define_aliased_ast_id!(ImportId, Id<Import>, index(Import, imports), alloc(alloc_import));
-define_aliased_ast_id!(ParserTypeId, Id<ParserType>, index(ParserType, parser_types), alloc(alloc_parser_type));
 define_aliased_ast_id!(VariableId, Id<Variable>, index(Variable, variables), alloc(alloc_variable));
 
 define_aliased_ast_id!(DefinitionId, Id<Definition>, index(Definition, definitions));
@@ -158,7 +157,6 @@ define_new_ast_id!(CastExpressionId, ExpressionId, index(CastExpression, Express
 define_new_ast_id!(CallExpressionId, ExpressionId, index(CallExpression, Expression::Call, expressions), alloc(alloc_call_expression));
 define_new_ast_id!(VariableExpressionId, ExpressionId, index(VariableExpression, Expression::Variable, expressions), alloc(alloc_variable_expression));
 
-// TODO: @cleanup - pub qualifiers can be removed once done
 #[derive(Debug)]
 pub struct Heap {
     // Root arena, contains the entry point for different modules. Each root
@@ -167,7 +165,6 @@ pub struct Heap {
     // Contents of a file, these are the elements the `Root` elements refer to
     pragmas: Arena<Pragma>,
     pub(crate) imports: Arena<Import>,
-    pub(crate) parser_types: Arena<ParserType>,
     pub(crate) variables: Arena<Variable>,
     pub(crate) definitions: Arena<Definition>,
     pub(crate) statements: Arena<Statement>,
@@ -181,7 +178,6 @@ impl Heap {
             protocol_descriptions: Arena::new(),
             pragmas: Arena::new(),
             imports: Arena::new(),
-            parser_types: Arena::new(),
             variables: Arena::new(),
             definitions: Arena::new(),
             statements: Arena::new(),
@@ -235,7 +231,6 @@ pub struct Root {
 }
 
 impl Root {
-    // TODO: @Cleanup
     pub fn get_definition_ident(&self, h: &Heap, id: &[u8]) -> Option<DefinitionId> {
         for &def in self.definitions.iter() {
             if h[def].identifier().value.as_bytes() == id {
@@ -473,16 +468,6 @@ impl<'a> Iterator for ParserTypeIter<'a> {
     }
 }
 
-/// Specifies whether the symbolic type points to an actual user-defined type,
-/// or whether it points to a polymorphic argument within the definition (e.g.
-/// a defined variable `T var` within a function `int func<T>()`
-#[derive(Debug, Clone)]
-pub enum SymbolicParserTypeVariant {
-    Definition(DefinitionId),
-    // TODO: figure out if I need the DefinitionId here
-    PolyArg(DefinitionId, usize), // index of polyarg in the definition
-}
-
 /// ConcreteType is the representation of a type after resolving symbolic types
 /// and performing type inference
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -512,88 +497,6 @@ pub struct ConcreteType {
 impl Default for ConcreteType {
     fn default() -> Self {
         Self{ parts: Vec::new() }
-    }
-}
-
-// TODO: Remove at some point
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrimitiveType {
-    Unassigned,
-    Input,
-    Output,
-    Message,
-    Boolean,
-    Byte,
-    Short,
-    Int,
-    Long,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Type {
-    pub primitive: PrimitiveType,
-    pub array: bool,
-}
-
-#[allow(dead_code)]
-impl Type {
-    pub const UNASSIGNED: Type = Type { primitive: PrimitiveType::Unassigned, array: false };
-
-    pub const INPUT: Type = Type { primitive: PrimitiveType::Input, array: false };
-    pub const OUTPUT: Type = Type { primitive: PrimitiveType::Output, array: false };
-    pub const MESSAGE: Type = Type { primitive: PrimitiveType::Message, array: false };
-    pub const BOOLEAN: Type = Type { primitive: PrimitiveType::Boolean, array: false };
-    pub const BYTE: Type = Type { primitive: PrimitiveType::Byte, array: false };
-    pub const SHORT: Type = Type { primitive: PrimitiveType::Short, array: false };
-    pub const INT: Type = Type { primitive: PrimitiveType::Int, array: false };
-    pub const LONG: Type = Type { primitive: PrimitiveType::Long, array: false };
-
-    pub const INPUT_ARRAY: Type = Type { primitive: PrimitiveType::Input, array: true };
-    pub const OUTPUT_ARRAY: Type = Type { primitive: PrimitiveType::Output, array: true };
-    pub const MESSAGE_ARRAY: Type = Type { primitive: PrimitiveType::Message, array: true };
-    pub const BOOLEAN_ARRAY: Type = Type { primitive: PrimitiveType::Boolean, array: true };
-    pub const BYTE_ARRAY: Type = Type { primitive: PrimitiveType::Byte, array: true };
-    pub const SHORT_ARRAY: Type = Type { primitive: PrimitiveType::Short, array: true };
-    pub const INT_ARRAY: Type = Type { primitive: PrimitiveType::Int, array: true };
-    pub const LONG_ARRAY: Type = Type { primitive: PrimitiveType::Long, array: true };
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match &self.primitive {
-            PrimitiveType::Unassigned => {
-                write!(f, "unassigned")?;
-            }
-            PrimitiveType::Input => {
-                write!(f, "in")?;
-            }
-            PrimitiveType::Output => {
-                write!(f, "out")?;
-            }
-            PrimitiveType::Message => {
-                write!(f, "msg")?;
-            }
-            PrimitiveType::Boolean => {
-                write!(f, "boolean")?;
-            }
-            PrimitiveType::Byte => {
-                write!(f, "byte")?;
-            }
-            PrimitiveType::Short => {
-                write!(f, "short")?;
-            }
-            PrimitiveType::Int => {
-                write!(f, "int")?;
-            }
-            PrimitiveType::Long => {
-                write!(f, "long")?;
-            }
-        }
-        if self.array {
-            write!(f, "[]")
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -805,11 +708,11 @@ pub struct StructFieldDefinition {
 pub struct StructDefinition {
     pub this: StructDefinitionId,
     pub defined_in: RootId,
-    // Phase 1: symbol scanning
+    // Symbol scanning
     pub span: InputSpan,
     pub identifier: Identifier,
     pub poly_vars: Vec<Identifier>,
-    // Phase 2: parsing
+    // Parsing
     pub fields: Vec<StructFieldDefinition>
 }
 
@@ -983,19 +886,7 @@ pub enum Statement {
 }
 
 impl Statement {
-    pub fn is_block(&self) -> bool {
-        match self {
-            Statement::Block(_) => true,
-            _ => false,
-        }
-    }
     pub fn as_block(&self) -> &BlockStatement {
-        match self {
-            Statement::Block(result) => result,
-            _ => panic!("Unable to cast `Statement` to `BlockStatement`"),
-        }
-    }
-    pub fn as_block_mut(&mut self) -> &mut BlockStatement {
         match self {
             Statement::Block(result) => result,
             _ => panic!("Unable to cast `Statement` to `BlockStatement`"),
@@ -1013,132 +904,14 @@ impl Statement {
     pub fn as_channel(&self) -> &ChannelStatement {
         self.as_local().as_channel()
     }
-    pub fn as_labeled(&self) -> &LabeledStatement {
-        match self {
-            Statement::Labeled(result) => result,
-            _ => panic!("Unable to cast `Statement` to `LabeledStatement`"),
-        }
-    }
-    pub fn as_labeled_mut(&mut self) -> &mut LabeledStatement {
-        match self {
-            Statement::Labeled(result) => result,
-            _ => panic!("Unable to cast `Statement` to `LabeledStatement`"),
-        }
-    }
-    pub fn as_if(&self) -> &IfStatement {
-        match self {
-            Statement::If(result) => result,
-            _ => panic!("Unable to cast `Statement` to `IfStatement`"),
-        }
-    }
-    pub fn as_if_mut(&mut self) -> &mut IfStatement {
-        match self {
-            Statement::If(result) => result,
-            _ => panic!("Unable to cast 'Statement' to 'IfStatement'"),
-        }
-    }
-    pub fn as_end_if(&self) -> &EndIfStatement {
-        match self {
-            Statement::EndIf(result) => result,
-            _ => panic!("Unable to cast `Statement` to `EndIfStatement`"),
-        }
-    }
-    pub fn is_while(&self) -> bool {
-        match self {
-            Statement::While(_) => true,
-            _ => false,
-        }
-    }
-    pub fn as_while(&self) -> &WhileStatement {
-        match self {
-            Statement::While(result) => result,
-            _ => panic!("Unable to cast `Statement` to `WhileStatement`"),
-        }
-    }
-    pub fn as_while_mut(&mut self) -> &mut WhileStatement {
-        match self {
-            Statement::While(result) => result,
-            _ => panic!("Unable to cast `Statement` to `WhileStatement`"),
-        }
-    }
-    pub fn as_end_while(&self) -> &EndWhileStatement {
-        match self {
-            Statement::EndWhile(result) => result,
-            _ => panic!("Unable to cast `Statement` to `EndWhileStatement`"),
-        }
-    }
-    pub fn as_break(&self) -> &BreakStatement {
-        match self {
-            Statement::Break(result) => result,
-            _ => panic!("Unable to cast `Statement` to `BreakStatement`"),
-        }
-    }
-    pub fn as_break_mut(&mut self) -> &mut BreakStatement {
-        match self {
-            Statement::Break(result) => result,
-            _ => panic!("Unable to cast `Statement` to `BreakStatement`"),
-        }
-    }
-    pub fn as_continue(&self) -> &ContinueStatement {
-        match self {
-            Statement::Continue(result) => result,
-            _ => panic!("Unable to cast `Statement` to `ContinueStatement`"),
-        }
-    }
-    pub fn as_continue_mut(&mut self) -> &mut ContinueStatement {
-        match self {
-            Statement::Continue(result) => result,
-            _ => panic!("Unable to cast `Statement` to `ContinueStatement`"),
-        }
-    }
-    pub fn as_synchronous(&self) -> &SynchronousStatement {
-        match self {
-            Statement::Synchronous(result) => result,
-            _ => panic!("Unable to cast `Statement` to `SynchronousStatement`"),
-        }
-    }
-    pub fn as_synchronous_mut(&mut self) -> &mut SynchronousStatement {
-        match self {
-            Statement::Synchronous(result) => result,
-            _ => panic!("Unable to cast `Statement` to `SynchronousStatement`"),
-        }
-    }
-    pub fn as_end_synchronous(&self) -> &EndSynchronousStatement {
-        match self {
-            Statement::EndSynchronous(result) => result,
-            _ => panic!("Unable to cast `Statement` to `EndSynchronousStatement`"),
-        }
-    }
-    pub fn as_return(&self) -> &ReturnStatement {
-        match self {
-            Statement::Return(result) => result,
-            _ => panic!("Unable to cast `Statement` to `ReturnStatement`"),
-        }
-    }
-    pub fn as_goto(&self) -> &GotoStatement {
-        match self {
-            Statement::Goto(result) => result,
-            _ => panic!("Unable to cast `Statement` to `GotoStatement`"),
-        }
-    }
-    pub fn as_goto_mut(&mut self) -> &mut GotoStatement {
-        match self {
-            Statement::Goto(result) => result,
-            _ => panic!("Unable to cast `Statement` to `GotoStatement`"),
-        }
-    }
+
     pub fn as_new(&self) -> &NewStatement {
         match self {
             Statement::New(result) => result,
             _ => panic!("Unable to cast `Statement` to `NewStatement`"),
         }
     }
-    pub fn as_expression(&self) -> &ExpressionStatement {
-        match self {
-            Statement::Expression(result) => result,
-            _ => panic!("Unable to cast `Statement` to `ExpressionStatement`"),
-        }
-    }
+
     pub fn span(&self) -> InputSpan {
         match self {
             Statement::Block(v) => v.span,
@@ -1435,72 +1208,13 @@ pub enum Expression {
 }
 
 impl Expression {
-    pub fn as_assignment(&self) -> &AssignmentExpression {
-        match self {
-            Expression::Assignment(result) => result,
-            _ => panic!("Unable to cast `Expression` to `AssignmentExpression`"),
-        }
-    }
-    pub fn as_conditional(&self) -> &ConditionalExpression {
-        match self {
-            Expression::Conditional(result) => result,
-            _ => panic!("Unable to cast `Expression` to `ConditionalExpression`"),
-        }
-    }
-    pub fn as_binary(&self) -> &BinaryExpression {
-        match self {
-            Expression::Binary(result) => result,
-            _ => panic!("Unable to cast `Expression` to `BinaryExpression`"),
-        }
-    }
-    pub fn as_unary(&self) -> &UnaryExpression {
-        match self {
-            Expression::Unary(result) => result,
-            _ => panic!("Unable to cast `Expression` to `UnaryExpression`"),
-        }
-    }
-    pub fn as_indexing(&self) -> &IndexingExpression {
-        match self {
-            Expression::Indexing(result) => result,
-            _ => panic!("Unable to cast `Expression` to `IndexingExpression`"),
-        }
-    }
-    pub fn as_slicing(&self) -> &SlicingExpression {
-        match self {
-            Expression::Slicing(result) => result,
-            _ => panic!("Unable to cast `Expression` to `SlicingExpression`"),
-        }
-    }
-    pub fn as_select(&self) -> &SelectExpression {
-        match self {
-            Expression::Select(result) => result,
-            _ => panic!("Unable to cast `Expression` to `SelectExpression`"),
-        }
-    }
-    pub fn as_call(&self) -> &CallExpression {
-        match self {
-            Expression::Call(result) => result,
-            _ => panic!("Unable to cast `Expression` to `CallExpression`"),
-        }
-    }
-    pub fn as_call_mut(&mut self) -> &mut CallExpression {
-        match self {
-            Expression::Call(result) => result,
-            _ => panic!("Unable to cast `Expression` to `CallExpression`"),
-        }
-    }
     pub fn as_variable(&self) -> &VariableExpression {
         match self {
             Expression::Variable(result) => result,
             _ => panic!("Unable to cast `Expression` to `VariableExpression`"),
         }
     }
-    pub fn as_variable_mut(&mut self) -> &mut VariableExpression {
-        match self {
-            Expression::Variable(result) => result,
-            _ => panic!("Unable to cast `Expression` to `VariableExpression`"),
-        }
-    }
+
     pub fn span(&self) -> InputSpan {
         match self {
             Expression::Assignment(expr) => expr.span,
@@ -1540,23 +1254,6 @@ impl Expression {
             Some(*id)
         } else {
             None
-        }
-    }
-    // TODO: @cleanup
-    pub fn set_parent(&mut self, parent: ExpressionParent) {
-        match self {
-            Expression::Assignment(expr) => expr.parent = parent,
-            Expression::Binding(expr) => expr.parent = parent,
-            Expression::Conditional(expr) => expr.parent = parent,
-            Expression::Binary(expr) => expr.parent = parent,
-            Expression::Unary(expr) => expr.parent = parent,
-            Expression::Indexing(expr) => expr.parent = parent,
-            Expression::Slicing(expr) => expr.parent = parent,
-            Expression::Select(expr) => expr.parent = parent,
-            Expression::Literal(expr) => expr.parent = parent,
-            Expression::Cast(expr) => expr.parent = parent,
-            Expression::Call(expr) => expr.parent = parent,
-            Expression::Variable(expr) => expr.parent = parent,
         }
     }
 
@@ -1796,14 +1493,6 @@ pub enum Literal {
 
 impl Literal {
     pub(crate) fn as_struct(&self) -> &LiteralStruct {
-        if let Literal::Struct(literal) = self{
-            literal
-        } else {
-            unreachable!("Attempted to obtain {:?} as Literal::Struct", self)
-        }
-    }
-
-    pub(crate) fn as_struct_mut(&mut self) -> &mut LiteralStruct {
         if let Literal::Struct(literal) = self{
             literal
         } else {

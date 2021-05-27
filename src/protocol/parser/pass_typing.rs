@@ -1039,13 +1039,13 @@ impl Visitor2 for PassTyping {
         debug_log!("Visiting function '{}': {}", func_def.identifier.value.as_str(), id.0.index);
         if debug_log_enabled!() {
             debug_log!("Polymorphic variables:");
-            for (idx, poly_var) in self.poly_vars.iter().enumerate() {
+            for (_idx, poly_var) in self.poly_vars.iter().enumerate() {
                 let mut infer_type_parts = Vec::new();
                 for concrete_part in &poly_var.parts {
                     infer_type_parts.push(InferenceTypePart::from(*concrete_part));
                 }
-                let infer_type = InferenceType::new(false, true, infer_type_parts);
-                debug_log!(" - [{:03}] {:?}", idx, infer_type.display_name(&ctx.heap));
+                let _infer_type = InferenceType::new(false, true, infer_type_parts);
+                debug_log!(" - [{:03}] {:?}", _idx, _infer_type.display_name(&ctx.heap));
             }
         }
         debug_log!("{}", "-".repeat(50));
@@ -1394,7 +1394,8 @@ impl Visitor2 for PassTyping {
 }
 
 impl PassTyping {
-    fn temp_get_display_name(&self, ctx: &Ctx, expr_id: ExpressionId) -> String {
+    #[allow(dead_code)] // used when debug flag at the top of this file is true.
+    fn debug_get_display_name(&self, ctx: &Ctx, expr_id: ExpressionId) -> String {
         let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition();
         let expr_type = &self.expr_types[expr_idx as usize].expr_type;
         expr_type.display_name(&ctx.heap)
@@ -1619,9 +1620,9 @@ impl PassTyping {
 
         debug_log!("Assignment expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_expr_id));
-        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_expr_id));
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type: {}", self.debug_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type: {}", self.debug_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         // Assignment does not return anything (it operates like a statement)
         let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &VOID_TEMPLATE)?;
@@ -1643,9 +1644,9 @@ impl PassTyping {
         debug_assert!(if progress_forced { progress_arg2 } else { true });
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.temp_get_display_name(ctx, arg1_expr_id));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_expr_id));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.debug_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.debug_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
@@ -1682,9 +1683,9 @@ impl PassTyping {
 
         debug_log!("Conditional expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_expr_id));
-        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_expr_id));
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type: {}", self.debug_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type: {}", self.debug_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         // I keep confusing myself: this applies equality of types between the
         // condition branches' types, and the result from the conditional
@@ -1695,9 +1696,9 @@ impl PassTyping {
         )?;
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.temp_get_display_name(ctx, arg1_expr_id));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_expr_id));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.debug_get_display_name(ctx, arg1_expr_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.debug_get_display_name(ctx, arg2_expr_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(ctx, arg1_expr_id); }
@@ -1718,9 +1719,9 @@ impl PassTyping {
 
         debug_log!("Binary expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg1 type: {}", self.temp_get_display_name(ctx, arg1_id));
-        debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_id));
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type: {}", self.debug_get_display_name(ctx, arg1_id));
+        debug_log!("   - Arg2 type: {}", self.debug_get_display_name(ctx, arg2_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
@@ -1787,9 +1788,9 @@ impl PassTyping {
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.temp_get_display_name(ctx, arg1_id));
-        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.temp_get_display_name(ctx, arg2_id));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg1 type [{}]: {}", progress_arg1, self.debug_get_display_name(ctx, arg1_id));
+        debug_log!("   - Arg2 type [{}]: {}", progress_arg2, self.debug_get_display_name(ctx, arg2_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg1 { self.queue_expr(ctx, arg1_id); }
@@ -1807,8 +1808,8 @@ impl PassTyping {
 
         debug_log!("Unary expr '{:?}': {}", expr.operation, upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Arg  type: {}", self.temp_get_display_name(ctx, arg_id));
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg  type: {}", self.debug_get_display_name(ctx, arg_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         let (progress_expr, progress_arg) = match expr.operation {
             UO::Positive | UO::Negative => {
@@ -1836,8 +1837,8 @@ impl PassTyping {
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Arg  type [{}]: {}", progress_arg, self.temp_get_display_name(ctx, arg_id));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Arg  type [{}]: {}", progress_arg, self.debug_get_display_name(ctx, arg_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_arg { self.queue_expr(ctx, arg_id); }
@@ -1853,9 +1854,9 @@ impl PassTyping {
 
         debug_log!("Indexing expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, subject_id));
-        debug_log!("   - Index   type: {}", self.temp_get_display_name(ctx, index_id));
-        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type: {}", self.debug_get_display_name(ctx, subject_id));
+        debug_log!("   - Index   type: {}", self.debug_get_display_name(ctx, index_id));
+        debug_log!("   - Expr    type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and index is integerlike
         let progress_subject_base = self.apply_template_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
@@ -1866,9 +1867,9 @@ impl PassTyping {
             self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 0, subject_id, 1)?;
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.temp_get_display_name(ctx, subject_id));
-        debug_log!("   - Index   type [{}]: {}", progress_index, self.temp_get_display_name(ctx, index_id));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.debug_get_display_name(ctx, subject_id));
+        debug_log!("   - Index   type [{}]: {}", progress_index, self.debug_get_display_name(ctx, index_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(ctx, subject_id); }
@@ -1886,10 +1887,10 @@ impl PassTyping {
 
         debug_log!("Slicing expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, subject_id));
-        debug_log!("   - FromIdx type: {}", self.temp_get_display_name(ctx, from_id));
-        debug_log!("   - ToIdx   type: {}", self.temp_get_display_name(ctx, to_id));
-        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type: {}", self.debug_get_display_name(ctx, subject_id));
+        debug_log!("   - FromIdx type: {}", self.debug_get_display_name(ctx, from_id));
+        debug_log!("   - ToIdx   type: {}", self.debug_get_display_name(ctx, to_id));
+        debug_log!("   - Expr    type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         // Make sure subject is arraylike and indices are of equal integerlike
         let progress_subject_base = self.apply_template_constraint(ctx, subject_id, &ARRAYLIKE_TEMPLATE)?;
@@ -1903,10 +1904,10 @@ impl PassTyping {
 
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.temp_get_display_name(ctx, subject_id));
-        debug_log!("   - FromIdx type [{}]: {}", progress_idx_base || progress_from, self.temp_get_display_name(ctx, from_id));
-        debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.temp_get_display_name(ctx, to_id));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.debug_get_display_name(ctx, subject_id));
+        debug_log!("   - FromIdx type [{}]: {}", progress_idx_base || progress_from, self.debug_get_display_name(ctx, from_id));
+        debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.debug_get_display_name(ctx, to_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(ctx, subject_id); }
@@ -1921,8 +1922,8 @@ impl PassTyping {
         
         debug_log!("Select expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, ctx.heap[id].subject));
-        debug_log!("   - Expr    type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type: {}", self.debug_get_display_name(ctx, ctx.heap[id].subject));
+        debug_log!("   - Expr    type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         let subject_id = ctx.heap[id].subject;
         let subject_expr_idx = ctx.heap[subject_id].get_unique_id_in_definition();
@@ -2074,8 +2075,8 @@ impl PassTyping {
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
         debug_log!(" * After:");
-        debug_log!("   - Subject type [{}]: {}", progress_subject, self.temp_get_display_name(ctx, subject_id));
-        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type [{}]: {}", progress_subject, self.debug_get_display_name(ctx, subject_id));
+        debug_log!("   - Expr    type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
         Ok(())
     }
@@ -2088,7 +2089,7 @@ impl PassTyping {
 
         debug_log!("Literal expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         let progress_expr = match &expr.value {
             Literal::Null => {
@@ -2334,7 +2335,7 @@ impl PassTyping {
                 let expr_elements = data.clone(); // TODO: @performance
                 debug_log!("Array expr ({} elements): {}", expr_elements.len(), upcast_id.index);
                 debug_log!(" * Before:");
-                debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+                debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
                 // All elements should have an equal type
                 let progress = self.apply_equal_n_constraint(ctx, upcast_id, &expr_elements)?;
@@ -2361,14 +2362,14 @@ impl PassTyping {
                 }
 
                 debug_log!(" * After:");
-                debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+                debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
                 progress_expr
             },
         };
 
         debug_log!(" * After:");
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
 
@@ -2382,8 +2383,8 @@ impl PassTyping {
 
         debug_log!("Casting expr: {}", upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Expr type:    {}", self.temp_get_display_name(ctx, upcast_id));
-        debug_log!("   - Subject type: {}", self.temp_get_display_name(ctx, expr.subject));
+        debug_log!("   - Expr type:    {}", self.debug_get_display_name(ctx, upcast_id));
+        debug_log!("   - Subject type: {}", self.debug_get_display_name(ctx, expr.subject));
 
         // The cast expression might have its output type fixed by the
         // programmer, so apply that type to the output. Apart from that casting
@@ -2400,7 +2401,7 @@ impl PassTyping {
 
         // Check if the two types are compatible
         debug_log!(" * After:");
-        debug_log!("   - Expr type [{}]: {}", expr_progress, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type [{}]: {}", expr_progress, self.debug_get_display_name(ctx, upcast_id));
         debug_log!("   - Note that the subject type can never be inferred");
         debug_log!(" * Decision:");
 
@@ -2461,7 +2462,7 @@ impl PassTyping {
 
         debug_log!("Call expr '{}': {}", ctx.heap[expr.definition].identifier().value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
         debug_log!(" * During (inferring types from arguments and return type):");
 
         let extra = &mut self.extra_data[extra_idx as usize];
@@ -2561,7 +2562,7 @@ impl PassTyping {
         }
 
         debug_log!(" * After:");
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         Ok(())
     }
@@ -2575,7 +2576,7 @@ impl PassTyping {
         debug_log!("Variable expr '{}': {}", ctx.heap[var_id].identifier.value.as_str(), upcast_id.index);
         debug_log!(" * Before:");
         debug_log!("   - Var  type: {}", self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
-        debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type: {}", self.debug_get_display_name(ctx, upcast_id));
 
         // Retrieve shared variable type and expression type and apply inference
         let var_data = self.var_types.get_mut(&var_id).unwrap();
@@ -2660,7 +2661,7 @@ impl PassTyping {
 
         debug_log!(" * After:");
         debug_log!("   - Var  type [{}]: {}", progress_var, self.var_types.get(&var_id).unwrap().var_type.display_name(&ctx.heap));
-        debug_log!("   - Expr type [{}]: {}", progress_expr, self.temp_get_display_name(ctx, upcast_id));
+        debug_log!("   - Expr type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
 
         Ok(())

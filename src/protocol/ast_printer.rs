@@ -549,7 +549,6 @@ impl ASTWriter {
         let expr = &heap[expr_id];
         let indent2 = indent + 1;
         let indent3 = indent2 + 1;
-        let def_id = self.cur_definition.unwrap();
 
         match expr {
             Expression::Assignment(expr) => {
