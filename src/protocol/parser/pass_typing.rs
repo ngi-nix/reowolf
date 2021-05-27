@@ -59,7 +59,7 @@ use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
     Ctx,
-    Visitor2,
+    Visitor,
     VisitorResult
 };
 
@@ -999,7 +999,7 @@ impl PassTyping {
     }
 }
 
-impl Visitor2 for PassTyping {
+impl Visitor for PassTyping {
     // Definitions
 
     fn visit_component_definition(&mut self, ctx: &mut Ctx, id: ComponentDefinitionId) -> VisitorResult {

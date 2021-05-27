@@ -931,7 +931,7 @@ impl Statement {
     }
     pub fn link_next(&mut self, next: StatementId) {
         match self {
-            Statement::Block(_) => todo!(),
+            Statement::Block(stmt) => stmt.next = next,
             Statement::EndBlock(stmt) => stmt.next = next,
             Statement::Local(stmt) => match stmt {
                 LocalStatement::Channel(stmt) => stmt.next = next,
@@ -969,6 +969,7 @@ pub struct BlockStatement {
     pub relative_pos_in_parent: u32,
     pub locals: Vec<VariableId>,
     pub labels: Vec<LabeledStatementId>,
+    pub next: StatementId,
 }
 
 #[derive(Debug, Clone)]

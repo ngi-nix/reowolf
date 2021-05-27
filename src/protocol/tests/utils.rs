@@ -120,6 +120,7 @@ impl AstTesterResult {
 // Interface for successful compilation
 //------------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub(crate) struct AstOkTester {
     test_name: String,
     modules: Vec<Module>,
@@ -948,11 +949,6 @@ fn has_monomorph(ctx: TestCtx, definition_id: DefinitionId, serialized_monomorph
 
 fn serialize_parser_type(buffer: &mut String, heap: &Heap, parser_type: &ParserType) {
     use ParserTypeVariant as PTV;
-
-    fn write_bytes(buffer: &mut String, bytes: &[u8]) {
-        let utf8 = String::from_utf8_lossy(bytes);
-        buffer.push_str(&utf8);
-    }
 
     fn serialize_variant(buffer: &mut String, heap: &Heap, parser_type: &ParserType, mut idx: usize) -> usize {
         match &parser_type.elements[idx].variant {

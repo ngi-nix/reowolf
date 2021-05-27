@@ -26,3 +26,16 @@ fn test_function_call() {
         f.call_ok(Some(Value::Bool(true)));
     });
 }
+
+#[test]
+fn test_empty_blocks() {
+    // Yes this is silly, but I managed to make this a bug before
+    Tester::new_single_source_expect_ok("traversing empty statements", "
+    func foo() -> u32 {
+        auto val = 128;
+        if (true) {}
+        while (false) {}
+        return val;
+    }
+    ").for_function("foo", |f| { f.call_ok(Some(Value::UInt32(128))); });
+}

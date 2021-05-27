@@ -1,4 +1,3 @@
-mod depth_visitor;
 pub(crate) mod symbol_table;
 pub(crate) mod type_table;
 pub(crate) mod tokens;
@@ -11,10 +10,9 @@ pub(crate) mod pass_validation_linking;
 pub(crate) mod pass_typing;
 mod visitor;
 
-use depth_visitor::*;
 use tokens::*;
 use crate::collections::*;
-use visitor::Visitor2;
+use visitor::Visitor;
 use pass_tokenizer::PassTokenizer;
 use pass_symbols::PassSymbols;
 use pass_imports::PassImport;
@@ -37,7 +35,8 @@ pub enum ModuleCompilationPhase {
     DefinitionsParsed,      // produced the AST for the entire module
     TypesAddedToTable,      // added all definitions to the type table
     ValidatedAndLinked,     // AST is traversed and has linked the required AST nodes
-    Typed,                  // Type inference and checking has been performed
+    // When we continue with the compiler:
+    // Typed,                  // Type inference and checking has been performed
 }
 
 pub struct Module {
@@ -222,41 +221,12 @@ impl Parser {
             self.pass_typing.handle_module_definition(&mut ctx, &mut queue, top)?;
         }
 
-        // Perform remaining steps
-        // TODO: Phase out at some point
-        for module in &self.modules {
-            let root_id = module.root_id;
-            if let Err((position, message)) = Self::parse_inner(&mut self.heap, root_id) {
-                return Err(ParseError::new_error_str_at_pos(&self.modules[0].source, position, &message))
-            }
-        }
-
+        // Write out desired information
         if let Some(filename) = &self.write_ast_to {
             let mut writer = ASTWriter::new();
             let mut file = std::fs::File::create(std::path::Path::new(filename)).unwrap();
             writer.write_ast(&mut file, &self.heap);
         }
-
-        Ok(())
-    }
-
-    pub fn parse_inner(h: &mut Heap, pd: RootId) -> VisitorResult {
-        // TODO: @cleanup, slowly phasing out old compiler
-        // NestedSynchronousStatements::new().visit_protocol_description(h, pd)?;
-        // ChannelStatementOccurrences::new().visit_protocol_description(h, pd)?;
-        // FunctionStatementReturns::new().visit_protocol_description(h, pd)?;
-        // ComponentStatementReturnNew::new().visit_protocol_description(h, pd)?;
-        // CheckBuiltinOccurrences::new().visit_protocol_description(h, pd)?;
-        // BuildSymbolDeclarations::new().visit_protocol_description(h, pd)?;
-        // LinkCallExpressions::new().visit_protocol_description(h, pd)?;
-        // BuildScope::new().visit_protocol_description(h, pd)?;
-        // ResolveVariables::new().visit_protocol_description(h, pd)?;
-        LinkStatements::new().visit_protocol_description(h, pd)?;
-        // BuildLabels::new().visit_protocol_description(h, pd)?;
-        // ResolveLabels::new().visit_protocol_description(h, pd)?;
-        // AssignableExpressions::new().visit_protocol_description(h, pd)?;
-        // IndexableExpressions::new().visit_protocol_description(h, pd)?;
-        // SelectableExpressions::new().visit_protocol_description(h, pd)?;
 
         Ok(())
     }

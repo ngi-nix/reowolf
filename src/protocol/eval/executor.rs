@@ -737,7 +737,8 @@ impl Prompt {
         let stmt = &heap[cur_frame.position];
         let return_value = match stmt {
             Statement::Block(stmt) => {
-                cur_frame.position = stmt.statements[0];
+                debug_assert!(stmt.statements.is_empty() || stmt.next == stmt.statements[0]);
+                cur_frame.position = stmt.next;
                 Ok(EvalContinuation::Stepping)
             },
             Statement::EndBlock(stmt) => {

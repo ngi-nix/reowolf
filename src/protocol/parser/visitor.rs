@@ -25,7 +25,7 @@ pub(crate) struct Ctx<'p> {
 /// implementation of the visitors is to not recurse. The exception is the
 /// top-level `visit_definition`, `visit_stmt` and `visit_expr` methods, which
 /// call the appropriate visitor function.
-pub(crate) trait Visitor2 {
+pub(crate) trait Visitor {
     // Entry point
     fn visit_module(&mut self, ctx: &mut Ctx) -> VisitorResult {
         let mut def_index = 0;

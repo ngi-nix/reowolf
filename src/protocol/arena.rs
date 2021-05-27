@@ -10,9 +10,9 @@ pub struct Id<T> {
 }
 
 impl<T> Id<T> {
-    pub(crate) fn new_invalid() -> Self     { Self{ index: -1, _phantom: Default::default() } }
-    pub(crate) fn new(index: i32) -> Self   { Self{ index, _phantom: Default::default() } }
-    pub(crate) fn is_invalid(&self) -> bool { self.index < 0 }
+    #[inline] pub(crate) fn new_invalid() -> Self     { Self{ index: -1, _phantom: Default::default() } }
+    #[inline] pub(crate) fn new(index: i32) -> Self   { Self{ index, _phantom: Default::default() } }
+    #[inline] pub(crate) fn is_invalid(&self) -> bool { self.index < 0 }
 }
 
 #[derive(Debug)]

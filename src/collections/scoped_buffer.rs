@@ -43,12 +43,12 @@ impl<T: Sized> ScopedBuffer<T> {
 impl<T: Clone> ScopedBuffer<T> {
     pub(crate) fn start_section_initialized(&mut self, initialize_with: &[T]) -> ScopedSection<T> {
         let start_size = self.inner.len() as u32;
-        let data_size = initialize_with.len() as u32;
+        let _data_size = initialize_with.len() as u32;
         self.inner.extend_from_slice(initialize_with);
         ScopedSection{
             inner: &mut self.inner,
             start_size,
-            #[cfg(debug_assertions)] cur_size: start_size + data_size,
+            #[cfg(debug_assertions)] cur_size: start_size + _data_size,
         }
     }
 }

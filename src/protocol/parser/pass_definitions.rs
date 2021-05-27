@@ -362,7 +362,8 @@ impl PassDefinitions {
                 next_unique_id_in_scope: -1,
                 relative_pos_in_parent: 0,
                 locals: Vec::new(),
-                labels: Vec::new()
+                labels: Vec::new(),
+                next: StatementId::new_invalid(),
             });
 
             let end_block = ctx.heap.alloc_end_block_statement(|this| EndBlockStatement{
@@ -501,6 +502,7 @@ impl PassDefinitions {
             relative_pos_in_parent: 0,
             locals: Vec::new(),
             labels: Vec::new(),
+            next: StatementId::new_invalid(),
         });
 
         let end_block = ctx.heap.alloc_end_block_statement(|this| EndBlockStatement{

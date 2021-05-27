@@ -35,6 +35,8 @@ pub struct ProtocolDescription {
 pub(crate) struct ComponentState {
     prompt: Prompt,
 }
+
+#[allow(dead_code)]
 pub(crate) enum EvalContext<'a> {
     Nonsync(&'a mut NonsyncProtoContext<'a>),
     Sync(&'a mut SyncProtoContext<'a>),

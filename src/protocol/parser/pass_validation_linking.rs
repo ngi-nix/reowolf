@@ -7,8 +7,8 @@ use crate::protocol::parser::type_table::*;
 use super::visitor::{
     STMT_BUFFER_INIT_CAPACITY,
     EXPR_BUFFER_INIT_CAPACITY,
-    Ctx, 
-    Visitor2, 
+    Ctx,
+    Visitor,
     VisitorResult
 };
 use crate::protocol::parser::ModuleCompilationPhase;
@@ -51,12 +51,12 @@ pub(crate) struct PassValidationLinking {
     in_test_expr: StatementId, // wrapping if/while stmt id
     in_binding_expr: BindingExpressionId, // to resolve variable expressions
     in_binding_expr_lhs: bool,
-    // Traversal state: current scope (which can be used to find the parent
+    // Traversal state, current scope (which can be used to find the parent
     // scope) and the definition variant we are considering.
     cur_scope: Scope,
     def_type: DefinitionType,
-    // Parent expression (the previous stmt/expression we visited that could be
-    // used as an expression parent)
+    // "Trailing" traversal state, set be child/prev stmt/expr used by next one
+    prev_stmt: StatementId,
     expr_parent: ExpressionParent,
     // Set by parent to indicate that child expression must be assignable. The
     // child will throw an error if it is not assignable. The stored span is
@@ -83,6 +83,7 @@ impl PassValidationLinking {
             in_binding_expr: BindingExpressionId::new_invalid(),
             in_binding_expr_lhs: false,
             cur_scope: Scope::Definition(DefinitionId::new_invalid()),
+            prev_stmt: StatementId::new_invalid(),
             expr_parent: ExpressionParent::None,
             def_type: DefinitionType::Function(FunctionDefinitionId::new_invalid()),
             must_be_assignable: None,
@@ -103,6 +104,7 @@ impl PassValidationLinking {
         self.in_binding_expr_lhs = false;
         self.cur_scope = Scope::Definition(DefinitionId::new_invalid());
         self.def_type = DefinitionType::Function(FunctionDefinitionId::new_invalid());
+        self.prev_stmt = StatementId::new_invalid();
         self.expr_parent = ExpressionParent::None;
         self.must_be_assignable = None;
         self.relative_pos_in_block = 0;
@@ -110,7 +112,25 @@ impl PassValidationLinking {
     }
 }
 
-impl Visitor2 for PassValidationLinking {
+macro_rules! assign_then_erase_next_stmt {
+    ($self:ident, $ctx:ident, $stmt_id:expr) => {
+        if !$self.prev_stmt.is_invalid() {
+            $ctx.heap[$self.prev_stmt].link_next($stmt_id);
+            $self.prev_stmt = StatementId::new_invalid();
+        }
+    }
+}
+
+macro_rules! assign_and_replace_next_stmt {
+    ($self:ident, $ctx:ident, $stmt_id:expr) => {
+        if !$self.prev_stmt.is_invalid() {
+            $ctx.heap[$self.prev_stmt].link_next($stmt_id);
+        }
+        $self.prev_stmt = $stmt_id;
+    }
+}
+
+impl Visitor for PassValidationLinking {
     fn visit_module(&mut self, ctx: &mut Ctx) -> VisitorResult {
         debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::TypesAddedToTable);
 
@@ -199,11 +219,13 @@ impl Visitor2 for PassValidationLinking {
         self.visit_block_stmt_with_hint(ctx, id, None)
     }
 
-    fn visit_local_memory_stmt(&mut self, _ctx: &mut Ctx, _id: MemoryStatementId) -> VisitorResult {
+    fn visit_local_memory_stmt(&mut self, ctx: &mut Ctx, id: MemoryStatementId) -> VisitorResult {
+        assign_and_replace_next_stmt!(self, ctx, id.upcast().upcast());
         Ok(())
     }
 
-    fn visit_local_channel_stmt(&mut self, _ctx: &mut Ctx, _id: ChannelStatementId) -> VisitorResult {
+    fn visit_local_channel_stmt(&mut self, ctx: &mut Ctx, id: ChannelStatementId) -> VisitorResult {
+        assign_and_replace_next_stmt!(self, ctx, id.upcast().upcast());
         Ok(())
     }
 
@@ -216,6 +238,7 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_if_stmt(&mut self, ctx: &mut Ctx, id: IfStatementId) -> VisitorResult {
         let if_stmt = &ctx.heap[id];
+        let end_if_id = if_stmt.end_if;
         let test_expr_id = if_stmt.test;
         let true_stmt_id = if_stmt.true_body;
         let false_stmt_id = if_stmt.false_body;
@@ -223,6 +246,7 @@ impl Visitor2 for PassValidationLinking {
         // Visit test expression
         debug_assert_eq!(self.expr_parent, ExpressionParent::None);
         debug_assert!(self.in_test_expr.is_invalid());
+
         self.in_test_expr = id.upcast();
         self.expr_parent = ExpressionParent::If(id);
         self.visit_expr(ctx, test_expr_id)?;
@@ -230,19 +254,27 @@ impl Visitor2 for PassValidationLinking {
 
         self.expr_parent = ExpressionParent::None;
 
+        // Visit true and false branch. Executor chooses next statement based on
+        // test expression, not on if-statement itself.
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
         self.visit_block_stmt(ctx, true_stmt_id)?;
+        assign_then_erase_next_stmt!(self, ctx, end_if_id.upcast());
+
         if let Some(false_id) = false_stmt_id {
             self.visit_block_stmt(ctx, false_id)?;
+            assign_then_erase_next_stmt!(self, ctx, end_if_id.upcast());
         }
 
+        self.prev_stmt = end_if_id.upcast();
         Ok(())
     }
 
     fn visit_while_stmt(&mut self, ctx: &mut Ctx, id: WhileStatementId) -> VisitorResult {
-        let (test_id, body_id) = {
-            let stmt = &ctx.heap[id];
-            (stmt.test, stmt.body)
-        };
+        let stmt = &ctx.heap[id];
+        let end_while_id = stmt.end_while;
+        let test_expr_id = stmt.test;
+        let body_stmt_id = stmt.body;
+
         let old_while = self.in_while;
         self.in_while = id;
 
@@ -251,12 +283,21 @@ impl Visitor2 for PassValidationLinking {
         debug_assert!(self.in_test_expr.is_invalid());
         self.in_test_expr = id.upcast();
         self.expr_parent = ExpressionParent::While(id);
-        self.visit_expr(ctx, test_id)?;
+        self.visit_expr(ctx, test_expr_id)?;
         self.in_test_expr = StatementId::new_invalid();
 
+        // Link up to body statement
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
+
         self.expr_parent = ExpressionParent::None;
-        self.visit_block_stmt(ctx, body_id)?;
+        self.visit_block_stmt(ctx, body_stmt_id)?;
         self.in_while = old_while;
+
+        // Link final entry in while's block statement back to the while. The
+        // executor will go to the end-while statement if the test expression
+        // is false, so put that in as the new previous stmt
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
+        self.prev_stmt = end_while_id.upcast();
 
         Ok(())
     }
@@ -272,6 +313,7 @@ impl Visitor2 for PassValidationLinking {
             target_while.end_while
         };
 
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
         let stmt = &mut ctx.heap[id];
         stmt.target = Some(target_end_while);
 
@@ -285,6 +327,7 @@ impl Visitor2 for PassValidationLinking {
             self.resolve_break_or_continue_target(ctx, stmt.span, &stmt.label)?
         };
 
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
         let stmt = &mut ctx.heap[id];
         stmt.target = Some(target_while_id);
 
@@ -293,7 +336,9 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_synchronous_stmt(&mut self, ctx: &mut Ctx, id: SynchronousStatementId) -> VisitorResult {
         // Check for validity of synchronous statement
-        let cur_sync_span = ctx.heap[id].span;
+        let sync_stmt = &ctx.heap[id];
+        let end_sync_id = sync_stmt.end_sync;
+        let cur_sync_span = sync_stmt.span;
         if !self.in_sync.is_invalid() {
             // Nested synchronous statement
             let old_sync_span = ctx.heap[self.in_sync].span;
@@ -311,10 +356,14 @@ impl Visitor2 for PassValidationLinking {
             ));
         }
 
+        // Synchronous statement implicitly moves to its block
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
+
         let sync_body = ctx.heap[id].body;
         debug_assert!(self.in_sync.is_invalid());
         self.in_sync = id;
         self.visit_block_stmt_with_hint(ctx, sync_body, Some(id))?;
+        assign_and_replace_next_stmt!(self, ctx, end_sync_id.upcast());
 
         self.in_sync = SynchronousStatementId::new_invalid();
 
@@ -332,6 +381,7 @@ impl Visitor2 for PassValidationLinking {
         }
 
         // If here then we are within a function
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
         debug_assert_eq!(self.expr_parent, ExpressionParent::None);
         debug_assert_eq!(ctx.heap[id].expressions.len(), 1);
         self.expr_parent = ExpressionParent::Return(id);
@@ -360,6 +410,8 @@ impl Visitor2 for PassValidationLinking {
             );
         }
 
+        assign_then_erase_next_stmt!(self, ctx, id.upcast());
+
         Ok(())
     }
 
@@ -377,6 +429,7 @@ impl Visitor2 for PassValidationLinking {
         // to ensure that the "new" statment instantiates a component)
         let call_expr_id = ctx.heap[id].expression;
 
+        assign_and_replace_next_stmt!(self, ctx, id.upcast());
         debug_assert_eq!(self.expr_parent, ExpressionParent::None);
         self.expr_parent = ExpressionParent::New(id);
         self.visit_call_expr(ctx, call_expr_id)?;
@@ -388,6 +441,7 @@ impl Visitor2 for PassValidationLinking {
     fn visit_expr_stmt(&mut self, ctx: &mut Ctx, id: ExpressionStatementId) -> VisitorResult {
         let expr_id = ctx.heap[id].expression;
 
+        assign_and_replace_next_stmt!(self, ctx, id.upcast());
         debug_assert_eq!(self.expr_parent, ExpressionParent::None);
         self.expr_parent = ExpressionParent::ExpressionStmt(id);
         self.visit_expr(ctx, expr_id)?;
@@ -1182,6 +1236,7 @@ impl PassValidationLinking {
         let body = &mut ctx.heap[id];
         body.scope_node.parent = old_scope;
         body.relative_pos_in_parent = self.relative_pos_in_block;
+        let end_block_id = body.end_block;
 
         let old_relative_pos = self.relative_pos_in_block;
 
@@ -1197,10 +1252,12 @@ impl PassValidationLinking {
         }
 
         // Perform the depth-first traversal
+        assign_and_replace_next_stmt!(self, ctx, id.upcast());
         for stmt_idx in 0..statement_section.len() {
             self.relative_pos_in_block = stmt_idx as u32;
             self.visit_stmt(ctx, statement_section[stmt_idx])?;
         }
+        assign_and_replace_next_stmt!(self, ctx, end_block_id.upcast());
 
         self.cur_scope = old_scope;
         self.relative_pos_in_block = old_relative_pos;
