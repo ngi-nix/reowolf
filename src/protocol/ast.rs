@@ -1279,6 +1279,7 @@ impl Expression {
 #[derive(Debug, Clone, Copy)]
 pub enum AssignmentOperator {
     Set,
+    Concatenated,
     Multiplied,
     Divided,
     Remained,

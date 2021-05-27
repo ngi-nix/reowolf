@@ -916,6 +916,7 @@ impl PassDefinitions {
 
             match token.unwrap() {
                 TK::Equal               => Some(AO::Set),
+                TK::AtEquals            => Some(AO::Concatenated),
                 TK::StarEquals          => Some(AO::Multiplied),
                 TK::SlashEquals         => Some(AO::Divided),
                 TK::PercentEquals       => Some(AO::Remained),

@@ -261,6 +261,8 @@ impl Default for ValueGroup {
     }
 }
 
+enum ValueKind { Message, String, Array }
+
 pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: AssignmentOperator, rhs: Value) {
     use AssignmentOperator as AO;
 
@@ -280,7 +282,6 @@ pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: Ass
         }
     }
 
-    // let rhs = store.maybe_read_ref(&rhs).clone(); // we don't own this thing, so don't drop it
     let lhs = store.read_mut_ref(lhs);
 
     let mut to_dealloc = None;
@@ -313,6 +314,28 @@ pub(crate) fn apply_assignment_operator(store: &mut Store, lhs: ValueId, op: Ass
                 Value::Struct(v) => { to_dealloc = Some(*v); *v = rhs.as_struct(); },
                 _ => unreachable!("apply_assignment_operator {:?} on lhs {:?} and rhs {:?}", op, lhs, rhs),
             }
+        },
+        AO::Concatenated => {
+            let lhs_heap_pos = lhs.get_heap_pos().unwrap() as usize;
+            let rhs_heap_pos = rhs.get_heap_pos().unwrap() as usize;
+
+            // To prevent borrowing crap, swap out heap region with a temp empty array
+            let mut total = Vec::new();
+            std::mem::swap(&mut total, &mut store.heap_regions[lhs_heap_pos].values);
+
+            // Push everything onto the swapped vector
+            let rhs_len = store.heap_regions[rhs_heap_pos].values.len();
+            total.reserve(rhs_len);
+            for value_idx in 0..rhs_len {
+                total.push(store.clone_value(store.heap_regions[rhs_heap_pos].values[value_idx].clone()));
+            }
+
+            // Swap back in place
+            std::mem::swap(&mut total, &mut store.heap_regions[lhs_heap_pos].values);
+
+            // We took ownership of the RHS, but we copied it into the LHS, so
+            // different form assignment we need to drop the RHS heap pos.
+            to_dealloc = Some(rhs_heap_pos as u32);
         },
         AO::Multiplied =>   { apply_int_op!(lhs, *=,  op, rhs) },
         AO::Divided =>      { apply_int_op!(lhs, /=,  op, rhs) },
@@ -376,7 +399,6 @@ pub(crate) fn apply_binary_operator(store: &mut Store, lhs: &Value, op: BinaryOp
         let lhs = store.maybe_read_ref(lhs);
         let rhs = store.maybe_read_ref(rhs);
 
-        enum ValueKind { Message, String, Array }
         let value_kind;
 
         match lhs {

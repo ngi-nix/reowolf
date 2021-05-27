@@ -729,7 +729,7 @@ impl Prompt {
             debug_log!("Heap:");
             for (_heap_idx, _heap_region) in self.store.heap_regions.iter().enumerate() {
                 let _is_free = self.store.free_regions.iter().any(|idx| *idx as usize == _heap_idx);
-                debug_log!("  [{:03}] in_use: {}, len: {}, vals: {:?}", _heap_idx, !_is_free, heap_region.values.len(), &_heap_region.values);
+                debug_log!("  [{:03}] in_use: {}, len: {}, vals: {:?}", _heap_idx, !_is_free, _heap_region.values.len(), &_heap_region.values);
             }
         }
         // No (more) expressions to evaluate. So evaluate statement (that may

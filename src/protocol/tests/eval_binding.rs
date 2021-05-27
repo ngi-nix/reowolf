@@ -134,7 +134,7 @@ fn test_binding_fizz_buzz() {
     Tester::new_single_source_expect_ok("am I employable?", "
         union Fizzable { Number(u32), FizzBuzz, Fizz, Buzz }
 
-        func construct_fizz_buzz(u32 num) -> Fizzable[] {
+        func construct_fizz_buzz_very_slow(u32 num) -> Fizzable[] {
             u32 counter = 1;
             auto result = {};
             while (counter <= num) {
@@ -150,6 +150,28 @@ fn test_binding_fizz_buzz() {
                 }
 
                 result = result @ { value }; // woohoo, no array builtins!
+                counter += 1;
+            }
+
+            return result;
+        }
+
+        func construct_fizz_buzz_slightly_less_slow(u32 num) -> Fizzable[] {
+            u32 counter = 1;
+            auto result = {};
+            while (counter <= num) {
+                auto value = Fizzable::Number(counter);
+                if (counter % 5 == 0) {
+                    if (counter % 3 == 0) {
+                        value = Fizzable::FizzBuzz;
+                    } else {
+                        value = Fizzable::Buzz;
+                    }
+                } else if (counter % 3 == 0) {
+                    value = Fizzable::Fizz;
+                }
+
+                result @= { value }; // woohoo, no array builtins!
                 counter += 1;
             }
 
@@ -184,8 +206,14 @@ fn test_binding_fizz_buzz() {
         }
 
         func fizz_buzz() -> bool {
-            auto fizz = construct_fizz_buzz(100);
-            return test_fizz_buzz(fizz);
+            // auto fizz_more_slow = construct_fizz_buzz_very_slow(100);
+            // return test_fizz_buzz(fizz_more_slow);
+            // auto fizz_less_slow = construct_fizz_buzz_slightly_less_slow(100);
+            // return test_fizz_buzz(fizz_less_slow);
+
+            auto fizz_more_slow2 = construct_fizz_buzz_very_slow(100);
+            auto fizz_less_slow2 = construct_fizz_buzz_slightly_less_slow(100);
+            return test_fizz_buzz(fizz_more_slow2) && test_fizz_buzz(fizz_less_slow2);
         }
     ").for_function("fizz_buzz", |f| { f
         .call_ok(Some(Value::Bool(true)));

@@ -355,7 +355,12 @@ impl PassTokenizer {
             token_kind = TokenKind::Question;
         } else if first_char == b'@' {
             source.consume();
-            token_kind = TokenKind::At;
+            if let Some(b'=') = source.next() {
+                source.consume();
+                token_kind = TokenKind::AtEquals;
+            } else {
+                token_kind = TokenKind::At;
+            }
         } else if first_char == b'[' {
             source.consume();
             token_kind = TokenKind::OpenSquare;

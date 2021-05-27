@@ -1631,6 +1631,8 @@ impl PassTyping {
         let progress_forced = match expr.operation {
             AO::Set =>
                 false,
+            AO::Concatenated =>
+                self.apply_template_constraint(ctx, arg1_expr_id, &ARRAYLIKE_TEMPLATE)?,
             AO::Multiplied | AO::Divided | AO::Added | AO::Subtracted =>
                 self.apply_template_constraint(ctx, arg1_expr_id, &NUMBERLIKE_TEMPLATE)?,
             AO::Remained | AO::ShiftedLeft | AO::ShiftedRight |
@@ -1641,7 +1643,6 @@ impl PassTyping {
         let (progress_arg1, progress_arg2) = self.apply_equal2_constraint(
             ctx, upcast_id, arg1_expr_id, 0, arg2_expr_id, 0
         )?;
-        debug_assert!(if progress_forced { progress_arg2 } else { true });
 
         debug_log!(" * After:");
         debug_log!("   - Arg1 type [{}]: {}", progress_forced || progress_arg1, self.debug_get_display_name(ctx, arg1_expr_id));

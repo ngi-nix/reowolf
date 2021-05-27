@@ -187,9 +187,6 @@ impl Parser {
         // Continue compilation with the remaining phases now that the types
         // are all in the type table
         for module_idx in 0..self.modules.len() {
-            // TODO: Remove the entire Visitor abstraction. It really doesn't
-            //  make sense considering the amount of special handling we do
-            //  in each pass.
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
                 module: &mut self.modules[module_idx],

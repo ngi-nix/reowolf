@@ -49,6 +49,7 @@ pub enum TokenKind {
     DotDot,         // ..
     ArrowRight,     // ->
     // Operator-like (two characters)
+    AtEquals,       // @=
     PlusPlus,       // ++
     PlusEquals,     // +=
     MinusMinus,     // --
@@ -87,7 +88,7 @@ impl TokenKind {
         debug_assert!(!self.has_span_end() && *self != TokenKind::SpanEnd);
         if *self <= TokenKind::Equal {
             1
-        } else if *self <= TokenKind::ShiftRight {
+        } else if *self <= TokenKind::GreaterEquals {
             2
         } else {
             3
@@ -129,6 +130,7 @@ impl TokenKind {
             TK::ColonColon => "::",
             TK::DotDot => "..",
             TK::ArrowRight => "->",
+            TK::AtEquals => "@=",
             TK::PlusPlus => "++",
             TK::PlusEquals => "+=",
             TK::MinusMinus => "--",
