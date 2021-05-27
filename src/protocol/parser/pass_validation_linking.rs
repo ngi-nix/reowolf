@@ -406,6 +406,16 @@ impl Visitor2 for PassValidationLinking {
 
         let assignment_expr = &mut ctx.heap[id];
 
+        // Although we call assignment an expression to simplify the compiler's
+        // code (mainly typechecking), we disallow nested use in expressions
+        match self.expr_parent {
+            ExpressionParent::ExpressionStmt(_) => {},
+            _ => return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, assignment_expr.span,
+                "assignments may only appear at the statement level"
+            )),
+        }
+
         let left_expr_id = assignment_expr.left;
         let right_expr_id = assignment_expr.right;
         let old_expr_parent = self.expr_parent;
@@ -425,7 +435,6 @@ impl Visitor2 for PassValidationLinking {
 
     fn visit_binding_expr(&mut self, ctx: &mut Ctx, id: BindingExpressionId) -> VisitorResult {
         let upcast_id = id.upcast();
-        let binding_expr = &mut ctx.heap[id];
 
         // Check for valid context of binding expression
         if let Some(span) = self.must_be_assignable {
@@ -435,6 +444,7 @@ impl Visitor2 for PassValidationLinking {
         }
 
         if self.in_test_expr.is_invalid() {
+            let binding_expr = &ctx.heap[id];
             return Err(ParseError::new_error_str_at_span(
                 &ctx.module.source, binding_expr.span,
                 "binding expressions can only be used inside the testing expression of 'if' and 'while' statements"
@@ -452,6 +462,51 @@ impl Visitor2 for PassValidationLinking {
                 "the outer binding expression is found here"
             ));
         }
+
+        let mut seeking_parent = self.expr_parent;
+        loop {
+            // Perform upward search to make sure only LogicalAnd is applied to
+            // the binding expression
+            let valid = match seeking_parent {
+                ExpressionParent::If(_) | ExpressionParent::While(_) => {
+                    // Every parent expression (if any) were LogicalAnd.
+                    break;
+                }
+                ExpressionParent::Expression(parent_id, _) => {
+                    let parent_expr = &ctx.heap[parent_id];
+                    match parent_expr {
+                        Expression::Binary(parent_expr) => {
+                            // Set new parent to continue the search. Otherwise
+                            // halt and provide an error using the current
+                            // parent.
+                            if parent_expr.operation == BinaryOperator::LogicalAnd {
+                                seeking_parent = parent_expr.parent;
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        _ => false,
+                    }
+                },
+                _ => unreachable!(), // nested under if/while, so always expressions as parents
+            };
+
+            if !valid {
+                let binding_expr = &ctx.heap[id];
+                let parent_expr = &ctx.heap[seeking_parent.as_expression()];
+                return Err(ParseError::new_error_str_at_span(
+                    &ctx.module.source, binding_expr.span,
+                    "only the logical-and operator (&&) may be applied to binding expressions"
+                ).with_info_str_at_span(
+                    &ctx.module.source, parent_expr.span(),
+                    "this was the disallowed operation applied to the result from a binding expression"
+                ));
+            }
+        }
+
+        // Perform all of the index/parent assignment magic
+        let binding_expr = &mut ctx.heap[id];
 
         let old_expr_parent = self.expr_parent;
         binding_expr.parent = old_expr_parent;

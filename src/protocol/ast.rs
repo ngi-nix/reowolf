@@ -1409,6 +1409,13 @@ impl ExpressionParent {
             _ => false,
         }
     }
+
+    pub fn as_expression(&self) -> ExpressionId {
+        match self {
+            ExpressionParent::Expression(id, _) => *id,
+            _ => panic!("called as_expression() on {:?}", self),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

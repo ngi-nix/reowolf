@@ -109,9 +109,11 @@ fn test_boolean_ops_on_binding() {
             return 0;
         }
     ").error(|e| { e
-        .assert_num(1)
-        .assert_occurs_at(0, "let")
-        .assert_msg_has(0, "expected a 'bool'");
+        .assert_num(2)
+        .assert_occurs_at(0, "let a")
+        .assert_msg_has(0, "only the logical-and operator")
+        .assert_occurs_at(1, "||")
+        .assert_msg_has(1, "disallowed operation");
     });
 
     Tester::new_single_source_expect_err("apply || after binding", "
@@ -123,9 +125,11 @@ fn test_boolean_ops_on_binding() {
             return 0;
         }
     ").error(|e| { e
-        .assert_num(1)
-        .assert_occurs_at(0, "let")
-        .assert_msg_has(0, "expected a 'bool'");
+        .assert_num(2)
+        .assert_occurs_at(0, "let b")
+        .assert_msg_has(0, "only the logical-and operator")
+        .assert_occurs_at(1, "||")
+        .assert_msg_has(1, "disallowed operation");
     });
 
     Tester::new_single_source_expect_err("apply || before and after binding", "
@@ -137,7 +141,10 @@ fn test_boolean_ops_on_binding() {
             return 0;
         }
     ").error(|e| { e
-        .assert_num(1)
-        .assert_msg_has(0, "expected a 'bool'");
+        .assert_num(2)
+        .assert_occurs_at(0, "let a")
+        .assert_msg_has(0, "only the logical-and operator")
+        .assert_occurs_at(1, "|| (let a")
+        .assert_msg_has(1, "disallowed operation");
     });
 }

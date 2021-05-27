@@ -66,8 +66,6 @@ use super::visitor::{
 const VOID_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Void ];
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
-const BOOLLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::BoolLike ];
-const BINDING_BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::BindingBool ];
 const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
 const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
@@ -92,7 +90,6 @@ pub(crate) enum InferenceTypePart {
     // Partially known type, may be inferred to to be the appropriate related 
     // type.
     // IndexLike,      // index into array/slice
-    BoolLike,       // boolean or binding boolean
     NumberLike,     // any kind of integer/float
     IntegerLike,    // any kind of integer
     ArrayLike,      // array or slice. Note that this must have a subtype
@@ -100,7 +97,6 @@ pub(crate) enum InferenceTypePart {
     // Special types that cannot be instantiated by the user
     Void, // For builtin functions that do not return anything
     // Concrete types without subtypes
-    BindingBool,    // boolean result from a binding expression
     Bool,
     UInt8,
     UInt16,
@@ -135,7 +131,7 @@ impl InferenceTypePart {
     fn is_concrete(&self) -> bool {
         use InferenceTypePart as ITP;
         match self {
-            ITP::Unknown | ITP::BoolLike | ITP::NumberLike |
+            ITP::Unknown | ITP::NumberLike |
             ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => false,
             _ => true
         }
@@ -184,9 +180,7 @@ impl InferenceTypePart {
         (*self == ITP::IntegerLike && arg.is_concrete_integer()) ||
         (*self == ITP::NumberLike && (arg.is_concrete_number() || *arg == ITP::IntegerLike)) ||
         (*self == ITP::ArrayLike && arg.is_concrete_msg_array_or_slice()) ||
-        (*self == ITP::PortLike && arg.is_concrete_port()) ||
-        (*self == ITP::BoolLike && (*arg == ITP::Bool || *arg == ITP::BindingBool)) ||
-        (*self == ITP::Bool && *arg == ITP::BindingBool)
+        (*self == ITP::PortLike && arg.is_concrete_port())
     }
 
     /// Checks if a part is more specific
@@ -198,7 +192,7 @@ impl InferenceTypePart {
         use InferenceTypePart as ITP;
         match &self {
             ITP::Unknown | ITP::NumberLike | ITP::IntegerLike |
-            ITP::Void | ITP::BoolLike | ITP::Bool | ITP::BindingBool |
+            ITP::Void | ITP::Bool |
             ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
             ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 |
             ITP::Character | ITP::String => {
@@ -491,8 +485,7 @@ impl InferenceType {
     /// is false, then as long as the `to_infer` and `template` types are
     /// compatible the inference will succeed. If `forced_template` is true,
     /// then `to_infer` MUST be less specific than `template` (e.g.
-    /// `IntegerLike` is less specific than `UInt32`. Likewise `Bool` is less
-    /// specific than `BindingBool`)
+    /// `IntegerLike` is less specific than `UInt32`)
     fn infer_subtree_for_single_type(
         to_infer: &mut InferenceType, mut to_infer_idx: usize,
         template: &[InferenceTypePart], mut template_idx: usize,
@@ -613,7 +606,7 @@ impl InferenceType {
                     idx += 1;
                     continue;
                 },
-                ITP::Unknown | ITP::BoolLike | ITP::NumberLike |
+                ITP::Unknown | ITP::NumberLike |
                 ITP::IntegerLike | ITP::ArrayLike | ITP::PortLike => {
                     // Should not happen if type inferencing works correctly: we
                     // should have returned a programmer-readable error or have
@@ -622,7 +615,6 @@ impl InferenceType {
                 },
                 ITP::Void => CTP::Void,
                 ITP::Message => CTP::Message,
-                ITP::BindingBool => CTP::Bool,
                 ITP::Bool => CTP::Bool,
                 ITP::UInt8 => CTP::UInt8,
                 ITP::UInt16 => CTP::UInt16,
@@ -661,7 +653,6 @@ impl InferenceType {
                 idx = Self::write_display_name(buffer, heap, parts, idx + 1);
             },
             ITP::Unknown => buffer.push_str("?"),
-            ITP::BoolLike => buffer.push_str("boollike"),
             ITP::NumberLike => buffer.push_str("numberlike"),
             ITP::IntegerLike => buffer.push_str("integerlike"),
             ITP::ArrayLike => {
@@ -674,7 +665,6 @@ impl InferenceType {
                 buffer.push('>');
             }
             ITP::Void => buffer.push_str("void"),
-            ITP::BindingBool => buffer.push_str("binding result"),
             ITP::Bool => buffer.push_str(KW_TYPE_BOOL_STR),
             ITP::UInt8 => buffer.push_str(KW_TYPE_UINT8_STR),
             ITP::UInt16 => buffer.push_str(KW_TYPE_UINT16_STR),
@@ -1671,9 +1661,9 @@ impl PassTyping {
         let bound_from_id = binding_expr.bound_from;
         let bound_to_id = binding_expr.bound_to;
 
-        // Output of a binding expression is a special kind of boolean that can
-        // only be used in binary-and expressions
-        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BINDING_BOOL_TEMPLATE)?;
+        // Output is always a boolean. The two arguments should be of equal
+        // type.
+        let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
         let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, bound_from_id, 0, bound_to_id, 0)?;
 
         if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
@@ -1696,6 +1686,10 @@ impl PassTyping {
         debug_log!("   - Arg2 type: {}", self.temp_get_display_name(ctx, arg2_expr_id));
         debug_log!("   - Expr type: {}", self.temp_get_display_name(ctx, upcast_id));
 
+        // I keep confusing myself: this applies equality of types between the
+        // condition branches' types, and the result from the conditional
+        // expression, because the result from the conditional is one of the
+        // branches.
         let (progress_expr, progress_arg1, progress_arg2) = self.apply_equal3_constraint(
             ctx, upcast_id, arg1_expr_id, arg2_expr_id, 0
         )?;
@@ -1742,16 +1736,12 @@ impl PassTyping {
                 (progress_expr || subtype_expr, progress_arg1 || subtype_arg1, progress_arg2 || subtype_arg2)
             },
             BO::LogicalAnd => {
-                // Logical AND may operate both on normal booleans and on
-                // booleans that are the result of a binding expression. So we
-                // force the expression to bool-like, then apply an equal_3
-                // constraint. Any BindingBool will promote all the other Bool
-                // types.
-                let base_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
-                let (progress_expr, progress_arg1, progress_arg2) =
-                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?;
+                // Forced boolean on all
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
+                let progress_arg1 = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
+                let progress_arg2 = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
 
-                (base_expr || progress_expr, progress_arg1, progress_arg2)
+                (progress_expr, progress_arg1, progress_arg2)
             },
             BO::LogicalOr => {
                 // Forced boolean on all
@@ -1771,7 +1761,7 @@ impl PassTyping {
             },
             BO::Equality | BO::Inequality => {
                 // Equal2 on args, forced boolean output
-                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let (progress_arg1, progress_arg2) =
                     self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
 
@@ -1779,7 +1769,7 @@ impl PassTyping {
             },
             BO::LessThan | BO::GreaterThan | BO::LessThanEqual | BO::GreaterThanEqual => {
                 // Equal2 on args with numberlike type, forced boolean output
-                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &BOOLLIKE_TEMPLATE)?;
+                let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let progress_arg_base = self.apply_template_constraint(ctx, arg1_id, &NUMBERLIKE_TEMPLATE)?;
                 let (progress_arg1, progress_arg2) =
                     self.apply_equal2_constraint(ctx, upcast_id, arg1_id, 0, arg2_id, 0)?;
@@ -1838,7 +1828,7 @@ impl PassTyping {
                 (progress_base || progress_expr, progress_base || progress_arg)
             },
             UO::LogicalNot => {
-                // Both booleans
+                // Both bools
                 let progress_expr = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 let progress_arg = self.apply_forced_constraint(ctx, upcast_id, &BOOL_TEMPLATE)?;
                 (progress_expr, progress_arg)
