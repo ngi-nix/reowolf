@@ -375,7 +375,7 @@ pub enum ParserTypeVariant {
     Output,
     // User-defined types
     PolymorphicArgument(DefinitionId, u32), // u32 = index into polymorphic variables
-    Definition(DefinitionId, u32), // u32 = number of following subtypes
+    Definition(DefinitionId, u32), // u32 = number of subsequent types in the type tree.
 }
 
 impl ParserTypeVariant {
@@ -397,10 +397,13 @@ impl ParserTypeVariant {
     }
 }
 
+/// ParserTypeElement is an element of the type tree. An element may be
+/// implicit, meaning that the user didn't specify the type, but it was set by
+/// the compiler.
 #[derive(Debug, Clone)]
 pub struct ParserTypeElement {
     // TODO: @Fix span
-    pub full_span: InputSpan, // full span of type, including any polymorphic arguments
+    pub element_span: InputSpan, // span of this element, not including the child types
     pub variant: ParserTypeVariant,
 }
 
@@ -408,9 +411,14 @@ pub struct ParserTypeElement {
 /// linker/validator phase of the compilation process. These types may be
 /// (partially) inferred or represent literals (e.g. a integer whose bytesize is
 /// not yet determined).
+///
+/// Its contents are the depth-first serialization of the type tree. Each node
+/// is a type that may accept polymorphic arguments. The polymorphic arguments
+/// are then the children of the node.
 #[derive(Debug, Clone)]
 pub struct ParserType {
-    pub elements: Vec<ParserTypeElement>
+    pub elements: Vec<ParserTypeElement>,
+    pub full_span: InputSpan,
 }
 
 impl ParserType {
@@ -468,8 +476,8 @@ impl<'a> Iterator for ParserTypeIter<'a> {
     }
 }
 
-/// ConcreteType is the representation of a type after resolving symbolic types
-/// and performing type inference
+/// ConcreteType is the representation of a type after the type inference and
+/// checker is finished. These are fully typed.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConcreteTypePart {
     // Special types (cannot be explicitly constructed by the programmer)

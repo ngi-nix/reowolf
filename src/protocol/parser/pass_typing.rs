@@ -3562,6 +3562,22 @@ impl PassTyping {
             None
         }
 
+        // Helper function to check for polymorph mismatch between an inference
+        // type and the polymorphic variables in the poly_data struct.
+        fn has_explicit_poly_mismatch<'a>(
+            poly_vars: &'a [InferenceType], arg: &'a InferenceType
+        ) -> Option<(u32, &'a [InferenceTypePart], &'a [InferenceTypePart])> {
+            for (marker, section) in arg.marker_iter() {
+                debug_assert!((marker as usize) < poly_vars.len());
+                let poly_section = &poly_vars[marker as usize].parts;
+                if !InferenceType::check_subtrees(poly_section, 0, section, 0) {
+                    return Some((marker, poly_section, section))
+                }
+            }
+
+            None
+        }
+
         // Helpers function to retrieve polyvar name and definition name
         fn get_poly_var_and_definition_name<'a>(ctx: &'a Ctx, poly_var_idx: u32, definition_id: DefinitionId) -> (&'a str, &'a str) {
             let definition = &ctx.heap[definition_id];
@@ -3705,6 +3721,34 @@ impl PassTyping {
                         )
                     );
             }
+        }
+
+        // Now check against the explicitly specified polymorphic variables (if
+        // any).
+        for (arg_idx, arg) in poly_data.embedded.iter().enumerate() {
+            if let Some((poly_idx, poly_section, arg_section)) = has_explicit_poly_mismatch(&poly_data.poly_vars, arg) {
+                let arg = &ctx.heap[expr_args[arg_idx]];
+                return construct_main_error(ctx, poly_data, poly_idx, expr)
+                    .with_info_at_span(
+                        &ctx.module.source, arg.span(), format!(
+                            "The polymorphic variable has type '{}' (which might have been partially inferred) while the argument inferred it to '{}'",
+                            InferenceType::partial_display_name(&ctx.heap, poly_section),
+                            InferenceType::partial_display_name(&ctx.heap, arg_section)
+                        )
+                    );
+            }
+        }
+
+        if let Some((poly_idx, poly_section, ret_section)) = has_explicit_poly_mismatch(&poly_data.poly_vars, &poly_data.returned) {
+            return construct_main_error(ctx, poly_data, poly_idx, expr)
+                .with_info_at_span(
+                    &ctx.module.source, expr.span(), format!(
+                        "The polymorphic variable has type '{}' (which might have been partially inferred) while the {} inferred it to '{}'",
+                        InferenceType::partial_display_name(&ctx.heap, poly_section),
+                        expr_return_name,
+                        InferenceType::partial_display_name(&ctx.heap, ret_section)
+                    )
+                )
         }
 
         unreachable!("construct_poly_arg_error without actual error found?")

@@ -866,7 +866,7 @@ impl TypeTable {
                     if !(definition.is_struct() || definition.is_enum() || definition.is_union()) {
                         let module_source = &modules[root_id.index as usize].source;
                         return Err(ParseError::new_error_str_at_span(
-                            module_source, element.full_span, "expected a datatype (struct, enum or union)"
+                            module_source, element.element_span, "expected a datatype (struct, enum or union)"
                         ))
                     }
 

@@ -826,8 +826,9 @@ impl Visitor for PassValidationLinking {
                     } else {
                         format!("not all fields are specified, [{}] are missing", not_specified)
                     };
+
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.elements[0].full_span, msg
+                        &ctx.module.source, literal.parser_type.full_span, msg
                     ));
                 }
 
@@ -859,7 +860,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_enum();
                     let ast_definition = ctx.heap[literal.definition].as_enum();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
+                        &ctx.module.source, literal.parser_type.full_span, format!(
                             "the variant '{}' does not exist on the enum '{}'",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
                         )
@@ -880,7 +881,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
+                        &ctx.module.source, literal.parser_type.full_span, format!(
                             "the variant '{}' does not exist on the union '{}'",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
                         )
@@ -896,7 +897,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.elements[0].full_span, format!(
+                        &ctx.module.source, literal.parser_type.full_span, format!(
                             "The variant '{}' of union '{}' expects {} embedded values, but {} were specified",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str(),
                             union_variant.embedded.len(), literal.values.len()
@@ -1167,9 +1168,13 @@ impl Visitor for PassValidationLinking {
                 let bound_variable_id = ctx.heap.alloc_variable(|this| Variable{
                     this,
                     kind: VariableKind::Binding,
-                    parser_type: ParserType{ elements: vec![
-                        ParserTypeElement{ full_span: bound_identifier.span, variant: ParserTypeVariant::Inferred }
-                    ]},
+                    parser_type: ParserType{
+                        elements: vec![ParserTypeElement{
+                            element_span: bound_identifier.span,
+                            variant: ParserTypeVariant::Inferred
+                        }],
+                        full_span: bound_identifier.span
+                    },
                     identifier: bound_identifier,
                     relative_pos_in_block: 0,
                     unique_id_in_scope: -1,

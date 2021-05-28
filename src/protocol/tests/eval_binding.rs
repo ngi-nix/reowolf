@@ -208,7 +208,7 @@ fn test_binding_fizz_buzz() {
         func fizz_buzz() -> bool {
             // auto fizz_more_slow = construct_fizz_buzz_very_slow(100);
             // return test_fizz_buzz(fizz_more_slow);
-            // auto fizz_less_slow = construct_fizz_buzz_slightly_less_slow(100);
+            // auto fizz_less_slow = construct_fizz_buzz_slightly_less_slow(10000000);
             // return test_fizz_buzz(fizz_less_slow);
 
             auto fizz_more_slow2 = construct_fizz_buzz_very_slow(100);

@@ -429,3 +429,50 @@ fn test_failed_polymorph_inference() {
         ",
     );
 }
+
+
+#[test]
+fn test_explicit_polymorph_argument() {
+    // Failed because array was put at same type depth as u32. So interpreted
+    // as a function with two polymorphic arguments
+    Tester::new_single_source_expect_ok("explicit with array", "
+    func foo<T>(T a, T b) -> T {
+        return a @ b;
+    }
+    func test() -> u32 {
+        return foo<u32[]>({1}, {2})[1];
+    }").for_function("test", |f| { f
+        .call_ok(Some(Value::UInt32(2)));
+    });
+
+    // Failed because type inferencer did not construct polymorph errors by
+    // considering that argument/return types failed against explicitly
+    // specified polymorphic arguments
+    Tester::new_single_source_expect_err("explicit polymorph mismatch", "
+    func foo<T>(T a, T b) -> T { return a + b; }
+    struct Bar<A, B>{A a, B b}
+    func test() -> u32 {
+        return foo<Bar<u32, u64>[]>(5, 6);
+    }").error(|e| { e
+        .assert_num(2)
+        .assert_occurs_at(0, "foo<Bar")
+        .assert_msg_has(0, "'T' of 'foo'")
+        .assert_occurs_at(1, "5, ")
+        .assert_msg_has(1, "has type 'Bar<u32, u64>[]")
+        .assert_msg_has(1, "inferred it to 'integerlike'");
+    });
+
+    // Similar to above, now for return type
+    Tester::new_single_source_expect_err("explicit polymorph mismatch", "
+    func foo<T>(T a, T b) -> T { return a + b; }
+    func test() -> u32 {
+        return foo<u64>(5, 6);
+    }").error(|e| { e
+        .assert_num(2)
+        .assert_occurs_at(0, "foo<u64")
+        .assert_msg_has(0, "'T' of 'foo'")
+        .assert_occurs_at(1, "foo<u64")
+        .assert_msg_has(1, "has type 'u64'")
+        .assert_msg_has(1, "return type inferred it to 'u32'");
+    });
+}

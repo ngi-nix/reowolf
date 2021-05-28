@@ -95,9 +95,9 @@ impl Parser {
         parser.symbol_table.insert_scope(None, SymbolScope::Global);
 
         fn quick_type(variants: &[ParserTypeVariant]) -> ParserType {
-            let mut t = ParserType{ elements: Vec::with_capacity(variants.len()) };
+            let mut t = ParserType{ elements: Vec::with_capacity(variants.len()), full_span: InputSpan::new() };
             for variant in variants {
-                t.elements.push(ParserTypeElement{ full_span: InputSpan::new(), variant: variant.clone() });
+                t.elements.push(ParserTypeElement{ element_span: InputSpan::new(), variant: variant.clone() });
             }
             t
         }

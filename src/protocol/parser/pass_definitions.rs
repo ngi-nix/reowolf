@@ -124,7 +124,7 @@ impl PassDefinitions {
         consume_comma_separated(
             TokenKind::OpenCurly, TokenKind::CloseCurly, &module.source, iter, ctx,
             |source, iter, ctx| {
-                let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
+                let poly_vars = ctx.heap[definition_id].poly_vars();
 
                 let start_pos = iter.last_valid_pos();
                 let parser_type = consume_parser_type(
@@ -213,7 +213,7 @@ impl PassDefinitions {
                 let has_embedded = maybe_consume_comma_separated(
                     TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
                     |source, iter, ctx| {
-                        let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
+                        let poly_vars = ctx.heap[definition_id].poly_vars();
                         consume_parser_type(
                             source, iter, &ctx.symbols, &ctx.heap, poly_vars,
                             module_scope, definition_id, false, 0
@@ -273,7 +273,7 @@ impl PassDefinitions {
         consume_comma_separated_until(
             TokenKind::OpenCurly, &module.source, iter, ctx,
             |source, iter, ctx| {
-                let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
+                let poly_vars = ctx.heap[definition_id].poly_vars();
                 consume_parser_type(source, iter, &ctx.symbols, &ctx.heap, poly_vars, module_scope, definition_id, false, 0)
             },
             &mut return_types, "a return type", Some(&mut open_curly_pos)
@@ -354,7 +354,7 @@ impl PassDefinitions {
             let id = ctx.heap.alloc_block_statement(|this| BlockStatement{
                 this,
                 is_implicit: true,
-                span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos), // TODO: @Span
+                span: InputSpan::from_positions(wrap_begin_pos, wrap_end_pos),
                 statements,
                 end_block: EndBlockStatementId::new_invalid(),
                 scope_node: ScopeNode::new_invalid(),
@@ -622,7 +622,7 @@ impl PassDefinitions {
         consume_comma_separated_until(
             TokenKind::SemiColon, &module.source, iter, ctx,
             |_source, iter, ctx| self.consume_expression(module, iter, ctx),
-            &mut scoped_section, "a return expression", None
+            &mut scoped_section, "an expression", None
         )?;
         let expressions = scoped_section.into_vec();
 
@@ -658,7 +658,6 @@ impl PassDefinitions {
     ) -> Result<NewStatementId, ParseError> {
         let new_span = consume_exact_ident(&module.source, iter, KW_STMT_NEW)?;
 
-        // TODO: @Cleanup, should just call something like consume_component_expression-ish
         let start_pos = iter.last_valid_pos();
         let expression_id = self.consume_primary_expression(module, iter, ctx)?;
         let expression = &ctx.heap[expression_id];
@@ -695,24 +694,29 @@ impl PassDefinitions {
     ) -> Result<ChannelStatementId, ParseError> {
         // Consume channel specification
         let channel_span = consume_exact_ident(&module.source, iter, KW_STMT_CHANNEL)?;
-        let inner_port_type = if Some(TokenKind::OpenAngle) == iter.next() {
+        let (inner_port_type, end_pos) = if Some(TokenKind::OpenAngle) == iter.next() {
             // Retrieve the type of the channel, we're cheating a bit here by
             // consuming the first '<' and setting the initial angle depth to 1
             // such that our final '>' will be consumed as well.
             iter.consume();
             let definition_id = self.cur_definition;
             let poly_vars = ctx.heap[definition_id].poly_vars();
-            consume_parser_type(
+            let parser_type = consume_parser_type(
                 &module.source, iter, &ctx.symbols, &ctx.heap,
                 poly_vars, SymbolScope::Module(module.root_id), definition_id,
                 true, 1
-            )?
+            )?;
+
+            (parser_type.elements, parser_type.full_span.end)
         } else {
             // Assume inferred
-            ParserType{ elements: vec![ParserTypeElement{
-                full_span: channel_span, // TODO: @Span fix
-                variant: ParserTypeVariant::Inferred
-            }]}
+            (
+                vec![ParserTypeElement{
+                    element_span: channel_span,
+                    variant: ParserTypeVariant::Inferred
+                }],
+                channel_span.end
+            )
         };
 
         let from_identifier = consume_ident_interned(&module.source, iter, ctx)?;
@@ -721,10 +725,14 @@ impl PassDefinitions {
         consume_token(&module.source, iter, TokenKind::SemiColon)?;
 
         // Construct ports
-        let port_type_len = inner_port_type.elements.len() + 1;
-        let mut from_port_type = ParserType{ elements: Vec::with_capacity(port_type_len) };
-        from_port_type.elements.push(ParserTypeElement{ full_span: channel_span, variant: ParserTypeVariant::Output });
-        from_port_type.elements.extend_from_slice(&inner_port_type.elements);
+        let port_type_span = InputSpan::from_positions(channel_span.begin, end_pos);
+        let port_type_len = inner_port_type.len() + 1;
+        let mut from_port_type = ParserType{ elements: Vec::with_capacity(port_type_len), full_span: port_type_span };
+        from_port_type.elements.push(ParserTypeElement{
+            element_span: channel_span,
+            variant: ParserTypeVariant::Output,
+        });
+        from_port_type.elements.extend_from_slice(&inner_port_type);
         let from = ctx.heap.alloc_variable(|this| Variable{
             this,
             kind: VariableKind::Local,
@@ -734,9 +742,12 @@ impl PassDefinitions {
             unique_id_in_scope: -1,
         });
 
-        let mut to_port_type = ParserType{ elements: Vec::with_capacity(port_type_len) };
-        to_port_type.elements.push(ParserTypeElement{ full_span: channel_span, variant: ParserTypeVariant::Input });
-        to_port_type.elements.extend_from_slice(&inner_port_type.elements);
+        let mut to_port_type = ParserType{ elements: Vec::with_capacity(port_type_len), full_span: port_type_span };
+        to_port_type.elements.push(ParserTypeElement{
+            element_span: channel_span,
+            variant: ParserTypeVariant::Input
+        });
+        to_port_type.elements.extend_from_slice(&inner_port_type);
         let to = ctx.heap.alloc_variable(|this|Variable{
             this,
             kind: VariableKind::Local,
@@ -815,7 +826,7 @@ impl PassDefinitions {
             if Some(TokenKind::Ident) == iter.next() {
                 // Assume this is a proper memory statement
                 let identifier = consume_ident_interned(&module.source, iter, ctx)?;
-                let memory_span = InputSpan::from_positions(parser_type.elements[0].full_span.begin, identifier.span.end);
+                let memory_span = InputSpan::from_positions(parser_type.full_span.begin, identifier.span.end);
                 let assign_span = consume_token(&module.source, iter, TokenKind::Equal)?;
 
                 let initial_expr_begin_pos = iter.last_valid_pos();
@@ -1401,7 +1412,7 @@ impl PassDefinitions {
 
                                 ctx.heap.alloc_call_expression(|this| CallExpression{
                                     this,
-                                    span: parser_type.elements[0].full_span, // TODO: @Span fix
+                                    span: parser_type.full_span,
                                     parser_type,
                                     method: Method::UserComponent,
                                     arguments,
@@ -1431,7 +1442,7 @@ impl PassDefinitions {
 
                                 ctx.heap.alloc_call_expression(|this| CallExpression{
                                     this,
-                                    span: parser_type.elements[0].full_span, // TODO: @Span fix
+                                    span: parser_type.full_span,
                                     parser_type,
                                     method,
                                     arguments,
@@ -1444,8 +1455,7 @@ impl PassDefinitions {
                     },
                     _ => {
                         return Err(ParseError::new_error_str_at_span(
-                            &module.source, parser_type.elements[0].full_span,
-                            "unexpected type in expression, note that casting expressions are not yet implemented"
+                            &module.source, parser_type.full_span, "unexpected type in expression"
                         ))
                     }
                 }
@@ -1500,10 +1510,13 @@ impl PassDefinitions {
                         )?
                     } else {
                         // Automatic casting with inferred target type
-                        ParserType{ elements: vec![ParserTypeElement{
-                            full_span: ident_span, // TODO: @Span fix
-                            variant: ParserTypeVariant::Inferred,
-                        }]}
+                        ParserType{
+                            elements: vec![ParserTypeElement{
+                                element_span: ident_span,
+                                variant: ParserTypeVariant::Inferred,
+                            }],
+                            full_span: ident_span
+                        }
                     };
 
                     consume_token(&module.source, iter, TokenKind::OpenParen)?;
@@ -1533,7 +1546,7 @@ impl PassDefinitions {
                     } else if Some(TokenKind::OpenParen) == next {
                         return Err(ParseError::new_error_str_at_span(
                             &module.source, ident_span,
-                            "unknown identifier, did you mistype a union variant's or a function's name?"
+                            "unknown identifier, did you mistype a union variant's, component's, or function's name?"
                         ));
                     } else if Some(TokenKind::OpenCurly) == next {
                         return Err(ParseError::new_error_str_at_span(
@@ -1614,7 +1627,7 @@ impl PassDefinitions {
 /// these.
 ///
 /// Note that the first depth index is used as a hack.
-// TODO: @Optimize, @Span fix, @Cleanup
+// TODO: @Optimize, @Cleanup
 fn consume_parser_type(
     source: &InputSource, iter: &mut TokenIter, symbols: &SymbolTable, heap: &Heap, poly_vars: &[Identifier],
     cur_scope: SymbolScope, wrapping_definition: DefinitionId, allow_inference: bool, first_angle_depth: i32,
@@ -1628,53 +1641,90 @@ fn consume_parser_type(
     // before the most recently parsed type.
     fn insert_array_before(elements: &mut Vec<Entry>, depth: i32, span: InputSpan) {
         let index = elements.iter().rposition(|e| e.depth == depth).unwrap();
+        let num_embedded = elements[index].element.variant.num_embedded();
         elements.insert(index, Entry{
-            element: ParserTypeElement{ full_span: span, variant: ParserTypeVariant::Array },
+            element: ParserTypeElement{ element_span: span, variant: ParserTypeVariant::Array },
             depth,
         });
+
+        // Now the original element, and all of its children, should have their
+        // depth incremented by 1
+        elements[index + 1].depth += 1;
+        if num_embedded != 0 {
+            for idx in index + 2..elements.len() {
+                let element = &mut elements[idx];
+                if element.depth >= depth + 1 {
+                    element.depth += 1;
+                } else {
+                    break;
+                }
+            }
+        }
     }
 
     // Most common case we just have one type, perhaps with some array
     // annotations. This is both the hot-path, and simplifies the state machine
     // that follows and is responsible for parsing more complicated types.
-    let element = consume_parser_type_ident(source, iter, symbols, heap, poly_vars, cur_scope, wrapping_definition, allow_inference)?;
+    let element = consume_parser_type_ident(
+        source, iter, symbols, heap, poly_vars, cur_scope,
+        wrapping_definition, allow_inference
+    )?;
+
     if iter.next() != Some(TokenKind::OpenAngle) {
         let num_embedded = element.variant.num_embedded();
-        let mut num_array = 0;
+        let first_pos = element.element_span.begin;
+        let mut last_pos = element.element_span.end;
+        let mut elements = Vec::with_capacity(num_embedded + 2); // type itself + embedded + 1 (maybe) array type
+
+        // Consume any potential array elements
         while iter.next() == Some(TokenKind::OpenSquare) {
+            let mut array_span = iter.next_span();
             iter.consume();
+
+            let end_span = iter.next_span();
+            array_span.end = end_span.end;
             consume_token(source, iter, TokenKind::CloseSquare)?;
-            num_array += 1;
+
+            last_pos = end_span.end;
+            elements.push(ParserTypeElement{ element_span: array_span, variant: ParserTypeVariant::Array });
         }
 
-        let array_span = element.full_span;
-        let mut elements = Vec::with_capacity(num_array + num_embedded + 1);
-        for _ in 0..num_array {
-            elements.push(ParserTypeElement{ full_span: array_span, variant: ParserTypeVariant::Array });
-        }
+        // Push the element itself
+        let element_span = element.element_span;
         elements.push(element);
 
+        // Check if polymorphic arguments are expected
         if num_embedded != 0 {
             if !allow_inference {
-                return Err(ParseError::new_error_str_at_span(source, array_span, "type inference is not allowed here"));
+                return Err(ParseError::new_error_str_at_span(source, element_span, "type inference is not allowed here"));
             }
 
             for _ in 0..num_embedded {
-                elements.push(ParserTypeElement { full_span: array_span, variant: ParserTypeVariant::Inferred });
+                elements.push(ParserTypeElement { element_span, variant: ParserTypeVariant::Inferred });
             }
         }
 
+        // When we have applied the initial-open-angle hack (e.g. consuming an
+        // explicit type on a channel), then we consume the closing angles as
+        // well.
         for _ in 0..first_angle_depth {
+            let (_, angle_end_pos) = iter.next_positions();
+            last_pos = angle_end_pos;
             consume_token(source, iter, TokenKind::CloseAngle)?;
         }
 
-        return Ok(ParserType{ elements });
+        return Ok(ParserType{
+            elements,
+            full_span: InputSpan::from_positions(first_pos, last_pos)
+        });
     };
 
     // We have a polymorphic specification. So we start by pushing the item onto
     // our stack, then start adding entries together with the angle-brace depth
     // at which they're found.
     let mut elements = Vec::new();
+    let first_pos = element.element_span.begin;
+    let mut last_pos = element.element_span.end;
     elements.push(Entry{ element, depth: 0 });
 
     // Start out with the first '<' consumed.
@@ -1694,9 +1744,13 @@ fn consume_parser_type(
                     angle_depth += 1;
                     state = State::Open;
                 } else if Some(TokenKind::CloseAngle) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     angle_depth -= 1;
                     state = State::Close;
                 } else if Some(TokenKind::ShiftRight) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     angle_depth -= 2;
                     state = State::Close;
                 } else if Some(TokenKind::Comma) == next {
@@ -1734,9 +1788,13 @@ fn consume_parser_type(
                 if Some(TokenKind::Comma) == next {
                     state = State::Comma;
                 } else if Some(TokenKind::CloseAngle) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     angle_depth -= 1;
                     state = State::Close;
                 } else if Some(TokenKind::ShiftRight) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     angle_depth -= 2;
                     state = State::Close;
                 } else if Some(TokenKind::OpenSquare) == next {
@@ -1768,10 +1826,14 @@ fn consume_parser_type(
                     elements.push(Entry{ element, depth: angle_depth });
                     state = State::Ident;
                 } else if Some(TokenKind::CloseAngle) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     iter.consume();
                     angle_depth -= 1;
                     state = State::Close;
                 } else if Some(TokenKind::ShiftRight) == next {
+                    let (_, end_angle_pos) = iter.next_positions();
+                    last_pos = end_angle_pos;
                     iter.consume();
                     angle_depth -= 2;
                     state = State::Close;
@@ -1794,9 +1856,9 @@ fn consume_parser_type(
     // If here then we found the correct number of angle braces. But we still
     // need to make sure that each encountered type has the correct number of
     // embedded types.
-    let mut idx = 0;
-    while idx < elements.len() {
+    for idx in 0..elements.len() {
         let cur_element = &elements[idx];
+
         let expected_subtypes = cur_element.element.variant.num_embedded();
         let mut encountered_subtypes = 0;
         for peek_idx in idx + 1..elements.len() {
@@ -1814,25 +1876,26 @@ fn consume_parser_type(
                 // should be inferred.
                 if !allow_inference {
                     return Err(ParseError::new_error_str_at_span(
-                        source, cur_element.element.full_span,
+                        source, cur_element.element.element_span,
                         "type inference is not allowed here"
                     ));
                 }
 
-                // Insert the missing types
-                let inserted_span = cur_element.element.full_span;
+                // Insert the missing types (in reverse order, but they're all
+                // of the "inferred" type anyway).
+                let inserted_span = cur_element.element.element_span;
                 let inserted_depth = cur_element.depth + 1;
                 elements.reserve(expected_subtypes);
                 for _ in 0..expected_subtypes {
                     elements.insert(idx + 1, Entry{
-                        element: ParserTypeElement{ full_span: inserted_span, variant: ParserTypeVariant::Inferred },
+                        element: ParserTypeElement{ element_span: inserted_span, variant: ParserTypeVariant::Inferred },
                         depth: inserted_depth,
                     });
                 }
             } else {
                 // Mismatch in number of embedded types, produce a neat error
                 // message.
-                let type_name = String::from_utf8_lossy(source.section_at_span(cur_element.element.full_span));
+                let type_name = String::from_utf8_lossy(source.section_at_span(cur_element.element.element_span));
                 fn polymorphic_name_text(num: usize) -> &'static str {
                     if num == 1 { "polymorphic argument" } else { "polymorphic arguments" }
                 }
@@ -1842,7 +1905,7 @@ fn consume_parser_type(
 
                 if expected_subtypes == 0 {
                     return Err(ParseError::new_error_at_span(
-                        source, cur_element.element.full_span,
+                        source, cur_element.element.element_span,
                         format!(
                             "the type '{}' is not polymorphic, yet {} {} {} provided",
                             type_name, encountered_subtypes, polymorphic_name_text(encountered_subtypes),
@@ -1858,7 +1921,7 @@ fn consume_parser_type(
                 };
 
                 return Err(ParseError::new_error_at_span(
-                    source, cur_element.element.full_span,
+                    source, cur_element.element.element_span,
                     format!(
                         "expected {} {}{} for the type '{}', but {} {} provided",
                         expected_subtypes, polymorphic_name_text(expected_subtypes),
@@ -1868,8 +1931,6 @@ fn consume_parser_type(
                 ));
             }
         }
-
-        idx += 1;
     }
 
     let mut constructed_elements = Vec::with_capacity(elements.len());
@@ -1877,12 +1938,16 @@ fn consume_parser_type(
         constructed_elements.push(element.element);
     }
 
-    Ok(ParserType{ elements: constructed_elements })
+    Ok(ParserType{
+        elements: constructed_elements,
+        full_span: InputSpan::from_positions(first_pos, last_pos)
+    })
 }
 
 /// Consumes an identifier for which we assume that it resolves to some kind of
 /// type. Once we actually arrive at a type we will stop parsing. Hence there
-/// may be trailing '::' tokens in the iterator.
+/// may be trailing '::' tokens in the iterator, or the subsequent specification
+/// of polymorphic arguments.
 fn consume_parser_type_ident(
     source: &InputSource, iter: &mut TokenIter, symbols: &SymbolTable, heap: &Heap, poly_vars: &[Identifier],
     mut scope: SymbolScope, wrapping_definition: DefinitionId, allow_inference: bool,
@@ -1985,7 +2050,7 @@ fn consume_parser_type_ident(
         },
     };
 
-    Ok(ParserTypeElement{ full_span: type_span, variant })
+    Ok(ParserTypeElement{ element_span: type_span, variant })
 }
 
 /// Consumes polymorphic variables and throws them on the floor.
@@ -2008,7 +2073,7 @@ fn consume_parameter_list(
     consume_comma_separated(
         TokenKind::OpenParen, TokenKind::CloseParen, source, iter, ctx,
         |source, iter, ctx| {
-            let poly_vars = ctx.heap[definition_id].poly_vars(); // TODO: @Cleanup, this is really ugly. But rust...
+            let poly_vars = ctx.heap[definition_id].poly_vars(); // Rust being rust, multiple lookups
             let parser_type = consume_parser_type(
                 source, iter, &ctx.symbols, &ctx.heap, poly_vars, scope,
                 definition_id, false, 0
