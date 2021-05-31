@@ -388,8 +388,8 @@ fn test_failed_polymorph_inference() {
         "
     ).error(|e| { e
         .assert_num(2)
-        .assert_any_msg_has("type 'Uninteresting<s8>'")
-        .assert_any_msg_has("type 'Uninteresting<s32>'");
+        .assert_msg_has(0, "type 'Uninteresting<s8>'")
+        .assert_msg_has(1, "type 'Uninteresting<s32>'");
     });
 
     Tester::new_single_source_expect_err(
@@ -405,7 +405,7 @@ fn test_failed_polymorph_inference() {
     ).error(|e| { e
         .assert_num(3)
         .assert_ctx_has(0, "holder.a")
-        .assert_occurs_at(0, ".")
+        .assert_occurs_at(0, "holder.a")
         .assert_msg_has(0, "Conflicting type for polymorphic variable 'Shazam'")
         .assert_msg_has(1, "inferred it to 's8'")
         .assert_msg_has(2, "inferred it to 's32'");

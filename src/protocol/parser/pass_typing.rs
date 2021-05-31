@@ -1429,7 +1429,7 @@ impl PassTyping {
                     };
                     let poly_vars = ctx.heap[definition].poly_vars();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, expr.span(), format!(
+                        &ctx.module.source, expr.operation_span(), format!(
                             "could not fully infer the type of polymorphic variable '{}' of this expression (got '{}')",
                             poly_vars[poly_idx].value.as_str(), poly_type.display_name(&ctx.heap)
                         )
@@ -1456,7 +1456,7 @@ impl PassTyping {
                 } else {
                     let expr = &ctx.heap[infer_expr.expr_id];
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, expr.span(), format!(
+                        &ctx.module.source, expr.full_span(), format!(
                             "could not fully infer the type of this expression (got '{}')",
                             expr_type.display_name(&ctx.heap)
                         )
@@ -2439,10 +2439,10 @@ impl PassTyping {
             let cast_expr = &ctx.heap[id];
             let subject_expr = &ctx.heap[cast_expr.subject];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, cast_expr.span, "invalid casting operation"
+                &ctx.module.source, cast_expr.full_span, "invalid casting operation"
             ).with_info_at_span(
-                &ctx.module.source, subject_expr.span(), format!(
-                    "cannot cast this type '{}' to the cast type '{}'",
+                &ctx.module.source, subject_expr.full_span(), format!(
+                    "cannot cast the argument type '{}' to the cast type '{}'",
                     subject_type.display_name(&ctx.heap),
                     expr_type.display_name(&ctx.heap)
                 )
@@ -2781,9 +2781,9 @@ impl PassTyping {
 
         if infer_res == DualInferenceResult::Incompatible {
             // TODO: Check if I still need to use this
-            let outer_span = ctx.heap[outer_expr_id].span();
+            let outer_span = ctx.heap[outer_expr_id].full_span();
             let (span_name, span) = match expr_id {
-                Some(expr_id) => ("argument's", ctx.heap[expr_id].span()),
+                Some(expr_id) => ("argument's", ctx.heap[expr_id].full_span()),
                 None => ("type's", outer_span)
             };
             let (signature_display_type, expression_display_type) = unsafe { (
@@ -3468,12 +3468,12 @@ impl PassTyping {
         let arg_type = &self.expr_types[arg_expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
-            &ctx.module.source, expr.span(), format!(
+            &ctx.module.source, expr.operation_span(), format!(
                 "incompatible types: this expression expected a '{}'",
                 expr_type.display_name(&ctx.heap)
             )
         ).with_info_at_span(
-            &ctx.module.source, arg_expr.span(), format!(
+            &ctx.module.source, arg_expr.full_span(), format!(
                 "but this expression yields a '{}'",
                 arg_type.display_name(&ctx.heap)
             )
@@ -3494,15 +3494,15 @@ impl PassTyping {
         let arg2_type = &self.expr_types[arg2_idx as usize].expr_type;
 
         return ParseError::new_error_str_at_span(
-            &ctx.module.source, expr.span(),
+            &ctx.module.source, expr.operation_span(),
             "incompatible types: cannot apply this expression"
         ).with_info_at_span(
-            &ctx.module.source, arg1.span(), format!(
+            &ctx.module.source, arg1.full_span(), format!(
                 "Because this expression has type '{}'",
                 arg1_type.display_name(&ctx.heap)
             )
         ).with_info_at_span(
-            &ctx.module.source, arg2.span(), format!(
+            &ctx.module.source, arg2.full_span(), format!(
                 "But this expression has type '{}'",
                 arg2_type.display_name(&ctx.heap)
             )
@@ -3517,7 +3517,7 @@ impl PassTyping {
         let expr_type = &self.expr_types[expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
-            &ctx.module.source, expr.span(), format!(
+            &ctx.module.source, expr.full_span(), format!(
                 "incompatible types: got a '{}' but expected a '{}'",
                 expr_type.display_name(&ctx.heap), 
                 InferenceType::partial_display_name(&ctx.heap, template)
@@ -3593,7 +3593,7 @@ impl PassTyping {
                 Expression::Call(expr) => {
                     let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.span, format!(
+                        &ctx.module.source, expr.func_span, format!(
                             "Conflicting type for polymorphic variable '{}' of '{}'",
                             poly_var, func_name
                         )
@@ -3611,7 +3611,7 @@ impl PassTyping {
                 Expression::Select(expr) => {
                     let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.span, format!(
+                        &ctx.module.source, expr.full_span, format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
                             poly_var, expr.field_name.value.as_str(), struct_name
                         )
@@ -3657,7 +3657,7 @@ impl PassTyping {
         ) {
             return construct_main_error(ctx, poly_data, poly_idx, expr)
                 .with_info_at_span(
-                    &ctx.module.source, expr.span(), format!(
+                    &ctx.module.source, expr.full_span(), format!(
                         "The {} inferred the conflicting types '{}' and '{}'",
                         expr_return_name,
                         InferenceType::partial_display_name(&ctx.heap, section_a),
@@ -3679,7 +3679,7 @@ impl PassTyping {
                         // Same argument
                         let arg = &ctx.heap[expr_args[arg_a_idx]];
                         return error.with_info_at_span(
-                            &ctx.module.source, arg.span(), format!(
+                            &ctx.module.source, arg.full_span(), format!(
                                 "This argument inferred the conflicting types '{}' and '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a),
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
@@ -3689,12 +3689,12 @@ impl PassTyping {
                         let arg_a = &ctx.heap[expr_args[arg_a_idx]];
                         let arg_b = &ctx.heap[expr_args[arg_b_idx]];
                         return error.with_info_at_span(
-                            &ctx.module.source, arg_a.span(), format!(
+                            &ctx.module.source, arg_a.full_span(), format!(
                                 "This argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a)
                             )
                         ).with_info_at_span(
-                            &ctx.module.source, arg_b.span(), format!(
+                            &ctx.module.source, arg_b.full_span(), format!(
                                 "While this argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
@@ -3708,13 +3708,13 @@ impl PassTyping {
                 let arg = &ctx.heap[expr_args[arg_a_idx]];
                 return construct_main_error(ctx, poly_data, poly_idx, expr)
                     .with_info_at_span(
-                        &ctx.module.source, arg.span(), format!(
+                        &ctx.module.source, arg.full_span(), format!(
                             "This argument inferred it to '{}'",
                             InferenceType::partial_display_name(&ctx.heap, section_arg)
                         )
                     )
                     .with_info_at_span(
-                        &ctx.module.source, expr.span(), format!(
+                        &ctx.module.source, expr.full_span(), format!(
                             "While the {} inferred it to '{}'",
                             expr_return_name,
                             InferenceType::partial_display_name(&ctx.heap, section_ret)
@@ -3730,7 +3730,7 @@ impl PassTyping {
                 let arg = &ctx.heap[expr_args[arg_idx]];
                 return construct_main_error(ctx, poly_data, poly_idx, expr)
                     .with_info_at_span(
-                        &ctx.module.source, arg.span(), format!(
+                        &ctx.module.source, arg.full_span(), format!(
                             "The polymorphic variable has type '{}' (which might have been partially inferred) while the argument inferred it to '{}'",
                             InferenceType::partial_display_name(&ctx.heap, poly_section),
                             InferenceType::partial_display_name(&ctx.heap, arg_section)
@@ -3742,7 +3742,7 @@ impl PassTyping {
         if let Some((poly_idx, poly_section, ret_section)) = has_explicit_poly_mismatch(&poly_data.poly_vars, &poly_data.returned) {
             return construct_main_error(ctx, poly_data, poly_idx, expr)
                 .with_info_at_span(
-                    &ctx.module.source, expr.span(), format!(
+                    &ctx.module.source, expr.full_span(), format!(
                         "The polymorphic variable has type '{}' (which might have been partially inferred) while the {} inferred it to '{}'",
                         InferenceType::partial_display_name(&ctx.heap, poly_section),
                         expr_return_name,

@@ -81,7 +81,7 @@ impl EvalError {
 
         let expr = &heap[expr_id];
         let statements = vec![
-            ErrorStatement::from_source_at_span(StatementKind::Error, last_module_source, expr.span(), msg)
+            ErrorStatement::from_source_at_span(StatementKind::Error, last_module_source, expr.full_span(), msg)
         ];
 
         EvalError{ statements, frames }

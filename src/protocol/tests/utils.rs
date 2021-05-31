@@ -569,7 +569,7 @@ impl<'a> FunctionTester<'a> {
         // Use the inner match index to find the expression
         let expr_id = seek_expr_in_stmt(
             &self.ctx.heap, self.def.body.upcast(),
-            &|expr| expr.span().begin.offset as usize == inner_match_idx
+            &|expr| expr.operation_span().begin.offset as usize == inner_match_idx
         );
         assert!(
             expr_id.is_some(),
@@ -811,26 +811,6 @@ impl<'a> ErrorTester<'a> {
             self.test_name, idx, msg, self.assert_postfix()
         );
 
-        self
-    }
-
-    // TODO: @tokenizer This should really be removed, as compilation should be
-    //  deterministic, but we're currently using rather inefficient hashsets for
-    //  the type inference, so remove once compiler architecture has changed.
-    pub(crate) fn assert_any_msg_has(self, msg: &str) -> Self {
-        let mut is_present = false;
-        for statement in &self.error.statements {
-            if statement.message.contains(msg) {
-                is_present = true;
-                break;
-            }
-        }
-
-        assert!(
-            is_present, "[{}] Expected an error statement to contain '{}' for {}",
-            self.test_name, msg, self.assert_postfix()
-        );
-        
         self
     }
 

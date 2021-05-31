@@ -861,7 +861,8 @@ impl PassDefinitions {
                 });
                 let assignment_expr_id = ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
                     this,
-                    span: assign_span,
+                    operator_span: assign_span,
+                    full_span: InputSpan::from_positions(memory_span.begin, initial_expr_end_pos),
                     left: variable_expr_id.upcast(),
                     operation: AssignmentOperator::Set,
                     right: initial_expr_id,
@@ -944,14 +945,19 @@ impl PassDefinitions {
 
         let expr = self.consume_conditional_expression(module, iter, ctx)?;
         if let Some(operation) = parse_assignment_operator(iter.next()) {
-            let span = iter.next_span();
+            let operator_span = iter.next_span();
             iter.consume();
 
             let left = expr;
             let right = self.consume_expression(module, iter, ctx)?;
 
+            let full_span = InputSpan::from_positions(
+                ctx.heap[left].full_span().begin,
+                ctx.heap[right].full_span().end,
+            );
+
             Ok(ctx.heap.alloc_assignment_expression(|this| AssignmentExpression{
-                this, span, left, operation, right,
+                this, operator_span, full_span, left, operation, right,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
             }).upcast())
@@ -965,15 +971,21 @@ impl PassDefinitions {
     ) -> Result<ExpressionId, ParseError> {
         let result = self.consume_concat_expression(module, iter, ctx)?;
         if let Some(TokenKind::Question) = iter.next() {
-            let span = iter.next_span();
+            let operator_span = iter.next_span();
             iter.consume();
 
             let test = result;
             let true_expression = self.consume_expression(module, iter, ctx)?;
             consume_token(&module.source, iter, TokenKind::Colon)?;
             let false_expression = self.consume_expression(module, iter, ctx)?;
+
+            let full_span = InputSpan::from_positions(
+                ctx.heap[test].full_span().begin,
+                ctx.heap[false_expression].full_span().end,
+            );
+
             Ok(ctx.heap.alloc_conditional_expression(|this| ConditionalExpression{
-                this, span, test, true_expression, false_expression,
+                this, operator_span, full_span, test, true_expression, false_expression,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
             }).upcast())
@@ -1150,15 +1162,15 @@ impl PassDefinitions {
 
         let next = iter.next();
         if let Some(operation) = parse_prefix_token(next) {
-            let span = iter.next_span();
+            let operator_span = iter.next_span();
             iter.consume();
 
             let expression = self.consume_prefix_expression(module, iter, ctx)?;
+            let full_span = InputSpan::from_positions(
+                operator_span.begin, ctx.heap[expression].full_span().end,
+            );
             Ok(ctx.heap.alloc_unary_expression(|this| UnaryExpression {
-                this,
-                span,
-                operation,
-                expression,
+                this, operator_span, full_span, operation, expression,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
             }).upcast())
@@ -1192,16 +1204,16 @@ impl PassDefinitions {
         let mut next = iter.next();
         while has_matching_postfix_token(next) {
             let token = next.unwrap();
-            let mut span = iter.next_span();
+            let mut operator_span = iter.next_span();
             iter.consume();
 
             if token == TokenKind::PlusPlus {
                 return Err(ParseError::new_error_str_at_span(
-                    &module.source, span, "postfix increment is not supported in this language"
+                    &module.source, operator_span, "postfix increment is not supported in this language"
                 ));
             } else if token == TokenKind::MinusMinus {
                 return Err(ParseError::new_error_str_at_span(
-                    &module.source, span, "prefix increment is not supported in this language"
+                    &module.source, operator_span, "prefix increment is not supported in this language"
                 ));
             } else if token == TokenKind::OpenSquare {
                 let subject = result;
@@ -1214,19 +1226,28 @@ impl PassDefinitions {
 
                     let to_index = self.consume_expression(module, iter, ctx)?;
                     let end_span = consume_token(&module.source, iter, TokenKind::CloseSquare)?;
-                    span.end = end_span.end;
+                    operator_span.end = end_span.end;
+                    let full_span = InputSpan::from_positions(
+                        ctx.heap[subject].full_span().begin, operator_span.end
+                    );
 
                     result = ctx.heap.alloc_slicing_expression(|this| SlicingExpression{
-                        this, span, subject, from_index, to_index,
+                        this,
+                        slicing_span: operator_span,
+                        full_span, subject, from_index, to_index,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast();
                 } else if Some(TokenKind::CloseSquare) == next {
                     let end_span = consume_token(&module.source, iter, TokenKind::CloseSquare)?;
-                    span.end = end_span.end;
+                    operator_span.end = end_span.end;
+
+                    let full_span = InputSpan::from_positions(
+                        ctx.heap[subject].full_span().begin, operator_span.end
+                    );
 
                     result = ctx.heap.alloc_indexing_expression(|this| IndexingExpression{
-                        this, span, subject,
+                        this, operator_span, full_span, subject,
                         index: from_index,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
@@ -1241,8 +1262,11 @@ impl PassDefinitions {
                 let subject = result;
                 let field_name = consume_ident_interned(&module.source, iter, ctx)?;
 
+                let full_span = InputSpan::from_positions(
+                    ctx.heap[subject].full_span().begin, field_name.span.end
+                );
                 result = ctx.heap.alloc_select_expression(|this| SelectExpression{
-                    this, span, subject, field_name,
+                    this, operator_span, full_span, subject, field_name,
                     parent: ExpressionParent::None,
                     unique_id_in_definition: -1,
                 }).upcast();
@@ -1408,11 +1432,14 @@ impl PassDefinitions {
                             },
                             Definition::Component(_) => {
                                 // Component instantiation
-                                let arguments = self.consume_expression_list(module, iter, ctx, None)?;
+                                let func_span = parser_type.full_span;
+                                let mut full_span = func_span;
+                                let arguments = self.consume_expression_list(
+                                    module, iter, ctx, Some(&mut full_span.end)
+                                )?;
 
                                 ctx.heap.alloc_call_expression(|this| CallExpression{
-                                    this,
-                                    span: parser_type.full_span,
+                                    this, func_span, full_span,
                                     parser_type,
                                     method: Method::UserComponent,
                                     arguments,
@@ -1438,14 +1465,14 @@ impl PassDefinitions {
                                 };
 
                                 // Function call: consume the arguments
-                                let arguments = self.consume_expression_list(module, iter, ctx, None)?;
+                                let func_span = parser_type.full_span;
+                                let mut full_span = func_span;
+                                let arguments = self.consume_expression_list(
+                                    module, iter, ctx, Some(&mut full_span.end)
+                                )?;
 
                                 ctx.heap.alloc_call_expression(|this| CallExpression{
-                                    this,
-                                    span: parser_type.full_span,
-                                    parser_type,
-                                    method,
-                                    arguments,
+                                    this, func_span, full_span, parser_type, method, arguments,
                                     definition: target_definition_id,
                                     parent: ExpressionParent::None,
                                     unique_id_in_definition: -1,
@@ -1481,18 +1508,19 @@ impl PassDefinitions {
                     }).upcast()
                 } else if ident_text == KW_LET {
                     // Binding expression
-                    let keyword_span = iter.next_span();
+                    let operator_span = iter.next_span();
                     iter.consume();
 
                     let bound_to = self.consume_prefix_expression(module, iter, ctx)?;
                     consume_token(&module.source, iter, TokenKind::Equal)?;
                     let bound_from = self.consume_prefix_expression(module, iter, ctx)?;
 
+                    let full_span = InputSpan::from_positions(
+                        operator_span.begin, ctx.heap[bound_from].full_span().end,
+                    );
+
                     ctx.heap.alloc_binding_expression(|this| BindingExpression{
-                        this,
-                        span: keyword_span,
-                        bound_to,
-                        bound_from,
+                        this, operator_span, full_span, bound_to, bound_from,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast()
@@ -1521,13 +1549,14 @@ impl PassDefinitions {
 
                     consume_token(&module.source, iter, TokenKind::OpenParen)?;
                     let subject = self.consume_expression(module, iter, ctx)?;
+                    let mut full_span = iter.next_span();
+                    full_span.begin = to_type.full_span.begin;
                     consume_token(&module.source, iter, TokenKind::CloseParen)?;
 
                     ctx.heap.alloc_cast_expression(|this| CastExpression{
                         this,
-                        span: ident_span,
-                        to_type,
-                        subject,
+                        cast_span: to_type.full_span,
+                        full_span, to_type, subject,
                         parent: ExpressionParent::None,
                         unique_id_in_definition: -1,
                     }).upcast()
@@ -1590,14 +1619,19 @@ impl PassDefinitions {
     ) -> Result<ExpressionId, ParseError> {
         let mut result = higher_precedence_fn(self, module, iter, ctx)?;
         while let Some(operation) = match_fn(iter.next()) {
-            let span = iter.next_span();
+            let operator_span = iter.next_span();
             iter.consume();
 
             let left = result;
             let right = higher_precedence_fn(self, module, iter, ctx)?;
 
+            let full_span = InputSpan::from_positions(
+                ctx.heap[left].full_span().begin,
+                ctx.heap[right].full_span().end,
+            );
+
             result = ctx.heap.alloc_binary_expression(|this| BinaryExpression{
-                this, span, left, operation, right,
+                this, operator_span, full_span, left, operation, right,
                 parent: ExpressionParent::None,
                 unique_id_in_definition: -1,
             }).upcast();

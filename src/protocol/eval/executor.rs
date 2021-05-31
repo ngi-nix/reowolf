@@ -587,6 +587,16 @@ impl Prompt {
                                     let msg_value = cur_frame.expr_values.pop_front().unwrap();
                                     let deref_msg_value = self.store.maybe_read_ref(&msg_value).clone();
 
+                                    match deref_msg_value {
+                                        Value::Message(_) => {},
+                                        _ => {
+                                            return Err(EvalError::new_error_at_expr(
+                                                self, modules, heap, expr_id,
+                                                String::from("Calls to `put` are currently restricted to only send instances of `msg` types. This will change in the future")
+                                            ));
+                                        }
+                                    }
+
                                     if ctx.did_put(deref_port_value.clone()) {
                                         // We're fine, deallocate in case the expression value stack
                                         // held an owned value

@@ -1224,22 +1224,44 @@ impl Expression {
         }
     }
 
-    pub fn span(&self) -> InputSpan {
+    /// Returns operator span, function name, a binding's "let" span, etc. An
+    /// indicator for the kind of expression that is being applied.
+    pub fn operation_span(&self) -> InputSpan {
         match self {
-            Expression::Assignment(expr) => expr.span,
-            Expression::Binding(expr) => expr.span,
-            Expression::Conditional(expr) => expr.span,
-            Expression::Binary(expr) => expr.span,
-            Expression::Unary(expr) => expr.span,
-            Expression::Indexing(expr) => expr.span,
-            Expression::Slicing(expr) => expr.span,
-            Expression::Select(expr) => expr.span,
+            Expression::Assignment(expr) => expr.operator_span,
+            Expression::Binding(expr) => expr.operator_span,
+            Expression::Conditional(expr) => expr.operator_span,
+            Expression::Binary(expr) => expr.operator_span,
+            Expression::Unary(expr) => expr.operator_span,
+            Expression::Indexing(expr) => expr.operator_span,
+            Expression::Slicing(expr) => expr.slicing_span,
+            Expression::Select(expr) => expr.operator_span,
             Expression::Literal(expr) => expr.span,
-            Expression::Cast(expr) => expr.span,
-            Expression::Call(expr) => expr.span,
+            Expression::Cast(expr) => expr.cast_span,
+            Expression::Call(expr) => expr.func_span,
             Expression::Variable(expr) => expr.identifier.span,
         }
     }
+
+    /// Returns the span covering the entire expression (i.e. including the
+    /// spans of the arguments as well).
+    pub fn full_span(&self) -> InputSpan {
+        match self {
+            Expression::Assignment(expr) => expr.full_span,
+            Expression::Binding(expr) => expr.full_span,
+            Expression::Conditional(expr) => expr.full_span,
+            Expression::Binary(expr) => expr.full_span,
+            Expression::Unary(expr) => expr.full_span,
+            Expression::Indexing(expr) => expr.full_span,
+            Expression::Slicing(expr) => expr.full_span,
+            Expression::Select(expr) => expr.full_span,
+            Expression::Literal(expr) => expr.span,
+            Expression::Cast(expr) => expr.full_span,
+            Expression::Call(expr) => expr.full_span,
+            Expression::Variable(expr) => expr.identifier.span,
+        }
+    }
+
     // TODO: @cleanup
     pub fn parent(&self) -> &ExpressionParent {
         match self {
@@ -1304,7 +1326,8 @@ pub enum AssignmentOperator {
 pub struct AssignmentExpression {
     pub this: AssignmentExpressionId,
     // Parsing
-    pub span: InputSpan, // of the operator
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub left: ExpressionId,
     pub operation: AssignmentOperator,
     pub right: ExpressionId,
@@ -1317,7 +1340,8 @@ pub struct AssignmentExpression {
 pub struct BindingExpression {
     pub this: BindingExpressionId,
     // Parsing
-    pub span: InputSpan, // of the binding keyword
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub bound_to: ExpressionId,
     pub bound_from: ExpressionId,
     // Validator/Linker
@@ -1329,7 +1353,8 @@ pub struct BindingExpression {
 pub struct ConditionalExpression {
     pub this: ConditionalExpressionId,
     // Parsing
-    pub span: InputSpan, // of question mark operator
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub test: ExpressionId,
     pub true_expression: ExpressionId,
     pub false_expression: ExpressionId,
@@ -1365,7 +1390,8 @@ pub enum BinaryOperator {
 pub struct BinaryExpression {
     pub this: BinaryExpressionId,
     // Parsing
-    pub span: InputSpan, // of the operator
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub left: ExpressionId,
     pub operation: BinaryOperator,
     pub right: ExpressionId,
@@ -1386,7 +1412,8 @@ pub enum UnaryOperator {
 pub struct UnaryExpression {
     pub this: UnaryExpressionId,
     // Parsing
-    pub span: InputSpan, // of the operator
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub operation: UnaryOperator,
     pub expression: ExpressionId,
     // Validator/Linker
@@ -1398,7 +1425,8 @@ pub struct UnaryExpression {
 pub struct IndexingExpression {
     pub this: IndexingExpressionId,
     // Parsing
-    pub span: InputSpan,
+    pub operator_span: InputSpan,
+    pub full_span: InputSpan,
     pub subject: ExpressionId,
     pub index: ExpressionId,
     // Validator/Linker
@@ -1410,7 +1438,8 @@ pub struct IndexingExpression {
 pub struct SlicingExpression {
     pub this: SlicingExpressionId,
     // Parsing
-    pub span: InputSpan, // from '[' to ']';
+    pub slicing_span: InputSpan, // from '[' to ']'
+    pub full_span: InputSpan, // includes subject
     pub subject: ExpressionId,
     pub from_index: ExpressionId,
     pub to_index: ExpressionId,
@@ -1423,7 +1452,8 @@ pub struct SlicingExpression {
 pub struct SelectExpression {
     pub this: SelectExpressionId,
     // Parsing
-    pub span: InputSpan, // of the '.'
+    pub operator_span: InputSpan, // of the '.'
+    pub full_span: InputSpan, // includes subject and field
     pub subject: ExpressionId,
     pub field_name: Identifier,
     // Validator/Linker
@@ -1435,7 +1465,8 @@ pub struct SelectExpression {
 pub struct CastExpression {
     pub this: CastExpressionId,
     // Parsing
-    pub span: InputSpan, // of the "cast" keyword,
+    pub cast_span: InputSpan, // of the "cast" keyword,
+    pub full_span: InputSpan, // includes the cast subject
     pub to_type: ParserType,
     pub subject: ExpressionId,
     // Validator/linker
@@ -1447,7 +1478,8 @@ pub struct CastExpression {
 pub struct CallExpression {
     pub this: CallExpressionId,
     // Parsing
-    pub span: InputSpan,
+    pub func_span: InputSpan, // of the function name
+    pub full_span: InputSpan, // includes the arguments and parentheses
     pub parser_type: ParserType, // of the function call, not the return type
     pub method: Method,
     pub arguments: Vec<ExpressionId>,

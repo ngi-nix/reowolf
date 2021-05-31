@@ -463,10 +463,11 @@ impl Visitor for PassValidationLinking {
         // Although we call assignment an expression to simplify the compiler's
         // code (mainly typechecking), we disallow nested use in expressions
         match self.expr_parent {
+            // Look at us: lying through our teeth while providing error messages.
             ExpressionParent::ExpressionStmt(_) => {},
             _ => return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, assignment_expr.span,
-                "assignments may only appear at the statement level"
+                &ctx.module.source, assignment_expr.full_span,
+                "assignments are statements, and cannot be used in expressions"
             )),
         }
 
@@ -478,7 +479,7 @@ impl Visitor for PassValidationLinking {
         self.next_expr_index += 1;
 
         self.expr_parent = ExpressionParent::Expression(upcast_id, 0);
-        self.must_be_assignable = Some(assignment_expr.span);
+        self.must_be_assignable = Some(assignment_expr.operator_span);
         self.visit_expr(ctx, left_expr_id)?;
         self.expr_parent = ExpressionParent::Expression(upcast_id, 1);
         self.must_be_assignable = None;
@@ -500,7 +501,7 @@ impl Visitor for PassValidationLinking {
         if self.in_test_expr.is_invalid() {
             let binding_expr = &ctx.heap[id];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, binding_expr.span,
+                &ctx.module.source, binding_expr.full_span,
                 "binding expressions can only be used inside the testing expression of 'if' and 'while' statements"
             ));
         }
@@ -509,10 +510,10 @@ impl Visitor for PassValidationLinking {
             let binding_expr = &ctx.heap[id];
             let previous_expr = &ctx.heap[self.in_binding_expr];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, binding_expr.span,
+                &ctx.module.source, binding_expr.full_span,
                 "nested binding expressions are not allowed"
             ).with_info_str_at_span(
-                &ctx.module.source, previous_expr.span,
+                &ctx.module.source, previous_expr.operator_span,
                 "the outer binding expression is found here"
             ));
         }
@@ -550,10 +551,10 @@ impl Visitor for PassValidationLinking {
                 let binding_expr = &ctx.heap[id];
                 let parent_expr = &ctx.heap[seeking_parent.as_expression()];
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, binding_expr.span,
+                    &ctx.module.source, binding_expr.full_span,
                     "only the logical-and operator (&&) may be applied to binding expressions"
                 ).with_info_str_at_span(
-                    &ctx.module.source, parent_expr.span(),
+                    &ctx.module.source, parent_expr.operation_span(),
                     "this was the disallowed operation applied to the result from a binding expression"
                 ));
             }
@@ -583,7 +584,7 @@ impl Visitor for PassValidationLinking {
             _ => {
                 let binding_expr = &ctx.heap[id];
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, binding_expr.span,
+                    &ctx.module.source, binding_expr.operator_span,
                     "the left hand side of a binding expression may only be a variable or a literal expression"
                 ));
             },
@@ -980,13 +981,13 @@ impl Visitor for PassValidationLinking {
             Method::Get => {
                 if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'get' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'get' may only occur inside synchronous blocks"
                     ));
                 }
@@ -994,13 +995,13 @@ impl Visitor for PassValidationLinking {
             Method::Put => {
                 if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'put' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'put' may only occur inside synchronous blocks"
                     ));
                 }
@@ -1008,13 +1009,13 @@ impl Visitor for PassValidationLinking {
             Method::Fires => {
                 if !self.def_type.is_primitive() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "a call to 'fires' may only occur inside synchronous blocks"
                     ));
                 }
@@ -1024,13 +1025,13 @@ impl Visitor for PassValidationLinking {
             Method::Assert => {
                 if self.def_type.is_function() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "assert statement may only occur in components"
                     ));
                 }
                 if self.in_sync.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.span,
+                        &ctx.module.source, call_expr.func_span,
                         "assert statements may only occur inside synchronous blocks"
                     ));
                 }
@@ -1044,14 +1045,14 @@ impl Visitor for PassValidationLinking {
         if expected_wrapping_new_stmt {
             if !self.expr_parent.is_new() {
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, call_expr.span,
+                    &ctx.module.source, call_expr.func_span,
                     "cannot call a component, it can only be instantiated by using 'new'"
                 ));
             }
         } else {
             if self.expr_parent.is_new() {
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, call_expr.span,
+                    &ctx.module.source, call_expr.func_span,
                     "only components can be instantiated, this is a function"
                 ));
             }
@@ -1069,7 +1070,7 @@ impl Visitor for PassValidationLinking {
         if num_provided_args != num_expected_args {
             let argument_text = if num_expected_args == 1 { "argument" } else { "arguments" };
             return Err(ParseError::new_error_at_span(
-                &ctx.module.source, call_expr.span, format!(
+                &ctx.module.source, call_expr.full_span, format!(
                     "expected {} {}, but {} were provided",
                     num_expected_args, argument_text, num_provided_args
                 )
@@ -1153,7 +1154,7 @@ impl Visitor for PassValidationLinking {
                         &ctx.module.source, var_expr.identifier.span,
                         "illegal location for binding variable: binding variables may only be nested under a binding expression, or a struct, union or array literal"
                     ).with_info_at_span(
-                        &ctx.module.source, binding_expr.span, format!(
+                        &ctx.module.source, binding_expr.operator_span, format!(
                             "'{}' was interpreted as a binding variable because the variable is not declared and it is nested under this binding expression",
                             var_expr.identifier.value.as_str()
                         )
