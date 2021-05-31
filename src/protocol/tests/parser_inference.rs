@@ -445,6 +445,19 @@ fn test_explicit_polymorph_argument() {
         .call_ok(Some(Value::UInt32(2)));
     });
 
+    Tester::new_single_source_expect_err("multi-explicit with array", "
+    func foo<A, B, C>(A a, B b) -> C {
+        return (a @ b)[1];
+    }
+    func test() -> u32 {
+        return foo<u32[], u32[], u32, u32>({1}, {2});
+    }").error(|e| { e
+        .assert_num(1)
+        .assert_occurs_at(0, "foo<u32")
+        .assert_msg_has(0, "expected 3")
+        .assert_msg_has(0, "4 were provided");
+    });
+
     // Failed because type inferencer did not construct polymorph errors by
     // considering that argument/return types failed against explicitly
     // specified polymorphic arguments
