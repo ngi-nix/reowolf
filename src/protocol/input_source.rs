@@ -168,7 +168,6 @@ impl InputSource {
         }
 
         lookup.push(self.input.len() as u32 + 1); // for lookup_line_end, intentionally adding one character
-        debug_assert_eq!(self.line as usize + 2, lookup.len(), "remove me: i am a testing assert and sometimes invalid");
 
         // Return created lookup
         drop(lookup);

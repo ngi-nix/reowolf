@@ -62,4 +62,9 @@ fn test_string_literals() {
     Tester::new_single_source_expect_err("invalid escaped character", "
         func test() -> string { return \"\\y\"; }
     ").error(|e| { e.assert_msg_has(0, "unsupported escape character 'y'"); });
+
+    // Note sure if this should always be in here...
+    Tester::new_single_source_expect_err("non-ASCII string", "
+        func test() -> string { return \"💧\"; }
+    ").error(|e| { e.assert_msg_has(0, "non-ASCII character in string literal"); });
 }
