@@ -67,7 +67,7 @@ const VOID_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Void ];
 const MESSAGE_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Message, InferenceTypePart::UInt8 ];
 const BOOL_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Bool ];
 const CHARACTER_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::Character ];
-const STRING_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::String ];
+const STRING_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::String, InferenceTypePart::Character ];
 const NUMBERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::NumberLike ];
 const INTEGERLIKE_TEMPLATE: [InferenceTypePart; 1] = [ InferenceTypePart::IntegerLike ];
 const ARRAY_TEMPLATE: [InferenceTypePart; 2] = [ InferenceTypePart::Array, InferenceTypePart::Unknown ];
@@ -155,10 +155,10 @@ impl InferenceTypePart {
         }
     }
 
-    fn is_concrete_msg_array_or_slice(&self) -> bool {
+    fn is_concrete_arraylike(&self) -> bool {
         use InferenceTypePart as ITP;
         match self {
-            ITP::Array | ITP::Slice | ITP::Message => true,
+            ITP::Array | ITP::Slice | ITP::String | ITP::Message => true,
             _ => false,
         }
     }
@@ -179,7 +179,7 @@ impl InferenceTypePart {
 
         (*self == ITP::IntegerLike && arg.is_concrete_integer()) ||
         (*self == ITP::NumberLike && (arg.is_concrete_number() || *arg == ITP::IntegerLike)) ||
-        (*self == ITP::ArrayLike && arg.is_concrete_msg_array_or_slice()) ||
+        (*self == ITP::ArrayLike && arg.is_concrete_arraylike()) ||
         (*self == ITP::PortLike && arg.is_concrete_port())
     }
 
@@ -195,46 +195,18 @@ impl InferenceTypePart {
             ITP::Void | ITP::Bool |
             ITP::UInt8 | ITP::UInt16 | ITP::UInt32 | ITP::UInt64 |
             ITP::SInt8 | ITP::SInt16 | ITP::SInt32 | ITP::SInt64 |
-            ITP::Character | ITP::String => {
+            ITP::Character => {
                 -1
             },
             ITP::Marker(_) |
             ITP::ArrayLike | ITP::Message | ITP::Array | ITP::Slice |
-            ITP::PortLike | ITP::Input | ITP::Output => {
+            ITP::PortLike | ITP::Input | ITP::Output | ITP::String => {
                 // One subtype, so do not modify depth
                 0
             },
             ITP::Instance(_, num_args) => {
                 (*num_args as i32) - 1
             }
-        }
-    }
-}
-
-impl From<ConcreteTypePart> for InferenceTypePart {
-    fn from(v: ConcreteTypePart) -> InferenceTypePart {
-        use ConcreteTypePart as CTP;
-        use InferenceTypePart as ITP;
-
-        match v {
-            CTP::Void => ITP::Void,
-            CTP::Message => ITP::Message,
-            CTP::Bool => ITP::Bool,
-            CTP::UInt8 => ITP::UInt8,
-            CTP::UInt16 => ITP::UInt16,
-            CTP::UInt32 => ITP::UInt32,
-            CTP::UInt64 => ITP::UInt64,
-            CTP::SInt8 => ITP::SInt8,
-            CTP::SInt16 => ITP::SInt16,
-            CTP::SInt32 => ITP::SInt32,
-            CTP::SInt64 => ITP::SInt64,
-            CTP::Character => ITP::Character,
-            CTP::String => ITP::String,
-            CTP::Array => ITP::Array,
-            CTP::Slice => ITP::Slice,
-            CTP::Input => ITP::Input,
-            CTP::Output => ITP::Output,
-            CTP::Instance(id, num) => ITP::Instance(id, num),
         }
     }
 }
@@ -312,7 +284,7 @@ impl InferenceType {
         }
 
         // If here, then the inference type is malformed
-        unreachable!();
+        unreachable!("Malformed type: {:?}", parts);
     }
 
     /// Call that attempts to infer the part at `to_infer.parts[to_infer_idx]` 
@@ -625,7 +597,13 @@ impl InferenceType {
                 ITP::SInt32 => CTP::SInt32,
                 ITP::SInt64 => CTP::SInt64,
                 ITP::Character => CTP::Character,
-                ITP::String => CTP::String,
+                ITP::String => {
+                    // Inferred type has a 'char' subtype to simplify array
+                    // checking, we remove it here.
+                    debug_assert_eq!(self.parts[idx + 1], InferenceTypePart::Character);
+                    idx += 1;
+                    CTP::String
+                },
                 ITP::Array => CTP::Array,
                 ITP::Slice => CTP::Slice,
                 ITP::Input => CTP::Input,
@@ -675,7 +653,10 @@ impl InferenceType {
             ITP::SInt32 => buffer.push_str(KW_TYPE_SINT32_STR),
             ITP::SInt64 => buffer.push_str(KW_TYPE_SINT64_STR),
             ITP::Character => buffer.push_str(KW_TYPE_CHAR_STR),
-            ITP::String => buffer.push_str(KW_TYPE_STRING_STR),
+            ITP::String => {
+                buffer.push_str(KW_TYPE_STRING_STR);
+                idx += 1; // skip the 'char' subtype
+            },
             ITP::Message => {
                 buffer.push_str(KW_TYPE_MESSAGE_STR);
                 buffer.push('<');
@@ -1041,9 +1022,9 @@ impl Visitor for PassTyping {
             debug_log!("Polymorphic variables:");
             for (_idx, poly_var) in self.poly_vars.iter().enumerate() {
                 let mut infer_type_parts = Vec::new();
-                for concrete_part in &poly_var.parts {
-                    infer_type_parts.push(InferenceTypePart::from(*concrete_part));
-                }
+                Self::determine_inference_type_from_concrete_type(
+                    &mut infer_type_parts, &poly_var.parts
+                );
                 let _infer_type = InferenceType::new(false, true, infer_type_parts);
                 debug_log!(" - [{:03}] {:?}", _idx, _infer_type.display_name(&ctx.heap));
             }
@@ -1726,16 +1707,38 @@ impl PassTyping {
 
         let (progress_expr, progress_arg1, progress_arg2) = match expr.operation {
             BO::Concatenate => {
-                // Arguments may be arrays/slices, output is always an array
-                let progress_expr = self.apply_template_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?;
-                let progress_arg1 = self.apply_template_constraint(ctx, arg1_id, &ARRAYLIKE_TEMPLATE)?;
-                let progress_arg2 = self.apply_template_constraint(ctx, arg2_id, &ARRAYLIKE_TEMPLATE)?;
+                // Two cases: if one of the arguments or the output type is a
+                // string, then all must be strings. Otherwise the arguments
+                // must be arraylike and the output will be a array.
+                let (expr_is_str, expr_is_not_str) = self.type_is_certainly_or_certainly_not_string(ctx, upcast_id);
+                let (arg1_is_str, arg1_is_not_str) = self.type_is_certainly_or_certainly_not_string(ctx, arg1_id);
+                let (arg2_is_str, arg2_is_not_str) = self.type_is_certainly_or_certainly_not_string(ctx, arg2_id);
 
-                // If they're all arraylike, then we want the subtype to match
-                let (subtype_expr, subtype_arg1, subtype_arg2) =
-                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 1)?;
+                let someone_is_str = expr_is_str || arg1_is_str || arg2_is_str;
+                let someone_is_not_str = expr_is_not_str || arg1_is_not_str || arg2_is_not_str;
 
-                (progress_expr || subtype_expr, progress_arg1 || subtype_arg1, progress_arg2 || subtype_arg2)
+                // Note: this statement is an expression returning the progression bools
+                if someone_is_str {
+                    // One of the arguments is a string, then all must be strings
+                    self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 0)?
+                } else {
+                    let progress_expr = if someone_is_not_str {
+                        // Output must be a normal array
+                        self.apply_template_constraint(ctx, upcast_id, &ARRAY_TEMPLATE)?
+                    } else {
+                        // Output may still be anything
+                        self.apply_template_constraint(ctx, upcast_id, &ARRAYLIKE_TEMPLATE)?
+                    };
+
+                    let progress_arg1 = self.apply_template_constraint(ctx, arg1_id, &ARRAYLIKE_TEMPLATE)?;
+                    let progress_arg2 = self.apply_template_constraint(ctx, arg2_id, &ARRAYLIKE_TEMPLATE)?;
+
+                    // If they're all arraylike, then we want the subtype to match
+                    let (subtype_expr, subtype_arg1, subtype_arg2) =
+                        self.apply_equal3_constraint(ctx, upcast_id, arg1_id, arg2_id, 1)?;
+
+                    (progress_expr || subtype_expr, progress_arg1 || subtype_arg1, progress_arg2 || subtype_arg2)
+                }
             },
             BO::LogicalAnd => {
                 // Forced boolean on all
@@ -1898,11 +1901,28 @@ impl PassTyping {
         let progress_idx_base = self.apply_template_constraint(ctx, from_id, &INTEGERLIKE_TEMPLATE)?;
         let (progress_from, progress_to) = self.apply_equal2_constraint(ctx, upcast_id, from_id, 0, to_id, 0)?;
 
-        // Make sure if output is of Slice<T> then subject is Array<T>
-        let progress_expr_base = self.apply_template_constraint(ctx, upcast_id, &SLICE_TEMPLATE)?;
-        let (progress_expr, progress_subject) =
-            self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 1, subject_id, 1)?;
+        let (progress_expr, progress_subject) = match self.type_is_certainly_or_certainly_not_string(ctx, subject_id) {
+            (true, _) => {
+                // Certainly a string
+                (self.apply_forced_constraint(ctx, upcast_id, &STRING_TEMPLATE)?, false)
+            },
+            (_, true) => {
+                // Certainly not a string
+                let progress_expr_base = self.apply_template_constraint(ctx, upcast_id, &SLICE_TEMPLATE)?;
+                let (progress_expr, progress_subject) =
+                    self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 1, subject_id, 1)?;
 
+                (progress_expr_base || progress_expr, progress_subject)
+            },
+            _ => {
+                // Could be anything, at least attempt to progress subtype
+                let progress_expr_base = self.apply_template_constraint(ctx, upcast_id, &ARRAYLIKE_TEMPLATE)?;
+                let (progress_expr, progress_subject) =
+                    self.apply_equal2_constraint(ctx, upcast_id, upcast_id, 1, subject_id, 1)?;
+
+                (progress_expr_base || progress_expr, progress_subject)
+            }
+        };
 
         debug_log!(" * After:");
         debug_log!("   - Subject type [{}]: {}", progress_subject_base || progress_subject, self.debug_get_display_name(ctx, subject_id));
@@ -1910,7 +1930,7 @@ impl PassTyping {
         debug_log!("   - ToIdx   type [{}]: {}", progress_idx_base || progress_to, self.debug_get_display_name(ctx, to_id));
         debug_log!("   - Expr    type [{}]: {}", progress_expr, self.debug_get_display_name(ctx, upcast_id));
 
-        if progress_expr_base || progress_expr { self.queue_expr_parent(ctx, upcast_id); }
+        if progress_expr { self.queue_expr_parent(ctx, upcast_id); }
         if progress_subject_base || progress_subject { self.queue_expr(ctx, subject_id); }
         if progress_idx_base || progress_from { self.queue_expr(ctx, from_id); }
         if progress_idx_base || progress_to { self.queue_expr(ctx, to_id); }
@@ -2680,6 +2700,22 @@ impl PassTyping {
         self.expr_queued.push_back(expr_idx);
     }
 
+
+    // first returned is certainly string, second is certainly not
+    fn type_is_certainly_or_certainly_not_string(&self, ctx: &Ctx, expr_id: ExpressionId) -> (bool, bool) {
+        let expr_idx = ctx.heap[expr_id].get_unique_id_in_definition();
+        let expr_type = &self.expr_types[expr_idx as usize].expr_type;
+        if expr_type.is_done {
+            if expr_type.parts[0] == InferenceTypePart::String {
+                return (true, false);
+            } else {
+                return (false, true);
+            }
+        }
+
+        (false, false)
+    }
+
     /// Applies a template type constraint: the type associated with the
     /// supplied expression will be molded into the provided `template`. But
     /// will be considered valid if the template could've been molded into the
@@ -3412,7 +3448,10 @@ impl PassTyping {
                 PTV::SInt32 => { infer_type.push(ITP::SInt32); },
                 PTV::SInt64 => { infer_type.push(ITP::SInt64); },
                 PTV::Character => { infer_type.push(ITP::Character); },
-                PTV::String => { infer_type.push(ITP::String); },
+                PTV::String => {
+                    infer_type.push(ITP::String);
+                    infer_type.push(ITP::Character);
+                },
                 // Special markers
                 PTV::IntegerLiteral => { unreachable!("integer literal type on variable type"); },
                 PTV::Inferred => {
@@ -3431,9 +3470,9 @@ impl PassTyping {
                         debug_assert_eq!(*belongs_to_definition, self.definition_type.definition_id());
                         debug_assert!((poly_arg_idx as usize) < self.poly_vars.len());
 
-                        for concrete_part in &self.poly_vars[poly_arg_idx as usize].parts {
-                            infer_type.push(ITP::from(*concrete_part));
-                        }
+                        Self::determine_inference_type_from_concrete_type(
+                            &mut infer_type, &self.poly_vars[poly_arg_idx as usize].parts
+                        );
                     } else {
                         // Polymorphic argument has to be inferred
                         has_markers = true;
@@ -3449,6 +3488,39 @@ impl PassTyping {
         }
 
         InferenceType::new(has_markers, !has_inferred, infer_type)
+    }
+
+    /// Determines the inference type from an already concrete type. Applies the
+    /// various type "hacks" inside the type inferencer.
+    fn determine_inference_type_from_concrete_type(parser_type: &mut Vec<InferenceTypePart>, concrete_type: &[ConcreteTypePart]) {
+        use InferenceTypePart as ITP;
+        use ConcreteTypePart as CTP;
+
+        for concrete_part in concrete_type {
+            match concrete_part {
+                CTP::Void => parser_type.push(ITP::Void),
+                CTP::Message => parser_type.push(ITP::Message),
+                CTP::Bool => parser_type.push(ITP::Bool),
+                CTP::UInt8 => parser_type.push(ITP::UInt8),
+                CTP::UInt16 => parser_type.push(ITP::UInt16),
+                CTP::UInt32 => parser_type.push(ITP::UInt32),
+                CTP::UInt64 => parser_type.push(ITP::UInt64),
+                CTP::SInt8 => parser_type.push(ITP::SInt8),
+                CTP::SInt16 => parser_type.push(ITP::SInt16),
+                CTP::SInt32 => parser_type.push(ITP::SInt32),
+                CTP::SInt64 => parser_type.push(ITP::SInt64),
+                CTP::Character => parser_type.push(ITP::Character),
+                CTP::String => {
+                    parser_type.push(ITP::String);
+                    parser_type.push(ITP::Character)
+                },
+                CTP::Array => parser_type.push(ITP::Array),
+                CTP::Slice => parser_type.push(ITP::Slice),
+                CTP::Input => parser_type.push(ITP::Input),
+                CTP::Output => parser_type.push(ITP::Output),
+                CTP::Instance(id, num) => parser_type.push(ITP::Instance(*id, *num)),
+            }
+        }
     }
 
     /// Construct an error when an expression's type does not match. This
@@ -3769,7 +3841,7 @@ mod tests {
             (ITP::NumberLike, ITP::UInt8),
             (ITP::IntegerLike, ITP::SInt32),
             (ITP::Unknown, ITP::UInt64),
-            (ITP::Unknown, ITP::String)
+            (ITP::Unknown, ITP::Bool)
         ];
         for (lhs, rhs) in pairs.iter() {
             // Using infer-both
@@ -3796,7 +3868,7 @@ mod tests {
     fn test_multi_part_inference() {
         let pairs = [
             (vec![ITP::ArrayLike, ITP::NumberLike], vec![ITP::Slice, ITP::SInt8]),
-            (vec![ITP::Unknown], vec![ITP::Input, ITP::Array, ITP::String]),
+            (vec![ITP::Unknown], vec![ITP::Input, ITP::Array, ITP::String, ITP::Character]),
             (vec![ITP::PortLike, ITP::SInt32], vec![ITP::Input, ITP::SInt32]),
             (vec![ITP::Unknown], vec![ITP::Output, ITP::SInt32]),
             (

@@ -394,10 +394,14 @@ pub(crate) fn consume_string_literal(
     if !text.is_ascii() {
         return Err(ParseError::new_error_str_at_span(source, span, "expected an ASCII string literal"));
     }
-    buffer.reserve(text.len());
+
+    debug_assert_eq!(text[0], b'"'); // here as kind of a reminder: the span includes the bounding quotation marks
+    debug_assert_eq!(text[text.len() - 1], b'"');
+
+    buffer.reserve(text.len() - 2);
 
     let mut was_escape = false;
-    for idx in 0..text.len() {
+    for idx in 1..text.len() - 1 {
         let cur = text[idx];
         if cur != b'\\' {
             if was_escape {

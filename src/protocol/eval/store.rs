@@ -179,6 +179,7 @@ impl Store {
 
         match value {
             Value::Message(_) => Value::Message(target_heap_pos),
+            Value::String(_) => Value::String(target_heap_pos),
             Value::Array(_) => Value::Array(target_heap_pos),
             Value::Union(tag, _) => Value::Union(tag, target_heap_pos),
             Value::Struct(_) => Value::Struct(target_heap_pos),

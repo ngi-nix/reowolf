@@ -141,6 +141,7 @@ impl Value {
     pub(crate) fn get_heap_pos(&self) -> Option<HeapPos> {
         match self {
             Value::Message(v) => Some(*v),
+            Value::String(v) => Some(*v),
             Value::Array(v) => Some(*v),
             Value::Union(_, v) => Some(*v),
             Value::Struct(v) => Some(*v),

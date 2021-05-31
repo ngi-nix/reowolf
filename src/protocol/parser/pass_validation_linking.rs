@@ -712,6 +712,13 @@ impl Visitor for PassValidationLinking {
         let upcast_id = id.upcast();
         let slicing_expr = &mut ctx.heap[id];
 
+        if let Some(span) = self.must_be_assignable {
+            // TODO: @Slicing
+            return Err(ParseError::new_error_str_at_span(
+                &ctx.module.source, span, "assignment to slices should be valid in the final language, but is currently not implemented"
+            ));
+        }
+
         let subject_expr_id = slicing_expr.subject;
         let from_expr_id = slicing_expr.from_index;
         let to_expr_id = slicing_expr.to_index;

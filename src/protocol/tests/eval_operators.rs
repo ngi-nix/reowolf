@@ -145,3 +145,31 @@ fn test_binary_integer_operators() {
         "auto a = 29; return a % 3;", Value::UInt16(2)
     );
 }
+
+#[test]
+fn test_string_operators() {
+    Tester::new_single_source_expect_ok("string concatenation", "
+func create_concatenated(string left, string right) -> string {
+    return left @ \", but also \" @ right;
+}
+func perform_concatenate(string left, string right) -> string {
+    left @= \", but also \";
+    left @= right;
+    return left;
+}
+func foo() -> bool {
+    auto left = \"Darth Vader\";
+    auto right = \"Anakin Skywalker\";
+    auto res1 = create_concatenated(left, right);
+    auto res2 = perform_concatenate(left, right);
+    auto expected = \"Darth Vader, but also Anakin Skywalker\";
+
+    return
+        res1 == expected &&
+        res2 == \"Darth Vader, but also Anakin Skywalker\" &&
+        res1 != \"This kind of thing\" && res2 != \"Another likewise kind of thing\";
+}
+    ").for_function("foo", |f| { f
+        .call_ok(Some(Value::Bool(true)));
+    });
+}

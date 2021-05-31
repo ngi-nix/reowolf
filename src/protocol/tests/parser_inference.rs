@@ -461,7 +461,7 @@ fn test_explicit_polymorph_argument() {
     // Failed because type inferencer did not construct polymorph errors by
     // considering that argument/return types failed against explicitly
     // specified polymorphic arguments
-    Tester::new_single_source_expect_err("explicit polymorph mismatch", "
+    Tester::new_single_source_expect_err("explicit polymorph argument mismatch", "
     func foo<T>(T a, T b) -> T { return a + b; }
     struct Bar<A, B>{A a, B b}
     func test() -> u32 {
@@ -476,7 +476,7 @@ fn test_explicit_polymorph_argument() {
     });
 
     // Similar to above, now for return type
-    Tester::new_single_source_expect_err("explicit polymorph mismatch", "
+    Tester::new_single_source_expect_err("explicit polymorph return mismatch", "
     func foo<T>(T a, T b) -> T { return a + b; }
     func test() -> u32 {
         return foo<u64>(5, 6);
