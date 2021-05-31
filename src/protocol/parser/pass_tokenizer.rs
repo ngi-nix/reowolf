@@ -456,11 +456,18 @@ impl PassTokenizer {
 
             source.consume();
             if c == b'"' && prev_char != b'\\' {
+                // Unescaped string terminator
                 prev_char = c;
                 break;
             }
 
-            prev_char = c;
+            if prev_char == b'\\' && c == b'\\' {
+                // Escaped backslash, set prev_char to bogus to not conflict
+                // with escaped-" and unterminated string literal detection.
+                prev_char = b'\0';
+            } else {
+                prev_char = c;
+            }
         }
 
         if prev_char != b'"' {

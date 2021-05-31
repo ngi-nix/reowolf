@@ -366,7 +366,7 @@ pub(crate) fn consume_character_literal(
         },
         2 => {
             if char_text[0] == b'\\' {
-                let result = parse_escaped_character(source, iter.last_valid_pos(), char_text[1])?;
+                let result = parse_escaped_character(source, span, char_text[1])?;
                 return Ok((result, span))
             }
         },
@@ -401,7 +401,7 @@ pub(crate) fn consume_string_literal(
         let cur = text[idx];
         if cur != b'\\' {
             if was_escape {
-                let to_push = parse_escaped_character(source, iter.last_valid_pos(), cur)?;
+                let to_push = parse_escaped_character(source, span, cur)?;
                 buffer.push(to_push);
             } else {
                 buffer.push(cur as char);
@@ -417,7 +417,7 @@ pub(crate) fn consume_string_literal(
     Ok(span)
 }
 
-fn parse_escaped_character(source: &InputSource, pos: InputPosition, v: u8) -> Result<char, ParseError> {
+fn parse_escaped_character(source: &InputSource, literal_span: InputSpan, v: u8) -> Result<char, ParseError> {
     let result = match v {
         b'r' => '\r',
         b'n' => '\n',
@@ -426,9 +426,14 @@ fn parse_escaped_character(source: &InputSource, pos: InputPosition, v: u8) -> R
         b'\\' => '\\',
         b'\'' => '\'',
         b'"' => '"',
-        v => return Err(ParseError::new_error_at_pos(
-            source, pos, format!("unexpected escaped character '{}'", v)
-        )),
+        v => {
+            let msg = if v.is_ascii_graphic() {
+                format!("unsupported escape character '{}'", v as char)
+            } else {
+                format!("unsupported escape character with (unsigned) byte value {}", v)
+            };
+            return Err(ParseError::new_error_at_span(source, literal_span, msg))
+        },
     };
     Ok(result)
 }
