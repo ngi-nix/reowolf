@@ -403,16 +403,18 @@ pub(crate) fn consume_string_literal(
     let mut was_escape = false;
     for idx in 1..text.len() - 1 {
         let cur = text[idx];
-        if cur != b'\\' {
-            if was_escape {
-                let to_push = parse_escaped_character(source, span, cur)?;
-                buffer.push(to_push);
-            } else {
-                buffer.push(cur as char);
-            }
+        let is_escape = cur == b'\\';
+        if was_escape {
+            let to_push = parse_escaped_character(source, span, cur)?;
+            buffer.push(to_push);
+        } else {
+            buffer.push(cur as char);
+        }
+
+        if was_escape && is_escape {
             was_escape = false;
         } else {
-            was_escape = true;
+            was_escape = is_escape;
         }
     }
 
