@@ -125,27 +125,31 @@ As an initial conclusion:
 - The tag of the union will be a non-allocated value associated with the union. Considering that most of the time these kinds of unions will represent an option-like type (there is one more entry in the linked list, there is one more node in the tree, etc.) I think it is nice to not have cache misses when checking whether a value is present, or whether it is not present.
 - Considering that we cannot allocate all of the time (because then we will still end up with an infinite amount of allocated memory), but I do not currently want to implement very complicated logic in the compiler for handling memory allocations, I will initially implement the following scheme: all union variants that do not contain any types part of a type loop will be stored on the stack, contributing to the byte size of the union. All variants that do contain such types will be fully allocated on the heap in one allocation. The size of the allocated region will be the size of the largest variant that requires dynamic allocation.
 
-## Rought Specification of the Algorithm
+## Rough Specification of the Algorithm
 
 I might be missing some stuff here, that stuff will probably pop up while I'm implementing this:
 
 - 
    Perform the basic pre-compilation for symbol discovery and definition discovery. This constructs the AST such that we can parse the AST to determine what fields are present on each `struct` and what variants are used in each `union`.
+
+-
+    For each type added to the type table (including monomorphs where we have all of the polymorphic variables fully specified), we will traverse all of the members and their types. For each type we will check if was already checked not to be cyclic. If it was already completely checked, then all types up until the most recently checked type cannot be cyclic (another member might still make them cyclic). If the type was not completely checked, but previously encountered in our search for loops, then all of types from the first encounter of that type are considered part of a type loop.
+
 - 
-   For each type added to the type table (including monomorphs where we have all of the polymorphic variables fully specified), we will traverse all of the members and their types. For each type we will check if was already checked not to be cyclic. If it was already checked, then necessarily it isn't cyclic and we can stop further traversal (to prevent the complexity of the algorithm to grow beyond linear). If it is cyclic, then necessarily this will be the first time we encounter the loop.
-- 
-   Note that this algorithm is recursive in the sense that for structs we need to check each member for type loops. For unions we need to check each embedded type in each variant. So when we encounter a type loop for a specific set of members, we walk back and mark each of the unions along the way as requiring allocation. If there were no such unions then we immediately return an error. We keep all of the unions that require allocation around in a list.
+    Note that this algorithm is recursive in the sense that for structs we need to check each member for type loops. For unions we need to check each embedded type in each variant. So when we encounter a type loop for a specific set of members, we walk back and mark each of the unions along the way as requiring allocation. If there were no such unions then we immediately return an error. We keep all of the unions that require allocation around in a list.
+  
 - 
    While we're doing the above, if we encounter a union who has a member that does not exist in a type loop then we mark it as non-infinite.
+   
 - 
-   After all of the above is done, we need to check all of the unions we have encountered. Necessarily if we started with a particular type, and recursively checked all of the embedded types, then we will discover *all* type loops. If none of the unions is non-infinite, then we throw an error (which might be kind of hard, because what kind of error do we show in the case of the `union A; union B; union C` example?). With the algorithm above, we now know that if there are type loops, that each of them contains at least one union. With the condition of at least one non-infinite union we now know that the type is expressable. The constructed list of unions only contains unions that were part of a type loop.
+   After all of the above is done, we need to check all of the unions we have encountered. Necessarily if we started with a particular type, and recursively checked all of the embedded types, then we will discover *all* type loops. If none of the unions is non-infinite, then we throw an error (which might be kind of hard, because what kind of error do we show in the case of the `union A; union B; union C;` example?). With the algorithm above, we now know that if there are type loops, that each of them contains at least one union. With the condition that there is at least one non-infinite union we now know that the type is expressable. The constructed list of unions only contains unions that were part of a type loop.
 
    With that knowledge, to guarantee consistent compilation, we will decide to make each union in each type loop, whether it is infinite or non-infinite, a pointerlike union.
 
 -
    A pointerlike union's value will consist of a tag, plus reserved size (with the proper alignment) for the largest non-pointerlike union variant if it is larger than the size of a pointer on the particular machine. If it is smaller, than we just need a tag, and a pointer that is properly aligned. So the union value will have a fixed size that is not dependent on the types that were part of the type cycle. I'll call the variants that were not part of type cycles "value variants", and parts that *were* part of type cycles "pointer variants".
 
-Then, during runtime, as an initial implementation (we could be smarter if we know the old value and know the new value, but that would take a lot of static analysis, we're not yet at that point in the compiler), we will check the tag value whether the old and new values are pointers. If the old and new variants are both pointer variants, or when they're both value variants, then we do not (re)allocate. If we go from a value to a pointer variant then we allocate. If we go from a pointer variant to a value variant then we deallocate.
+Then, during runtime, as an initial implementation (we could be smarter if we know the old value and know the new value, but that would take a lot of static analysis, we're not yet at that point in the compiler), we will check the tag value whether the old and new values are pointers. If the old and new variants are both pointer variants, or when they're both value variants, then we do not (re)allocate. If we go from a value variant to a pointer variant then we allocate. If we go from a pointer variant to a value variant then we deallocate.
 
 ## Some Examples of the Algorithm
 
@@ -226,6 +230,31 @@ union Children {
 ```
 
 We get a cycle between `Node` and `Children`, so we would want to implement `Children` as being pointerlike. But we don't have to make `Value` pointerlike. In terms of the described algorithm: `Value` is not part of a type loop, so is not considered a candidate for being pointerlike.
+
+### Slightly Ambigious Example, Version 3
+
+Contains part of the type graph that is not part of a type loop. So the associated union should not be pointerlike.
+
+```pdl
+// Parts that are outside of the type loop
+struct SOutside {
+    UOutside next,
+}
+union UOutside {
+    Next(SInside)
+}
+
+// Parts that are inside the type loop
+struct SInside {
+    UInside next,
+}
+union UInside {
+    Next(SInside),
+    NoNext,
+}
+```
+
+Here `UInside` should become pointerlike, but `UOutside` should remain a normal value.
 
 ### Which Union Breaks the Cycle?
 

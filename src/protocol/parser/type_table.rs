@@ -173,15 +173,25 @@ pub struct EnumVariant {
 /// `UnionType` is the algebraic datatype (or sum type, or discriminated union).
 /// A value is an element of the union, identified by its tag, and may contain
 /// a single subtype.
+/// For potentially infinite types (i.e. a tree, or a linked list) only unions
+/// can break the infinite cycle. So when we lay out these unions in memory we
+/// will reserve enough space on the stack for all union variants that do not
+/// cause "type loops" (i.e. a union `A` with a variant containing a struct
+/// `B`). And we will reserve enough space on the heap (and store a pointer in
+/// the union) for all variants which do cause type loops (i.e. a union `A`
+/// with a variant to a struct `B` that contains the union `A` again).
 pub struct UnionType {
     pub variants: Vec<UnionVariant>,
     pub monomorphs: Vec<DataMonomorph>,
+    pub requires_allocation: bool,
+    pub contains_unallocated_variant: bool,
 }
 
 pub struct UnionVariant {
     pub identifier: Identifier,
     pub embedded: Vec<ParserType>, // zero-length does not have embedded values
     pub tag_value: i64,
+    pub exists_in_heap: bool,
 }
 
 pub struct StructType {
@@ -560,6 +570,7 @@ impl TypeTable {
                 identifier: variant.identifier.clone(),
                 embedded,
                 tag_value,
+                exists_in_heap: false
             })
         }
 
@@ -585,6 +596,8 @@ impl TypeTable {
             definition: DefinedTypeVariant::Union(UnionType{
                 variants,
                 monomorphs: Vec::new(),
+                requires_allocation: false,
+                contains_unallocated_variant: true
             }),
             poly_vars,
             is_polymorph,
@@ -825,7 +838,6 @@ impl TypeTable {
         &mut self, modules: &[Module], ctx: &PassCtx, root_id: RootId,
         parser_type: &ParserType, is_builtin: bool
     ) -> Result<ResolveResult, ParseError> {
-        // Note that as we iterate over the elements of a
         use ParserTypeVariant as PTV;
 
         // Result for the very first time we resolve a type (i.e the outer type

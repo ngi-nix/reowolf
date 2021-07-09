@@ -13,16 +13,17 @@
 
 mod utils;
 mod lexer;
-mod parser_validation;
-mod parser_inference;
-mod parser_monomorphs;
-mod parser_imports;
 mod parser_binding;
+mod parser_imports;
+mod parser_inference;
 mod parser_literals;
-mod eval_operators;
+mod parser_monomorphs;
+mod parser_types;
+mod parser_validation;
+mod eval_binding;
 mod eval_calls;
 mod eval_casting;
-mod eval_binding;
+mod eval_operators;
 mod eval_silly;
 
 pub(crate) use utils::{Tester}; // the testing harness
