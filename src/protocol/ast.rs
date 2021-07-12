@@ -733,7 +733,7 @@ impl StructDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum EnumVariantValue {
     None,
     Integer(i64),
@@ -767,16 +767,10 @@ impl EnumDefinition {
 }
 
 #[derive(Debug, Clone)]
-pub enum UnionVariantValue {
-    None,
-    Embedded(Vec<ParserType>),
-}
-
-#[derive(Debug, Clone)]
 pub struct UnionVariantDefinition {
     pub span: InputSpan,
     pub identifier: Identifier,
-    pub value: UnionVariantValue,
+    pub value: Vec<ParserType>, // if empty, then union variant does not contain any embedded types
 }
 
 #[derive(Debug, Clone)]

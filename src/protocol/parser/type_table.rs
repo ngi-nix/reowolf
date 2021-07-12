@@ -1,3 +1,30 @@
+/**
+ * type_table.rs
+ *
+ * The type table is a lookup from AST definition (which contains just what the
+ * programmer typed) to a type with additional information computed (e.g. the
+ * byte size and offsets of struct members). The type table should be considered
+ * the authoritative source of information on types by the compiler (not the
+ * AST itself!).
+ *
+ * The type table operates in two modes: one is where we just look up the type,
+ * check its fields for correctness and mark whether it is polymorphic or not.
+ * The second one is where we compute byte sizes, alignment and offsets.
+ *
+ * The basic algorithm for type resolving and computing byte sizes is to
+ * recursively try to lay out each member type of a particular type. This is
+ * done in a stack-like fashion, where each embedded type pushes a breadcrumb
+ * unto the stack. We may discover a cycle in embedded types (called a "type
+ * loop"). After which the type table attempts to break the type loop by making
+ * specific types heap-allocated. Upon doing so we know their size because their
+ * stack-size is now based on pointers.
+ *
+ * The reason for these type shenanigans is because PDL is a value-based
+ * language, but we would still like to be able to express recursively defined
+ * types like trees or linked lists. Hence we need to insert pointers somewhere
+ * to break these cycles.
+ */
+
 use std::fmt::{Formatter, Result as FmtResult};
 use std::collections::HashMap;
 
@@ -86,6 +113,13 @@ impl DefinedTypeVariant {
     }
 
     pub(crate) fn as_union(&self) -> &UnionType {
+        match self {
+            DefinedTypeVariant::Union(v) => v,
+            _ => unreachable!("Cannot convert {} to union variant", self.type_class())
+        }
+    }
+
+    pub(crate) fn as_union_mut(&mut self) -> &mut UnionType {
         match self {
             DefinedTypeVariant::Union(v) => v,
             _ => unreachable!("Cannot convert {} to union variant", self.type_class())
@@ -238,41 +272,12 @@ pub struct MonomorphExpression {
 // Type table
 //------------------------------------------------------------------------------
 
-// TODO: @cleanup Do I really need this, doesn't make the code that much cleaner
-struct TypeIterator {
-    breadcrumbs: Vec<(RootId, DefinitionId)>
-}
-
-impl TypeIterator {
-    fn new() -> Self {
-        Self{ breadcrumbs: Vec::with_capacity(32) }
-    }
-
-    fn reset(&mut self, root_id: RootId, definition_id: DefinitionId) {
-        self.breadcrumbs.clear();
-        self.breadcrumbs.push((root_id, definition_id))
-    }
-
-    fn push(&mut self, root_id: RootId, definition_id: DefinitionId) {
-        self.breadcrumbs.push((root_id, definition_id));
-    }
-
-    fn contains(&self, root_id: RootId, definition_id: DefinitionId) -> bool {
-        for (stored_root_id, stored_definition_id) in self.breadcrumbs.iter() {
-            if *stored_root_id == root_id && *stored_definition_id == definition_id { return true; }
-        }
-
-        return false
-    }
-
-    fn top(&self) -> Option<(RootId, DefinitionId)> {
-        self.breadcrumbs.last().map(|(r, d)| (*r, *d))
-    }
-
-    fn pop(&mut self) {
-        debug_assert!(!self.breadcrumbs.is_empty());
-        self.breadcrumbs.pop();
-    }
+struct ResolveBreadcrumb {
+    root_id: RootId,
+    definition_id: DefinitionId,
+    next_member: u32,
+    next_embedded: u32, // for unions, the next embedded value inside the member
+    progression: DefinedTypeVariant
 }
 
 /// Result from attempting to resolve a `ParserType` using the symbol table and
@@ -288,13 +293,20 @@ enum ResolveResult {
     Unresolved(RootId, DefinitionId)
 }
 
+/// Result from attempting to progress a breadcrumb
+enum ProgressResult {
+    PopBreadcrumb,
+    PushBreadcrumb(RootId, DefinitionId),
+    TypeLoop(RootId, DefinitionId),
+}
+
 pub struct TypeTable {
     /// Lookup from AST DefinitionId to a defined type. Considering possible
     /// polymorphs is done inside the `DefinedType` struct.
     lookup: HashMap<DefinitionId, DefinedType>,
-    /// Iterator over `(module, definition)` tuples used as workspace to make sure
-    /// that each base definition of all a type's subtypes are resolved.
-    iter: TypeIterator,
+    /// Breadcrumbs left behind while resolving embedded types
+    breadcrumbs: Vec<ResolveBreadcrumb>,
+    infinite_unions: Vec<(RootId, DefinitionId)>,
 }
 
 impl TypeTable {
@@ -302,15 +314,21 @@ impl TypeTable {
     pub(crate) fn new() -> Self {
         Self{ 
             lookup: HashMap::new(), 
-            iter: TypeIterator::new(),
+            breadcrumbs: Vec::with_capacity(32),
+            infinite_unions: Vec::with_capacity(16),
         }
     }
 
+    /// Iterates over all defined types (polymorphic and non-polymorphic) and
+    /// add their types in two passes. In the first pass we will just add the
+    /// base types (we will not consider monomorphs, and we will not compute
+    /// byte sizes). In the second pass we will compute byte sizes of
+    /// non-polymorphic types, and potentially the monomorphs that are embedded
+    /// in those types.
     pub(crate) fn build_base_types(&mut self, modules: &mut [Module], ctx: &mut PassCtx) -> Result<(), ParseError> {
         // Make sure we're allowed to cast root_id to index into ctx.modules
         debug_assert!(modules.iter().all(|m| m.phase >= ModuleCompilationPhase::DefinitionsParsed));
         debug_assert!(self.lookup.is_empty());
-        debug_assert!(self.iter.top().is_none());
 
         if cfg!(debug_assertions) {
             for (index, module) in modules.iter().enumerate() {
@@ -318,13 +336,22 @@ impl TypeTable {
             }
         }
 
-        // Use context to guess hashmap size
+        // Use context to guess hashmap size of the base types
         let reserve_size = ctx.heap.definitions.len();
         self.lookup.reserve(reserve_size);
 
+        // Resolve all base types
         for definition_idx in 0..ctx.heap.definitions.len() {
             let definition_id = ctx.heap.definitions.get_id(definition_idx);
-            self.resolve_base_definition(modules, ctx, definition_id)?;
+            let definition = &ctx.heap[definition_id];
+
+            match definition {
+                Definition::Enum(_) => self.build_base_enum_definition(modules, ctx, definition_id),
+                Definition::Union(_) => self.build_base_union_definition(modules, ctx, definition_id),
+                Definition::Struct(_) => self.build_base_struct_definition(modules, ctx, definition_id),
+                Definition::Function(_) => self.build_base_function_definition(modules, ctx, definition_id),
+                Definition::Component(_) => self.build_base_component_definition(modules, ctx, definition_id),
+            }
         }
 
         debug_assert_eq!(self.lookup.len(), reserve_size, "mismatch in reserved size of type table"); // NOTE: Temp fix for builtin functions
@@ -437,27 +464,27 @@ impl TypeTable {
         // Check if we have already resolved the base definition
         if self.lookup.contains_key(&definition_id) { return Ok(()); }
 
-        let root_id = ctx.heap[definition_id].defined_in();
-        self.iter.reset(root_id, definition_id);
+        // We haven't, push the first breadcrumb and start resolving
+        self.push_breadcrumb_for_definition(ctx, definition_id);
 
-        while let Some((root_id, definition_id)) = self.iter.top() {
+        while let Some(breadcrumb) = self.breadcrumbs.last() {
             // We have a type to resolve
-            let definition = &ctx.heap[definition_id];
+            let definition = &ctx.heap[breadcrumb.definition_id];
 
             let can_pop_breadcrumb = match definition {
                 // Bit ugly, since we already have the definition, but we need
                 // to work around rust borrowing rules...
-                Definition::Enum(_) => self.resolve_base_enum_definition(modules, ctx, root_id, definition_id),
-                Definition::Union(_) => self.resolve_base_union_definition(modules, ctx, root_id, definition_id),
-                Definition::Struct(_) => self.resolve_base_struct_definition(modules, ctx, root_id, definition_id),
-                Definition::Component(_) => self.resolve_base_component_definition(modules, ctx, root_id, definition_id),
-                Definition::Function(_) => self.resolve_base_function_definition(modules, ctx, root_id, definition_id),
+                Definition::Enum(_) => self.resolve_base_enum_definition(modules, ctx),
+                Definition::Union(_) => self.resolve_base_union_definition(modules, ctx),
+                Definition::Struct(_) => self.resolve_base_struct_definition(modules, ctx),
+                Definition::Component(_) => self.resolve_base_component_definition(modules, ctx),
+                Definition::Function(_) => self.resolve_base_function_definition(modules, ctx),
             }?;
 
             // Otherwise: `ingest_resolve_result` has pushed a new breadcrumb
             // that we must follow before we can resolve the current type
             if can_pop_breadcrumb {
-                self.iter.pop();
+                self.breadcrumbs.pop();
             }
         }
 
@@ -466,16 +493,108 @@ impl TypeTable {
         Ok(())
     }
 
+    /// Builds the base type for an enum. Will not compute byte sizes
+    fn build_base_enum_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base enum already built");
+        let definition = ctx.heap[definition_id].as_enum();
+        let root_id = definition.defined_in;
+
+        // Determine enum variants
+        let mut enum_value = -1;
+        let mut variants = Vec::with_capacity(definition.variants.len());
+
+        for variant in &definition.variants {
+            if enum_value == i64::MAX {
+                let source = &modules[definition.defined_in.index as usize].source;
+                return Err(ParseError::new_error_str_at_span(
+                    source, variant.identifier.span,
+                    "this enum variant has an integer value that is too large"
+                ));
+            }
+
+            enum_value += 1;
+            if let EnumVariantValue::Integer(explicit_value) = variant.value {
+                enum_value = explicit_value;
+            }
+
+            variants.push(EnumVariant{
+                identifier: variant.identifier.clone(),
+                value: enum_value,
+            });
+        }
+
+        // Determine tag size
+        let mut min_enum_value = 0;
+        let mut max_enum_value = 0;
+        if !variants.is_empty() {
+            min_enum_value = variants[0].value;
+            max_enum_value = variants[0].value;
+            for variant in variants.iter().skip(1) {
+                min_enum_value = min_enum_value.min(variant.value);
+                max_enum_value = max_enum_value.max(variant.value);
+            }
+        }
+
+        // TODO: Tag size determination, here or when laying out?
+
+        // Enum names and polymorphic args do not conflict
+        Self::check_identifier_collision(
+            modules, root_id, &variants, |variant| &variant.identifier, "enum variant"
+        )?;
+
+        // Polymorphic arguments cannot appear as embedded types, because
+        // they can only consist of integer variants.
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        let poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+
+        self.lookup.insert(definition_id, DefinedType {
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Enum(EnumType{
+                variants,
+                monomorphs: Vec::new(),
+            }),
+            poly_vars,
+            is_polymorph: false,
+        });
+
+        return Ok(());
+    }
+
+    fn build_base_struct_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base struct already built");
+        let definition = ctx.heap[definition_id].as_struct();
+        let root_id = definition.defined_in;
+
+        // Go through all struct fields
+        let mut fields = Vec::with_capacity(definition.fields.len());
+
+        for field in &definition.fields {
+            // Make sure the
+        }
+    }
+
     /// Resolve the basic enum definition to an entry in the type table. It will
     /// not instantiate any monomorphized instances of polymorphic enum
     /// definitions. If a subtype has to be resolved first then this function
     /// will return `false` after calling `ingest_resolve_result`.
-    fn resolve_base_enum_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
+    fn resolve_base_enum_definition(&mut self, modules: &[Module], ctx: &mut PassCtx) -> Result<bool, ParseError> {
+        // Retrieve breadcrumb and perform some basic checking
+        let breadcrumb = self.breadcrumbs.last_mut().unwrap();
+        let root_id = breadcrumb.root_id;
+        let definition_id = breadcrumb.definition_id;
+
         debug_assert!(ctx.heap[definition_id].is_enum());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base enum already resolved");
         
         let definition = ctx.heap[definition_id].as_enum();
 
+        // Since we're dealing with an enum's base definition, we're not going
+        // to check any embedded types and should finish layout out the enum in
+        // one go.
+        debug_assert!(breadcrumb.progression.is_none());
+
+        // Determine enum variants
         let mut enum_value = -1;
         let mut min_enum_value = 0;
         let mut max_enum_value = 0;
@@ -502,14 +621,14 @@ impl TypeTable {
         }
 
         // Ensure enum names and polymorphic args do not conflict
-        self.check_identifier_collision(
+        Self::check_identifier_collision(
             modules, root_id, &variants, |variant| &variant.identifier, "enum variant"
         )?;
 
         // Because we're parsing an enum, the programmer cannot put the
         // polymorphic variables inside the variants. But the polymorphic
         // variables might still be present as "marker types"
-        self.check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
         let poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
 
         self.lookup.insert(definition_id, DefinedType {
@@ -575,10 +694,10 @@ impl TypeTable {
         }
 
         // Ensure union names and polymorphic args do not conflict
-        self.check_identifier_collision(
+        Self::check_identifier_collision(
             modules, root_id, &variants, |variant| &variant.identifier, "union variant"
         )?;
-        self.check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
 
         // Construct polymorphic variables and mark the ones that are in use
         let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
@@ -609,7 +728,7 @@ impl TypeTable {
     /// Resolves the basic struct definition to an entry in the type table. It
     /// will not instantiate any monomorphized instances of polymorphic struct
     /// definitions.
-    fn resolve_base_struct_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, root_id: RootId, definition_id: DefinitionId) -> Result<bool, ParseError> {
+    fn resolve_base_struct_definition(&mut self, modules: &[Module], ctx: &mut PassCtx) -> Result<bool, ParseError> {
         debug_assert!(ctx.heap[definition_id].is_struct());
         debug_assert!(!self.lookup.contains_key(&definition_id), "base struct already resolved");
 
@@ -633,10 +752,10 @@ impl TypeTable {
         }
 
         // And make sure no conflicts exist in field names and/or polymorphic args
-        self.check_identifier_collision(
+        Self::check_identifier_collision(
             modules, root_id, &fields, |field| &field.identifier, "struct field"
         )?;
-        self.check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
 
         // Construct representation of polymorphic arguments
         let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
@@ -696,10 +815,10 @@ impl TypeTable {
         }
 
         // Check conflict of argument and polyarg identifiers
-        self.check_identifier_collision(
+        Self::check_identifier_collision(
             modules, root_id, &arguments, |arg| &arg.identifier, "function argument"
         )?;
-        self.check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
 
         // Construct polymorphic arguments
         let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
@@ -755,10 +874,10 @@ impl TypeTable {
         }
 
         // Check conflict of argument and polyarg identifiers
-        self.check_identifier_collision(
+        Self::check_identifier_collision(
             modules, root_id, &arguments, |arg| &arg.identifier, "component argument"
         )?;
-        self.check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
 
         // Construct polymorphic arguments
         let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
@@ -796,25 +915,7 @@ impl TypeTable {
             ResolveResult::Unresolved(root_id, definition_id) => {
                 if self.iter.contains(root_id, definition_id) {
                     // Cyclic dependency encountered
-                    // TODO: Allow this
-                    let module_source = &modules[root_id.index as usize].source;
-                    let mut error = ParseError::new_error_str_at_span(
-                        module_source, ctx.heap[definition_id].identifier().span,
-                        "Evaluating this type definition results in a cyclic type"
-                    );
 
-                    for (breadcrumb_idx, (root_id, definition_id)) in self.iter.breadcrumbs.iter().enumerate() {
-                        let msg = if breadcrumb_idx == 0 {
-                            "The cycle started with this definition"
-                        } else {
-                            "Which depends on this definition"
-                        };
-
-                        let module_source = &modules[root_id.index as usize].source;
-                        error = error.with_info_str_at_span(module_source, ctx.heap[*definition_id].identifier().span, msg);
-                    }
-
-                    Err(error)
                 } else {
                     // Type is not yet resolved, so push IDs on iterator and
                     // continue the resolving loop
@@ -823,6 +924,45 @@ impl TypeTable {
                 }
             }
         }
+    }
+
+    fn construct_cyclic_type_error(
+        &self, modules: &[Module], ctx: &PassCtx, type_root_id: RootId, type_definition_id: DefinitionId
+    ) -> ParseError {
+        debug_assert!(self.iter.contains(type_root_id, type_definition_id));
+
+        // Construct error message put at the top
+        let module_source = &modules[type_root_id.index as usize].source;
+        let mut error = ParseError::new_error_str_at_span(
+            module_source, ctx.heap[type_definition_id].identifier().span,
+            "Evaluating this type definition results in a cyclic type"
+        );
+
+        // Show a listing of all dependent types.
+        // TODO: Make more correct later
+        for (breadcrumb_idx, (root_id, definition_id)) in self.iter.breadcrumbs.iter().enumerate() {
+            let msg = if breadcrumb_idx == 0 {
+                "The cycle started with this definition"
+            } else {
+                "Which depends on this definition"
+            };
+
+            let module_source = &modules[root_id.index as usize].source;
+            error = error.with_info_str_at_span(module_source, ctx.heap[*definition_id].identifier().span, msg);
+        }
+
+        return error;
+    }
+
+    /// Will check if the member type (field of a struct, embedded type in a
+    /// union variant) is valid.
+    fn check_parser_type_for_base_definition(
+        &self, modules: &[Module], ctx: &PassCtx, base_definition_root_id: RootId,
+        member_parser_type: &ParserType, allow_special_compiler_types: bool
+    ) -> Result<(), ParseError> {
+        use ParserTypeVariant as PTV;
+
+
     }
 
     /// Each type may consist of embedded types. If this type does not have a
@@ -836,7 +976,7 @@ impl TypeTable {
     /// DefinitionId) is unresolved.
     fn resolve_base_parser_type(
         &mut self, modules: &[Module], ctx: &PassCtx, root_id: RootId,
-        parser_type: &ParserType, is_builtin: bool
+        parser_type: &ParserType, allow_special_compiler_types: bool
     ) -> Result<ResolveResult, ParseError> {
         use ParserTypeVariant as PTV;
 
@@ -850,7 +990,7 @@ impl TypeTable {
         for element in parser_type.elements.iter() {
             match element.variant {
                 PTV::Void | PTV::InputOrOutput | PTV::ArrayLike | PTV::IntegerLike => {
-                    if is_builtin {
+                    if allow_special_compiler_types {
                         set_resolve_result(ResolveResult::Builtin);
                     } else {
                         unreachable!("compiler-only ParserTypeVariant within type definition");
@@ -899,7 +1039,7 @@ impl TypeTable {
     /// Go through a list of identifiers and ensure that all identifiers have
     /// unique names
     fn check_identifier_collision<T: Sized, F: Fn(&T) -> &Identifier>(
-        &self, modules: &[Module], root_id: RootId, items: &[T], getter: F, item_name: &'static str
+        modules: &[Module], root_id: RootId, items: &[T], getter: F, item_name: &'static str
     ) -> Result<(), ParseError> {
         for (item_idx, item) in items.iter().enumerate() {
             let item_ident = getter(item);
@@ -923,7 +1063,7 @@ impl TypeTable {
     /// arguments all have unique names, and the arguments do not conflict with
     /// any symbols defined at the module scope.
     fn check_poly_args_collision(
-        &self, modules: &[Module], ctx: &PassCtx, root_id: RootId, poly_args: &[Identifier]
+        modules: &[Module], ctx: &PassCtx, root_id: RootId, poly_args: &[Identifier]
     ) -> Result<(), ParseError> {
         // Make sure polymorphic arguments are unique and none of the
         // identifiers conflict with any imported scopes
@@ -962,6 +1102,77 @@ impl TypeTable {
     }
 
     //--------------------------------------------------------------------------
+    // Breadcrumb management
+    //--------------------------------------------------------------------------
+
+    /// Pushes a breadcrumb for a particular definition. The field in the
+    /// breadcrumb tracking progress in defining the type will be preallocated
+    /// as best as possible.
+    fn push_breadcrumb_for_definition(&mut self, ctx: &PassCtx, definition_id: DefinitionId) {
+        let definition = &ctx.heap[definition_id];
+
+        let (root_id, progression) = match definition {
+            Definition::Struct(definition) => {
+                (
+                    definition.defined_in,
+                    DefinedTypeVariant::Struct(StructType{
+                        fields: Vec::with_capacity(definition.fields.len()),
+                        monomorphs: Vec::new(),
+                    })
+                )
+            },
+            Definition::Enum(definition) => {
+                (
+                    definition.defined_in,
+                    DefinedTypeVariant::Enum(EnumType{
+                        variants: Vec::with_capacity(definition.variants.len()),
+                        monomorphs: Vec::new(),
+                    })
+                )
+            },
+            Definition::Union(definition) => {
+                (
+                    definition.defined_in,
+                    DefinedTypeVariant::Union(UnionType{
+                        variants: Vec::with_capacity(definition.variants.len()),
+                        monomorphs: Vec::new(),
+                        requires_allocation: false,
+                        contains_unallocated_variant: false
+                    })
+                )
+            },
+            Definition::Component(definition) => {
+                (
+                    definition.defined_in,
+                    DefinedTypeVariant::Component(ComponentType{
+                        variant: definition.variant,
+                        arguments: Vec::with_capacity(definition.parameters.len()),
+                        monomorphs: Vec::new(),
+                    })
+                )
+            },
+            Definition::Function(definition) => {
+                (
+                    definition.defined_in,
+                    DefinedTypeVariant::Function(FunctionType{
+                        return_types: Vec::with_capacity(1),
+                        arguments: Vec::with_capacity(definition.parameters.len()),
+                        monomorphs: Vec::new(),
+                    })
+                )
+            }
+        };
+
+        self.breadcrumbs.push(ResolveBreadcrumb{
+            root_id,
+            definition_id,
+            next_member: 0,
+            next_embedded: 0,
+            progression
+        });
+    }
+
+    //--------------------------------------------------------------------------
     // Small utilities
     //--------------------------------------------------------------------------
 
@@ -975,7 +1186,7 @@ impl TypeTable {
     }
 
     fn mark_used_polymorphic_variables(poly_vars: &mut Vec<PolymorphicVariable>, parser_type: &ParserType) {
-        for element in & parser_type.elements {
+        for element in &parser_type.elements {
             if let ParserTypeVariant::PolymorphicArgument(_, idx) = &element.variant {
                 poly_vars[*idx as usize].is_in_use = true;
             }

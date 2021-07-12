@@ -265,3 +265,17 @@ union UTwo { Struct(S), Nope }
 ```
 
 Here we see that we have a type loop to which both unions contribute. We can either lay out `UOne` as pointerlike, or `UTwo`. Both would allow us to calculate the size of the types and make the type expressable. However we need consistent compilation. For this reason and this reason only (because it is much more efficient to only lay out one of the unions as a pointer) we have to make both unions pointerlike. Perhaps in the future some other consistent metric can be applied.
+
+### Does it even Matter?
+
+```pdl
+// Obviously doesn't use `T`
+enum Something<T> { A, B }
+
+// So this should be fine
+struct Foo {
+    Something<Foo> some_member,
+}
+```
+
+Here we have a struct `Foo` that has a reliance on `Something<Foo>`, but this shouldn't case a type loop. Because `Foo` doesn't actually appear in `Something`. So whatever algorithm we come up with should resolve member types not by iterating over each individual type, but by attempting to instantiate a monomorph of that type, then to check the members of that monomorph.
