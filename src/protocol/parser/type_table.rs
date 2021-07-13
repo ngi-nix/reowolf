@@ -346,11 +346,11 @@ impl TypeTable {
             let definition = &ctx.heap[definition_id];
 
             match definition {
-                Definition::Enum(_) => self.build_base_enum_definition(modules, ctx, definition_id),
-                Definition::Union(_) => self.build_base_union_definition(modules, ctx, definition_id),
-                Definition::Struct(_) => self.build_base_struct_definition(modules, ctx, definition_id),
-                Definition::Function(_) => self.build_base_function_definition(modules, ctx, definition_id),
-                Definition::Component(_) => self.build_base_component_definition(modules, ctx, definition_id),
+                Definition::Enum(_) => self.build_base_enum_definition(modules, ctx, definition_id)?,
+                Definition::Union(_) => self.build_base_union_definition(modules, ctx, definition_id)?,
+                Definition::Struct(_) => self.build_base_struct_definition(modules, ctx, definition_id)?,
+                Definition::Function(_) => self.build_base_function_definition(modules, ctx, definition_id)?,
+                Definition::Component(_) => self.build_base_component_definition(modules, ctx, definition_id)?,
             }
         }
 
@@ -358,6 +358,8 @@ impl TypeTable {
         for module in modules {
             module.phase = ModuleCompilationPhase::TypesAddedToTable;
         }
+
+        // Go through all types again, now try to m
 
         Ok(())
     }
@@ -561,18 +563,216 @@ impl TypeTable {
         return Ok(());
     }
 
+    fn build_base_union_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base union already built");
+        let definition = ctx.heap[definition_id].as_union();
+        let root_id = definition.defined_in;
+
+        // Check all variants and their embedded types
+        let mut variants = Vec::with_capacity(definition.variants.len());
+        let tag_counter = 0;
+        for variant in &definition.variants {
+            for embedded in &variant.value {
+                Self::check_member_parser_type(
+                    modules, ctx, root_id, embedded, false
+                )?;
+            }
+
+            let has_embedded = !variant.value.is_empty();
+            variants.push(UnionVariant{
+                identifier: variant.identifier.clone(),
+                embedded: variant.value.clone(),
+                tag_value: tag_counter,
+                exists_in_heap: false
+            });
+        }
+
+        // Make sure there are no conflicts in identifiers
+        Self::check_identifier_collision(
+            modules, root_id, &variants, |variant| &variant.identifier, "union variant"
+        )?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars);
+
+        // Construct internal representation of union
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+        for variant in &definition.variants {
+            for embedded in &variant.value {
+                Self::mark_used_polymorphic_variables(&mut poly_vars, embedded);
+            }
+        }
+
+        let is_polymorph = poly_vars.iter().any(|arg| arg.is_in_use);
+
+        self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Union(UnionType{
+                variants,
+                monomorphs: Vec::new(),
+                requires_allocation: false,
+                contains_unallocated_variant: false
+            }),
+            poly_vars,
+            is_polymorph
+        });
+
+        return Ok(());
+    }
+
     fn build_base_struct_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
         debug_assert!(!self.lookup.contains_key(&definition_id), "base struct already built");
         let definition = ctx.heap[definition_id].as_struct();
         let root_id = definition.defined_in;
 
-        // Go through all struct fields
+        // Check all struct fields and construct internal representation
         let mut fields = Vec::with_capacity(definition.fields.len());
 
         for field in &definition.fields {
-            // Make sure the
+            Self::check_member_parser_type(
+                modules, ctx, root_id, &field.parser_type, false
+            )?;
+
+            fields.push(StructField{
+                identifier: field.field.clone(),
+                parser_type: field.parser_type.clone(),
+            });
         }
+
+        // Make sure there are no conflicting variables
+        Self::check_identifier_collision(
+            modules, root_id, &fields, |field| &field.identifier, "struct field"
+        )?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+
+        // Construct base type in table
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+        for field in &fields {
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &field.parser_type);
+        }
+
+        let is_polymorph = poly_vars.iter().any(|arg| arg.is_in_use);
+
+        self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Struct(StructType{
+                fields,
+                monomorphs: Vec::new(),
+            }),
+            poly_vars,
+            is_polymorph
+        });
+
+        return Ok(())
     }
+
+    fn build_base_function_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base function already built");
+        let definition = ctx.heap[definition_id].as_function();
+        let root_id = definition.defined_in;
+
+        // Check and construct return types and argument types.
+        debug_assert_eq!(definition.return_types.len(), 1, "not one return type"); // TODO: @ReturnValues
+        for return_type in &definition.return_types {
+            Self::check_member_parser_type(
+                modules, ctx, root_id, return_type, definition.builtin
+            )?;
+        }
+
+        let mut arguments = Vec::with_capacity(definition.parameters.len());
+        for parameter_id in &definition.parameters {
+            let parameter = &ctx.heap[*parameter_id];
+            Self::check_member_parser_type(
+                modules, ctx, root_id, &parameter.parser_type, definition.builtin
+            )?;
+
+            arguments.push(FunctionArgument{
+                identifier: parameter.identifier.clone(),
+                parser_type: parameter.parser_type.clone(),
+            });
+        }
+
+        // Check conflict of identifiers
+        Self::check_identifier_collision(
+            modules, root_id, &arguments, |arg| &arg.identifier, "function argument"
+        )?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+
+        // Construct internal representation of function type
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+        for return_type in &definition.return_types {
+            Self::mark_used_polymorphic_variables(&mut poly_vars, return_type);
+        }
+        for argument in &arguments {
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &argument.parser_type);
+        }
+
+        let is_polymorph = poly_vars.iter().any(|arg| arg.is_in_use);
+
+        self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Function(FunctionType{
+                return_types: definition.return_types.clone(),
+                arguments,
+                monomorphs: Vec::new(),
+            }),
+            poly_vars,
+            is_polymorph
+        });
+
+        return Ok(());
+    }
+
+    fn build_base_component_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
+        debug_assert!(self.lookup.contains_key(&definition_id), "base component already built");
+
+        let definition = &ctx.heap[definition_id].as_component();
+        let root_id = definition.defined_in;
+
+        // Check the argument types
+        let mut arguments = Vec::with_capacity(definition.parameters.len());
+        for parameter_id in &definition.parameters {
+            let parameter = &ctx.heap[*parameter_id];
+            Self::check_member_parser_type(
+                modules, ctx, root_id, &parameter.parser_type
+            )?;
+
+            arguments.push(FunctionArgument{
+                identifier: parameter.identifier.clone(),
+                parser_type: parameter.parser_type.clone(),
+            });
+        }
+
+        // Check conflict of identifiers
+        Self::check_identifier_collision(
+            modules, root_id, &arguments, |arg| &arg.identifier
+        )?;
+        Self::check_poly_args_collision(modules, ctx, root_id, &definition.poly_vars)?;
+
+        // Construct internal representation of component
+        let mut poly_vars = Self::create_polymorphic_variables(&definition.poly_vars);
+        for argument in &arguments {
+            Self::mark_used_polymorphic_variables(&mut poly_vars, &argument.parser_type);
+        }
+
+        let is_polymorph = poly_vars.iter().any(|arg| arg.is_in_use);
+
+        self.lookup.insert(definition_id, DefinedType{
+            ast_root: root_id,
+            ast_definition: definition_id,
+            definition: DefinedTypeVariant::Component(ComponentType{
+                variant: definition.variant,
+                arguments,
+                monomorphs: Vec::new()
+            }),
+            poly_vars,
+            is_polymorph
+        });
+
+        Ok(())
+    }
+
 
     /// Resolve the basic enum definition to an entry in the type table. It will
     /// not instantiate any monomorphized instances of polymorphic enum
@@ -796,22 +996,19 @@ impl TypeTable {
         }
 
         // Check the argument types
+        let mut arguments = Vec::with_capacity(definition.parameters.len());
+
         for param_id in &definition.parameters {
             let param = &ctx.heap[*param_id];
             let resolve_result = self.resolve_base_parser_type(modules, ctx, root_id, &param.parser_type, definition.builtin)?;
             if !self.ingest_resolve_result(modules, ctx, resolve_result)? {
                 return Ok(false)
             }
-        }
 
-        // Construct arguments to function
-        let mut arguments = Vec::with_capacity(definition.parameters.len());
-        for param_id in &definition.parameters {
-            let param = &ctx.heap[*param_id];
             arguments.push(FunctionArgument{
                 identifier: param.identifier.clone(),
                 parser_type: param.parser_type.clone(),
-            })
+            });
         }
 
         // Check conflict of argument and polyarg identifiers
@@ -956,13 +1153,50 @@ impl TypeTable {
 
     /// Will check if the member type (field of a struct, embedded type in a
     /// union variant) is valid.
-    fn check_parser_type_for_base_definition(
-        &self, modules: &[Module], ctx: &PassCtx, base_definition_root_id: RootId,
+    fn check_member_parser_type(
+        modules: &[Module], ctx: &PassCtx, base_definition_root_id: RootId,
         member_parser_type: &ParserType, allow_special_compiler_types: bool
     ) -> Result<(), ParseError> {
         use ParserTypeVariant as PTV;
 
+        for element in &member_parser_type.elements {
+            match element.variant {
+                // Special cases
+                PTV::Void | PTV::InputOrOutput | PTV::ArrayLike | PTV::IntegerLike => {
+                    if !allow_special_compiler_types {
+                        unreachable!("compiler-only ParserTypeVariant in member type");
+                    }
+                },
+                // Builtin types, always valid
+                PTV::Message | PTV::Bool |
+                PTV::UInt8 | PTV::UInt16 | PTV::UInt32 | PTV::UInt64 |
+                PTV::SInt8 | PTV::SInt16 | PTV::SInt32 | PTV::SInt64 |
+                PTV::Character | PTV::String |
+                PTV::Array | PTV::Input | PTV::Output |
+                // Likewise, polymorphic variables are always valid
+                PTV::PolymorphicArgument(_, _) => {},
+                // Types that are not constructable, or types that are not
+                // allowed (and checked earlier)
+                PTV::IntegerLiteral | PTV::Inferred => {
+                    unreachable!("illegal ParserTypeVariant within type definition");
+                },
+                // Finally, user-defined types
+                PTV::Definition(definition_id, _) => {
+                    let definition = &ctx.heap[definition_id];
+                    if !(definition.is_struct() || definition.is_enum() || definition.is_union()) {
+                        let source = &modules[base_definition_root_id.index as usize].source;
+                        return Err(ParseError::new_error_str_at_span(
+                            source, element.element_span, "expected a datatype (a struct, enum or union)"
+                        ));
+                    }
 
+                    // Otherwise, we're fine
+                }
+            }
+        }
+
+        // If here, then all elements check out
+        return Ok(());
     }
 
     /// Each type may consist of embedded types. If this type does not have a
