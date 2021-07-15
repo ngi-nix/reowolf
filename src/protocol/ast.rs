@@ -497,6 +497,23 @@ pub enum ConcreteTypePart {
     Instance(DefinitionId, u32),
 }
 
+impl ConcreteTypePart {
+    fn num_embedded(&self) -> u32 {
+        use ConcreteTypePart::*;
+
+        match self {
+            Void | Message | Bool |
+            UInt8 | UInt16 | UInt32 | UInt64 |
+            SInt8 | SInt16 | SInt32 | SInt64 |
+            Character | String =>
+                0,
+            Array | Slice | Input | Output =>
+                1,
+            Instance(_, num_embedded) => *num_embedded
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ConcreteType {
     pub(crate) parts: Vec<ConcreteTypePart>
@@ -505,6 +522,27 @@ pub struct ConcreteType {
 impl Default for ConcreteType {
     fn default() -> Self {
         Self{ parts: Vec::new() }
+    }
+}
+
+impl ConcreteType {
+    pub(crate) fn subtree_end_idx(&self, start_idx: usize) -> usize {
+        let mut depth = 1;
+        let num_parts = self.parts.len();
+        debug_assert!(start_idx < num_parts);
+
+        for part_idx in start_idx..self.parts.len() {
+            let depth_change = self.parts[part_idx].num_embedded() as i32 - 1;
+            depth += depth_change;
+            debug_assert!(depth >= 0);
+
+            if depth == 0 {
+                return part_idx + 1;
+            }
+        }
+
+        debug_assert!(false, "incorrectly constructed ConcreteType instance");
+        return 0;
     }
 }
 
