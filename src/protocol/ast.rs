@@ -494,7 +494,9 @@ pub enum ConcreteTypePart {
     Input,
     Output,
     // User defined type with any number of nested types
-    Instance(DefinitionId, u32),
+    Instance(DefinitionId, u32),    // instance of data type
+    Function(DefinitionId, u32),    // instance of function
+    Component(DefinitionId, u32),   // instance of a connector
 }
 
 impl ConcreteTypePart {
@@ -509,7 +511,9 @@ impl ConcreteTypePart {
                 0,
             Array | Slice | Input | Output =>
                 1,
-            Instance(_, num_embedded) => *num_embedded
+            Instance(_, num_embedded) => *num_embedded,
+            Function(_, num_embedded) => *num_embedded,
+            Component(_, num_embedded) => *num_embedded,
         }
     }
 }
@@ -601,7 +605,9 @@ impl ConcreteType {
                     idx = display_part(parts, heap, idx, target);
                     target.push('>');
                 },
-                CTP::Instance(definition_id, num_poly_args) => {
+                CTP::Instance(definition_id, num_poly_args) |
+                CTP::Function(definition_id, num_poly_args) |
+                CTP::Component(definition_id, num_poly_args) => {
                     let definition = &heap[definition_id];
                     target.push_str(definition.identifier().value.as_str());
 

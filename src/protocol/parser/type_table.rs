@@ -453,7 +453,7 @@ struct TypeLoopBreadcrumb {
     next_embedded: usize, // for unions, the index into the variant's embedded types
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum BreadcrumbResult {
     TypeExists,
     PushedBreadcrumb,
@@ -642,22 +642,25 @@ impl TypeTable {
     /// Adds a datatype polymorph to the type table. Will not add the
     /// monomorph if it is already present, or if the type's polymorphic
     /// variables are all unused.
-    pub(crate) fn add_data_monomorph(&mut self, definition_id: &DefinitionId, types: Vec<ConcreteType>) -> i32 {
-        let def = self.lookup.get_mut(definition_id).unwrap();
-        if !def.is_polymorph {
-            // Not a polymorph, or polyvars are not used in type definition
-            return 0;
+    pub(crate) fn add_data_monomorph(
+        &mut self, modules: &[Module], ctx: &PassCtx, definition_id: &DefinitionId, concrete_type: ConcreteType
+    ) -> Result<i32, ParseError> {
+        debug_assert_eq!(*definition_id, get_concrete_type_definition(&concrete_type));
+
+        // Check if the monomorph already exists
+        let poly_type = self.lookup.get_mut(definition_id).unwrap();
+        if let Some(idx) = poly_type.get_monomorph_index(&concrete_type) {
+            return idx as i32;
         }
 
-        let monos = def.definition.data_monomorphs_mut();
-        if let Some(index) = monos.iter().position(|v| v.poly_args == types) {
-            // We already know about this monomorph
-            return index as i32;
-        }
+        // Doesn't exist, so instantiate a monomorph and determine its memory
+        // layout.
+        self.detect_and_resolve_type_loops_for(modules, ctx, concrete_type)?;
+        debug_assert_eq!(self.encountered_types[0].definition_id, definition_id);
+        let mono_idx = self.encountered_types[0].monomorph_idx;
+        self.lay_out_memory_for_encountered_types(ctx);
 
-        let index = monos.len();
-        monos.push(DataMonomorph{ poly_args: types });
-        return index as i32;
+        return mono_idx as i32;
     }
 
     //--------------------------------------------------------------------------
@@ -1170,7 +1173,8 @@ impl TypeTable {
                         let breadcrumb = &mut self.breadcrumbs[breadcrumb_idx];
                         let mut is_union = false;
 
-                        match self.lookup.get_mut(&breadcrumb.definition_id).unwrap() {
+                        let entry = self.lookup.get_mut(&breadcrumb.definition_id).unwrap();
+                        match &mut entry.definition {
                             DTV::Union(definition) => {
                                 // Mark the currently processed variant as requiring heap
                                 // allocation, then advance the *embedded* type. The loop above
@@ -1374,7 +1378,7 @@ impl TypeTable {
                 mono_idx
             },
             DTV::Function(_) | DTV::Component(_) => {
-                unreachable!("pushing type resolving breadcrumb for procedure type {:?}", base_type)
+                unreachable!("pushing type resolving breadcrumb for procedure type")
             },
         };
 
@@ -1439,11 +1443,11 @@ impl TypeTable {
 
             // Not builtin, but if all code is working correctly, we only care
             // about the polymorphic argument at this point.
-            if let PTV::PolymorphicArgument(_container_definition_id, poly_arg_idx) = member_part {
-                debug_assert_eq!(*_container_definition_id, get_concrete_type_definition(container_type));
+            if let PTV::PolymorphicArgument(_container_definition_id, poly_arg_idx) = member_part.variant {
+                debug_assert_eq!(_container_definition_id, get_concrete_type_definition(container_type));
 
                 let mut container_iter = container_type.embedded_iter(0);
-                for _ in 0..*poly_arg_idx {
+                for _ in 0..poly_arg_idx {
                     container_iter.next();
                 }
 

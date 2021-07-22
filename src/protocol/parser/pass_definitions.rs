@@ -224,7 +224,8 @@ impl PassDefinitions {
                 let value = if has_embedded {
                     types_section.into_vec()
                 } else {
-                    types_section.forget()
+                    types_section.forget();
+                    Vec::new()
                 };
 
                 Ok(UnionVariantDefinition{

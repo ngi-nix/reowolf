@@ -1391,10 +1391,23 @@ impl PassTyping {
 
         // Helper for transferring polymorphic variables to concrete types and
         // checking if they're completely specified
-        fn poly_inference_to_concrete_type(
-            ctx: &Ctx, expr_id: ExpressionId, inference: &Vec<InferenceType>
-        ) -> Result<Vec<ConcreteType>, ParseError> {
-            let mut concrete = Vec::with_capacity(inference.len());
+        fn inference_type_to_concrete_type(
+            ctx: &Ctx, expr_id: ExpressionId, inference: &Vec<InferenceType>,
+            first_concrete_part: ConcreteTypePart,
+        ) -> Result<(ConcreteType, Vec<ConcreteType>), ParseError> {
+            // Prepare storage vector
+            let mut num_inference_parts = 0;
+            for inference_type in inference {
+                num_inference_parts += inference_type.parts.len();
+            }
+
+            let mut concrete_full_parts = Vec::with_capacity(1 + num_inference_parts);
+            concrete_full_parts.push(first_concrete_part);
+
+            let mut concrete_poly_args = Vec::with_capacity(inference.len());
+
+            // Go through all polymorphic arguments and add them to the concrete
+            // types.
             for (poly_idx, poly_type) in inference.iter().enumerate() {
                 if !poly_type.is_done {
                     let expr = &ctx.heap[expr_id];
@@ -1419,10 +1432,12 @@ impl PassTyping {
 
                 let mut concrete_type = ConcreteType::default();
                 poly_type.write_concrete_type(&mut concrete_type);
-                concrete.push(concrete_type);
+
+                concrete_full_parts.extend_from_slice(&concrete_type.parts);
+                concrete_poly_args.push(concrete_type);
             }
 
-            Ok(concrete)
+            Ok((ConcreteType{ parts: concrete_full_parts }, concrete_poly_args))
         }
 
         // Inference is now done. But we may still have uninferred types. So we
@@ -1458,13 +1473,21 @@ impl PassTyping {
             // storage of the struct type whose field it is selecting.
             match &ctx.heap[extra_data.expr_id] {
                 Expression::Call(expr) => {
-                    if expr.method != Method::UserFunction && expr.method != Method::UserComponent {
+                    // Check if it is not a builtin function. If not, then
+                    // construct the first part of the concrete type.
+                    let first_concrete_part = if expr.method == Method::UserFunction {
+                        ConcreteTypePart::Function(expr.definition, extra_data.poly_vars.len() as u32)
+                    } else if expr.method == Method::UserComponent {
+                        ConcreteTypePart::Component(expr.definition, extra_data.poly_vars.len() as u32)
+                    } else {
                         // Builtin function
                         continue;
-                    }
+                    };
 
                     let definition_id = expr.definition;
-                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
+                    let (concrete_type, poly_types) = inference_type_to_concrete_type(
+                        ctx, extra_data.expr_id, &extra_data.poly_vars, first_concrete_part
+                    )?;
 
                     match ctx.types.get_procedure_monomorph_index(&definition_id, &poly_types) {
                         Some(reserved_idx) => {
@@ -1491,9 +1514,11 @@ impl PassTyping {
                         Literal::Struct(lit) => lit.definition,
                         _ => unreachable!(),
                     };
-
-                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
-                    let mono_index = ctx.types.add_data_monomorph(&definition_id, poly_types);
+                    let first_concrete_part = ConcreteTypePart::Instance(definition_id, extra_data.poly_vars.len() as u32);
+                    let (concrete_type, poly_types) = inference_type_to_concrete_type(
+                        ctx, extra_data.expr_id, &extra_data.poly_vars, first_concrete_part
+                    )?;
+                    let mono_index = ctx.types.add_data_monomorph(modules, ctx, &definition_id, concrete_type)?;
                     infer_expr.field_or_monomorph_idx = mono_index;
                 },
                 Expression::Select(_) => {
@@ -3519,6 +3544,8 @@ impl PassTyping {
                 CTP::Input => parser_type.push(ITP::Input),
                 CTP::Output => parser_type.push(ITP::Output),
                 CTP::Instance(id, num) => parser_type.push(ITP::Instance(*id, *num)),
+                CTP::Function(_, _) => unreachable!("function type during concrete to inference type conversion"),
+                CTP::Component(_, _) => unreachable!("component type during concrete to inference type conversion"),
             }
         }
     }
