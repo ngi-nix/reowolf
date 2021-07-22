@@ -25,6 +25,12 @@
  * types like trees or linked lists. Hence we need to insert pointers somewhere
  * to break these cycles.
  *
+ * We will insert these pointers into the variants of unions. However note that
+ * we can only compute the stack size of a union until we've looked at *all*
+ * variants. Hence we perform an initial pass where we detect type loops, a
+ * second pass where we compute the stack sizes of everything, and a third pass
+ * where we actually compute the size of the heap allocations for unions.
+ *
  * As a final bit of global documentation: non-polymorphic types will always
  * have one "monomorph" entry. This contains the non-polymorphic type's memory
  * layout.
@@ -85,83 +91,22 @@ pub struct DefinedType {
 }
 
 impl DefinedType {
-    /// Checks if the monomorph at the specified index has polymorphic arguments
-    /// that match the provided polymorphic arguments. Only the polymorphic
-    /// variables that are in use by the type are checked.
-    #[deprecated]
-    pub(crate) fn monomorph_matches_poly_args(&self, monomorph_idx: usize, checking_poly_args: &[ConcreteType]) -> bool {
+    /// Returns the number of monomorphs that are instantiated. Remember that
+    /// during the type loop detection, and the memory layout phase we will
+    /// pre-allocate monomorphs which are not yet fully laid out in memory.
+    pub(crate) fn num_monomorphs(&self) -> usize {
         use DefinedTypeVariant as DTV;
-
-        debug_assert!(self.poly_vars.len(), checking_poly_args.len());
-        if !self.is_polymorph {
-            return true;
-        }
-
-        let existing_poly_args = match &self.definition {
-            DTV::Enum(def) => &def.monomorphs[monomorph_idx].poly_args,
-            DTV::Union(def) => &def.monomorphs[monomorph_idx].poly_args,
-            DTV::Struct(def) => &def.monomorphs[monomorph_idx].poly_args,
-            DTV::Function(def) => &def.monomorphs[monomorph_idx].poly_args,
-            DTV::Component(def) => &def.monomorphs[monomorph_idx].poly_args
-        };
-
-        for poly_idx in 0..num_args {
-            let poly_var = &self.poly_vars[poly_idx];
-            if !poly_var.is_in_use {
-                continue;
-            }
-
-            let existing_arg = &existing_poly_args[poly_idx];
-            let checking_arg = &checking_poly_args[poly_idx];
-            if existing_arg != checking_arg {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /// Checks if a monomorph with the provided polymorphic arguments already
-    /// exists. The polymorphic variables that are not in use by the type will
-    /// not contribute to the checking (e.g. an `enum` type will always return
-    /// `true`, because it cannot embed its polymorphic variables). Returns the
-    /// index of the matching monomorph.
-    #[deprecated]
-    pub(crate) fn has_monomorph(&self, poly_args: &[ConcreteType]) -> Option<usize> {
-        use DefinedTypeVariant as DTV;
-
-        // Quick check if type is polymorphic at all
-        let num_args = poly_args.len();
-        let num_monomorphs = match &self.definition {
+        match &self.definition {
             DTV::Enum(def) => def.monomorphs.len(),
             DTV::Union(def) => def.monomorphs.len(),
             DTV::Struct(def) => def.monomorphs.len(),
-            DTV::Function(def) => def.monomorphs.len(),
-            DTV::Component(def) => def.monomorphs.len(),
-        };
-
-        debug_assert_eq!(self.poly_vars.len(), num_args);
-        if !self.is_polymorph {
-            debug_assert!(num_monomorphs <= 1);
-            if num_monomorphs == 0 {
-                return None;
-            } else {
-                return Some(0);
-            }
+            DTV::Function(_) | DTV::Component(_) => unreachable!(),
         }
-
-        for monomorph_idx in 0..num_monomorphs {
-            if self.monomorph_matches_poly_args(monomorph_idx, poly_args) {
-                return Some(monomorph_idx);
-            }
-        }
-
-        return None;
     }
-
     /// Returns the index at which a monomorph occurs. Will only check the
     /// polymorphic arguments that are in use (none of the, in rust lingo,
-    /// phantom types).
+    /// phantom types). If the type is not polymorphic and its memory has been
+    /// layed out, then this will always return `Some(0)`.
     pub(crate) fn get_monomorph_index(&self, concrete_type: &ConcreteType) -> Option<usize> {
         use DefinedTypeVariant as DTV;
 
@@ -172,7 +117,7 @@ impl DefinedType {
             let mut b_iter = type_b.embedded_iter(0);
 
             while let Some((section_idx, a_section)) = a_iter.next() {
-                let b_section = b_iter.next();
+                let b_section = b_iter.next().unwrap();
 
                 if !self.poly_vars[section_idx].is_in_use {
                     continue;
@@ -190,7 +135,7 @@ impl DefinedType {
         if cfg!(debug_assertions) {
             if let ConcreteTypePart::Instance(definition_id, num_poly_args) = concrete_type.parts[0] {
                 assert_eq!(definition_id, self.ast_definition);
-                assert_eq!(num_poly_args, self.poly_vars.len());
+                assert_eq!(num_poly_args as usize, self.poly_vars.len());
             } else {
                 assert!(false, "concrete type {:?} is not a user-defined type", concrete_type);
             }
@@ -229,18 +174,18 @@ impl DefinedType {
         return None;
     }
 
-    /// Retrieves size and alignment of the particular type's monomorph
-    pub(crate) fn get_monomorph_size_alignment(&self, idx: usize) -> (usize, usize) {
+    /// Retrieves size and alignment of the particular type's monomorph if it
+    /// has been layed out in memory.
+    pub(crate) fn get_monomorph_size_alignment(&self, idx: usize) -> Option<(usize, usize)> {
         use DefinedTypeVariant as DTV;
-        match &self.definition {
+        let (size, alignment) = match &self.definition {
             DTV::Enum(def) => {
                 debug_assert!(idx == 0);
                 (def.size, def.alignment)
             },
             DTV::Union(def) => {
                 let monomorph = &def.monomorphs[idx];
-                // TODO: @Revise, probably not what I want
-                (monomorph.stack_byte_size, monomorph.alignment)
+                (monomorph.stack_size, monomorph.stack_alignment)
             },
             DTV::Struct(def) => {
                 let monomorph = &def.monomorphs[idx];
@@ -249,8 +194,17 @@ impl DefinedType {
             DTV::Function(_) | DTV::Component(_) => {
                 // Type table should never be able to arrive here during layout
                 // of types. Types may only contain function prototypes.
-                unreachable!("retrieving size and alignment of {:?}", self);
+                unreachable!("retrieving size and alignment of procedure type");
             }
+        };
+
+        if size == 0 && alignment == 0 {
+            // The "marker" for when the type has not been layed out yet. Even
+            // for zero-size types we will set alignment to `1` to simplify
+            // alignment calculations.
+            return None;
+        } else {
+            return Some((size, alignment));
         }
     }
 }
@@ -492,37 +446,6 @@ pub struct MonomorphExpression {
 // Type table
 //------------------------------------------------------------------------------
 
-struct LayoutBreadcrumb {
-    root_id: RootId,
-    definition_id: DefinitionId,
-    monomorph_idx: usize,
-    next_member: usize,
-    next_embedded: usize, // for unions, the next embedded value inside the member
-}
-
-/// Result from attempting to progress a breadcrumb
-enum LayoutResult {
-    PopBreadcrumb,
-    PushBreadcrumb(DefinitionId, Vec<ConcreteType>),
-    TypeLoop(usize),
-}
-
-enum LookupResult {
-    Exists(ConcreteType, usize, usize), // type was looked up and exists (or is a builtin). Also returns size and alignment
-    Missing(DefinitionId, Vec<ConcreteType>), // type was looked up and doesn't exist, vec contains poly args
-    TypeLoop(usize), // type is already in the breadcrumbs, index points into the matching breadcrumb
-}
-
-macro_rules! unwrap_lookup_result {
-    ($result:expr) => {
-        match $result {
-            LookupResult::Exists(a, b, c) => (a, b, c)
-            LookupResult::Missing(a, b) => return LayoutResult::PushBreadcrumb(a, b),
-            LookupResult::TypeLoop(a) => return LayoutResult::TypeLoop(a),
-        }
-    }
-}
-
 struct TypeLoopBreadcrumb {
     definition_id: DefinitionId,
     monomorph_idx: usize,
@@ -535,6 +458,11 @@ enum BreadcrumbResult {
     TypeExists,
     PushedBreadcrumb,
     TypeLoop(usize), // index into vec of breadcrumbs at which the type matched
+}
+
+enum MemoryLayoutResult {
+    TypeExists(usize, usize), // (size, alignment)
+    PushBreadcrumb(TypeLoopBreadcrumb),
 }
 
 // TODO: @Optimize, initial memory-unoptimized implementation
@@ -552,8 +480,6 @@ pub struct TypeTable {
     /// Lookup from AST DefinitionId to a defined type. Considering possible
     /// polymorphs is done inside the `DefinedType` struct.
     lookup: HashMap<DefinitionId, DefinedType>,
-    /// Breadcrumbs left behind while resolving embedded types
-    breadcrumbs_old: Vec<LayoutBreadcrumb>,
     /// Breadcrumbs left behind while trying to find type loops. Also used to
     /// determine sizes of types when all type loops are detected.
     breadcrumbs: Vec<TypeLoopBreadcrumb>,
@@ -566,7 +492,9 @@ impl TypeTable {
     pub(crate) fn new() -> Self {
         Self{ 
             lookup: HashMap::new(), 
-            breadcrumbs_old: Vec::with_capacity(32),
+            breadcrumbs: Vec::with_capacity(32),
+            type_loops: Vec::with_capacity(8),
+            encountered_types: Vec::with_capacity(32),
         }
     }
 
@@ -613,8 +541,25 @@ impl TypeTable {
         // Go through all types again, lay out all types that are not
         // polymorphic. This might cause us to lay out types that are monomorphs
         // of polymorphic types.
+        let empty_concrete_type = ConcreteType{ parts: Vec::new() };
+        for definition_idx in 0..ctx.heap.definitions.len() {
+            let definition_id = ctx.heap.definitions.get_id(definition_idx);
+            let poly_type = self.lookup.get(&definition_id).unwrap();
 
-        // TODO: Finish this
+            // Here we explicitly want to instantiate types which have no
+            // polymorphic arguments (even if it has phantom polymorphic
+            // arguments) because otherwise the user will see very weird
+            // error messages.
+            if poly_type.poly_vars.is_empty() && poly_type.num_monomorphs() == 0 {
+                self.detect_and_resolve_type_loops_for(
+                    modules, ctx,
+                    ConcreteType{
+                        parts: vec![ConcreteTypePart::Instance(definition_id, 0)]
+                    },
+                )?;
+                self.lay_out_memory_for_encountered_types(ctx);
+            }
+        }
 
         Ok(())
     }
@@ -1130,6 +1075,9 @@ impl TypeTable {
     // Detecting type loops
     //--------------------------------------------------------------------------
 
+    /// Internal function that will detect type loops and check if they're
+    /// resolvable. If so then the appropriate union variants will be marked as
+    /// "living on heap". If not then a `ParseError` will be returned
     fn detect_and_resolve_type_loops_for(&mut self, modules: &[Module], ctx: &PassCtx, concrete_type: ConcreteType) -> Result<(), ParseError> {
         use DefinedTypeVariant as DTV;
 
@@ -1138,7 +1086,7 @@ impl TypeTable {
         debug_assert!(self.encountered_types.is_empty());
 
         // Push the initial breadcrumb
-        let _initial_result = self.push_breadcrumb_for(get_concrete_type_definition(&concrete_type), &concrete_type);
+        let _initial_result = self.push_breadcrumb_for_type_loops(get_concrete_type_definition(&concrete_type), &concrete_type);
         debug_assert_eq!(_initial_result, BreadcrumbResult::PushedBreadcrumb);
 
         // Enter into the main resolving loop
@@ -1165,7 +1113,7 @@ impl TypeTable {
 
                         while breadcrumb.next_embedded < num_embedded {
                             let mono_embedded = &mono_variant.embedded[breadcrumb.next_embedded];
-                            union_result = self.push_breadcrumb_for(poly_type.ast_definition, &mono_embedded.concrete_type);
+                            union_result = self.push_breadcrumb_for_type_loops(poly_type.ast_definition, &mono_embedded.concrete_type);
 
                             if union_result != BreadcrumbResult::TypeExists {
                                 // In type loop or new breadcrumb pushed, so
@@ -1189,7 +1137,7 @@ impl TypeTable {
                     let mut struct_result = BreadcrumbResult::TypeExists;
                     while breadcrumb.next_member < num_fields {
                         let mono_field = &monomorph.fields[breadcrumb.next_member];
-                        struct_result = self.push_breadcrumb_for(poly_type.ast_definition, &mono_field.concrete_type);
+                        struct_result = self.push_breadcrumb_for_type_loops(poly_type.ast_definition, &mono_field.concrete_type);
 
                         if struct_result != BreadcrumbResult::TypeExists {
                             // Type loop or breadcrumb pushed, so break out of
@@ -1200,7 +1148,7 @@ impl TypeTable {
                         breadcrumb.next_member += 1;
                     }
 
-                    struct_result,
+                    struct_result
                 },
                 DTV::Function(_) | DTV::Component(_) => unreachable!(),
             };
@@ -1264,8 +1212,6 @@ impl TypeTable {
             // (not all arguments are actually used in the type). We don't have
             // to care about a second instantiation where certain unused
             // polymorphic arguments are different.
-            use DefinedTypeVariant as DTV;
-
             let monomorph_type = match &defined_type.definition {
                 DTV::Union(definition) => &definition.monomorphs[monomorph_idx].concrete_type,
                 DTV::Struct(definition) => &definition.monomorphs[monomorph_idx].concrete_type,
@@ -1276,9 +1222,9 @@ impl TypeTable {
             let type_name = monomorph_type.display_name(&ctx.heap);
             let message = if index_in_loop == 0 {
                 format!(
-                    "encountered an infinitely large type for '{}', which can be fixed by \
+                    "encountered an infinitely large type for '{}' (which can be fixed by \
                     introducing a union type that has a variant whose embedded types are \
-                    not part of a type loop",
+                    not part of a type loop, or do not have embedded types)",
                     type_name
                 )
             } else if index_in_loop == 1 {
@@ -1338,13 +1284,13 @@ impl TypeTable {
 
         // If here, then all type loops have been resolved and we can lay out
         // all of the members
-        // TODO: Continue here
+        self.type_loops.clear();
 
         return Ok(());
     }
 
     // TODO: Pass in definition_type by value?
-    fn push_breadcrumb_for(&mut self, definition_id: DefinitionId, definition_type: &ConcreteType) -> BreadcrumbResult {
+    fn push_breadcrumb_for_type_loops(&mut self, definition_id: DefinitionId, definition_type: &ConcreteType) -> BreadcrumbResult {
         use DefinedTypeVariant as DTV;
 
         let mut base_type = self.lookup.get_mut(&definition_id).unwrap();
@@ -1517,7 +1463,261 @@ impl TypeTable {
     // Determining memory layout for types
     //--------------------------------------------------------------------------
 
+    fn lay_out_memory_for_encountered_types(&mut self, ctx: &PassCtx) {
+        use DefinedTypeVariant as DTV;
 
+        // Just finished type loop detection, so we're left with the encountered
+        // types only
+        debug_assert!(self.breadcrumbs.is_empty());
+        debug_assert!(self.type_loops.is_empty());
+        debug_assert!(!self.encountered_types.is_empty());
+
+        // Push the first entry (the type we originally started with when we
+        // were detecting type loops)
+        let first_entry = &self.encountered_types[0];
+        self.breadcrumbs.push(TypeLoopBreadcrumb{
+            definition_id: first_entry.definition_id,
+            monomorph_idx: first_entry.monomorph_idx,
+            next_member: 0,
+            next_embedded: 0,
+        });
+
+        // Enter the main resolving loop
+        'breadcrumb_loop: while !self.breadcrumbs.is_empty() {
+            let breadcrumb_idx = self.breadcrumbs.len() - 1;
+            let breadcrumb = &mut self.breadcrumbs[breadcrumb_idx];
+
+            let poly_type = self.lookup.get_mut(&breadcrumb.definition_id).unwrap();
+            match &mut poly_type.definition {
+                DTV::Enum(definition) => {
+                    // Size should already be computed
+                    debug_assert!(definition.size != 0 && definition.alignment != 0);
+                },
+                DTV::Union(definition) => {
+                    // Retrieve size/alignment of each embedded type. We do not
+                    // compute the offsets or total type sizes yet.
+                    let mono_type = &mut definition.monomorphs[breadcrumb.monomorph_idx];
+                    let num_variants = mono_type.variants.len();
+                    while breadcrumb.next_member < num_variants {
+                        let mono_variant = &mut mono_type.variants[breadcrumb.next_member];
+
+                        if mono_variant.lives_on_heap {
+                            // To prevent type loops we made this a heap-
+                            // allocated variant. This implies we cannot
+                            // compute sizes of members at this point.
+                        } else {
+                            let num_embedded = mono_variant.embedded.len();
+                            while breadcrumb.next_embedded < num_embedded {
+                                let mono_embedded = &mut mono_variant.embedded[breadcrumb.next_embedded];
+                                match self.get_memory_layout_or_breadcrumb(ctx, &mono_embedded.concrete_type) {
+                                    MemoryLayoutResult::TypeExists(size, alignment) => {
+                                        mono_embedded.size = size;
+                                        mono_embedded.alignment = alignment;
+                                    },
+                                    MemoryLayoutResult::PushBreadcrumb(new_breadcrumb) => {
+                                        self.breadcrumbs.push(new_breadcrumb);
+                                        continue 'breadcrumb_loop;
+                                    }
+                                }
+
+                                breadcrumb.next_embedded += 1;
+                            }
+                        }
+
+                        breadcrumb.next_member += 1;
+                        breadcrumb.next_embedded = 0;
+                    }
+
+                    // If here then we can at least compute the stack size of
+                    // the type, we'll have to come back at the very end to
+                    // fill in the heap size/alignment/offset of each heap-
+                    // allocated variant.
+                    let mut max_size = definition.tag_size;
+                    let mut max_alignment = definition.tag_size;
+
+                    for variant in &mut mono_type.variants {
+                        // We're doing stack computations, so always start with
+                        // the tag size/alignment.
+                        let mut variant_offset = definition.tag_size;
+                        let mut variant_alignment = definition.tag_size;
+
+                        if variant.lives_on_heap {
+                            // Variant lives on heap, so just a pointer
+                            let (ptr_size, ptr_align) = ctx.arch.pointer_size_alignment;
+                            align_offset_to(&mut variant_offset, ptr_align);
+
+                            variant_offset += ptr_size;
+                            variant_alignment = variant_alignment.max(ptr_align);
+                        } else {
+                            // Variant lives on stack, so walk all embedded
+                            // types.
+                            for embedded in &mut variant.embedded {
+                                align_offset_to(&mut variant_offset, embedded.alignment);
+                                embedded.offset = variant_offset;
+
+                                variant_offset += embedded.size;
+                                variant_alignment = variant_alignment.max(embedded.alignment);
+                            }
+                        };
+
+                        max_size = max_size.max(variant_offset);
+                        max_alignment = max_alignment.max(variant_alignment);
+                    }
+
+                    mono_type.stack_size = max_size;
+                    mono_type.stack_alignment = max_alignment;
+                },
+                DTV::Struct(definition) => {
+                    // Retrieve size and alignment of each struct member. We'll
+                    // compute the offsets once all of those are known
+                    let mono_type = &mut definition.monomorphs[breadcrumb.monomorph_idx];
+                    let num_fields = mono_type.fields.len();
+                    while breadcrumb.next_member < num_fields {
+                        let mono_field = &mut mono_type.fields[breadcrumb.next_member];
+
+                        match self.get_memory_layout_or_breadcrumb(ctx, &mono_field.concrete_type) {
+                            MemoryLayoutResult::TypeExists(size, alignment) => {
+                                mono_field.size = size;
+                                mono_field.alignment = alignment;
+                            },
+                            MemoryLayoutResult::PushBreadcrumb(new_breadcrumb) => {
+                                self.breadcrumbs.push(new_breadcrumb);
+                                continue 'breadcrumb_loop;
+                            },
+                        }
+
+                        breadcrumb.next_member += 1;
+                    }
+
+                    // Compute offsets and size of total type
+                    let mut cur_offset = 0;
+                    let mut max_alignment = 1;
+                    for field in &mut mono_type.fields {
+                        align_offset_to(&mut cur_offset, field.alignment);
+                        field.offset = cur_offset;
+
+                        cur_offset += field.size;
+                        max_alignment = max_alignment.max(field.alignment);
+                    }
+
+                    mono_type.size = cur_offset;
+                    mono_type.alignment = max_alignment;
+                },
+                DTV::Function(_) | DTV::Component(_) => {
+                    unreachable!();
+                }
+            }
+
+            // If here, then we completely layed out the current type. So move
+            // to the next breadcrumb
+            self.breadcrumbs.pop();
+        }
+
+        // If here then all types have been layed out. What remains is to
+        // compute the sizes/alignment/offsets of the heap variants of the
+        // unions we have encountered.
+        for entry in &self.encountered_types {
+            if !entry.is_union {
+                continue;
+            }
+
+            let poly_type = self.lookup.get_mut(&entry.definition_id).unwrap();
+            match &mut poly_type.definition {
+                DTV::Union(definition) => {
+                    let mono_type = &mut definition.monomorphs[entry.monomorph_idx];
+                    let mut max_size = 0;
+                    let mut max_alignment = 1;
+
+                    for variant in &mut mono_type.variants {
+                        if !variant.lives_on_heap {
+                            continue;
+                        }
+
+                        let mut variant_offset = 0;
+                        let mut variant_alignment = 1;
+                        debug_assert!(!variant.embedded.is_empty());
+
+                        for embedded in &mut variant.embedded {
+                            match self.get_memory_layout_or_breadcrumb(ctx, &embedded.concrete_type) {
+                                MemoryLayoutResult::TypeExists(size, alignment) => {
+                                    embedded.size = size;
+                                    embedded.alignment = alignment;
+
+                                    align_offset_to(&mut variant_offset, alignment);
+                                    embedded.alignment = variant_offset;
+
+                                    variant_offset += size;
+                                    variant_alignment = variant_alignment.max(alignment);
+                                },
+                                _ => unreachable!(),
+                            }
+                        }
+
+                        // Update heap size/alignment
+                        max_size = max_size.max(variant_offset);
+                        max_alignment = max_alignment.max(variant_alignment);
+                    }
+
+                    if max_size != 0 {
+                        // At least one entry lives on the heap
+                        mono_type.heap_size = max_size;
+                        mono_type.heap_alignment = max_alignment;
+                    }
+                },
+                _ => unreachable!(),
+            }
+        }
+
+        // And now, we're actually, properly, done
+        self.encountered_types.clear();
+    }
+
+    fn get_memory_layout_or_breadcrumb(&self, ctx: &PassCtx, concrete_type: &ConcreteType) -> MemoryLayoutResult {
+        use ConcreteTypePart as CTP;
+
+        // Before we do any fancy shenanigans, we need to check if the concrete
+        // type actually requires laying out memory.
+        debug_assert!(!concrete_type.parts.is_empty());
+        let (builtin_size, builtin_alignment) = match concrete_type.parts[0] {
+            CTP::Void   => (0, 1),
+            CTP::Message => ctx.arch.array_size_alignment,
+            CTP::Bool   => (1, 1),
+            CTP::UInt8  => (1, 1),
+            CTP::UInt16 => (2, 2),
+            CTP::UInt32 => (4, 4),
+            CTP::UInt64 => (8, 8),
+            CTP::SInt8  => (1, 1),
+            CTP::SInt16 => (2, 2),
+            CTP::SInt32 => (4, 4),
+            CTP::SInt64 => (8, 8),
+            CTP::Character => (4, 4),
+            CTP::String => ctx.arch.string_size_alignment,
+            CTP::Array => ctx.arch.array_size_alignment,
+            CTP::Slice => ctx.arch.array_size_alignment,
+            CTP::Input => ctx.arch.port_size_alignment,
+            CTP::Output => ctx.arch.port_size_alignment,
+            CTP::Instance(definition_id, _) => {
+                // Special case where we explicitly return to simplify the
+                // return case for the builtins.
+                let entry = self.lookup.get(&definition_id).unwrap();
+                let monomorph_idx = entry.get_monomorph_index(concrete_type).unwrap();
+
+                if let Some((size, alignment)) = entry.get_monomorph_size_alignment(monomorph_idx) {
+                    // Type has been layed out in memory
+                    return MemoryLayoutResult::TypeExists(size, alignment);
+                } else {
+                    return MemoryLayoutResult::PushBreadcrumb(TypeLoopBreadcrumb {
+                        definition_id,
+                        monomorph_idx,
+                        next_member: 0,
+                        next_embedded: 0,
+                    });
+                }
+            }
+        };
+
+        return MemoryLayoutResult::TypeExists(builtin_size, builtin_alignment);
+    }
 
     /// Returns tag concrete type (always a builtin integer type), the size of
     /// that type in bytes (and implicitly, its alignment)
@@ -1539,7 +1739,7 @@ impl TypeTable {
             // Must be a signed integer
             if min_val >= (i8::MIN as i64) && max_val <= (i8::MAX as i64) {
                 (ConcreteTypePart::SInt8, 1)
-            } else if min_val >= (i16::MIN as i64) && max_Val <= (i16::MAX as i64) {
+            } else if min_val >= (i16::MIN as i64) && max_val <= (i16::MAX as i64) {
                 (ConcreteTypePart::SInt16, 2)
             } else if min_val >= (i32::MIN as i64) && max_val <= (i32::MAX as i64) {
                 (ConcreteTypePart::SInt32, 4)

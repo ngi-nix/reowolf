@@ -564,8 +564,6 @@ impl ConcreteType {
     /// a string allocation don't use it for anything else then displaying the
     /// type to the user.
     pub(crate) fn display_name(&self, heap: &Heap) -> String {
-        let mut name = String::with_capacity(128);
-
         fn display_part(parts: &[ConcreteTypePart], heap: &Heap, mut idx: usize, target: &mut String) -> usize {
             use ConcreteTypePart as CTP;
             use crate::protocol::parser::token_parsing::*;
@@ -623,7 +621,8 @@ impl ConcreteType {
             idx
         }
 
-        let _final_idx = display_part(&self.parts, heap, 0, &mut target);
+        let mut name = String::with_capacity(128);
+        let _final_idx = display_part(&self.parts, heap, 0, &mut name);
         debug_assert_eq!(_final_idx, self.parts.len());
 
         return name;
@@ -641,7 +640,7 @@ pub struct ConcreteTypeIter<'a> {
 impl<'a> Iterator for ConcreteTypeIter<'a> {
     type Item = &'a [ConcreteTypePart];
 
-    fn next(&'a mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.idx_embedded == self.num_embedded {
             return None;
         }

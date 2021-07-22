@@ -330,16 +330,13 @@ impl ASTWriter {
                     self.kv(indent4).with_s_key("Name")
                         .with_identifier_val(&variant.identifier);
                         
-                    match &variant.value {
-                        UnionVariantValue::None => {
-                            self.kv(indent4).with_s_key("Value").with_s_val("None");
-                        }
-                        UnionVariantValue::Embedded(embedded) => {
-                            self.kv(indent4).with_s_key("Values");
-                            for embedded in embedded {
-                                self.kv(indent4+1).with_s_key("Value")
-                                    .with_custom_val(|v| write_parser_type(v, heap, embedded));
-                            }
+                    if variant.value.is_empty() {
+                        self.kv(indent4).with_s_key("Value").with_s_val("None");
+                    } else {
+                        self.kv(indent4).with_s_key("Values");
+                        for embedded in &variant.value {
+                            self.kv(indent4+1).with_s_key("Value")
+                                .with_custom_val(|v| write_parser_type(v, heap, embedded));
                         }
                     }
                 }
