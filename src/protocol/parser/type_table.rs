@@ -650,7 +650,7 @@ impl TypeTable {
         // Check if the monomorph already exists
         let poly_type = self.lookup.get_mut(definition_id).unwrap();
         if let Some(idx) = poly_type.get_monomorph_index(&concrete_type) {
-            return idx as i32;
+            return Ok(idx as i32);
         }
 
         // Doesn't exist, so instantiate a monomorph and determine its memory
@@ -660,7 +660,7 @@ impl TypeTable {
         let mono_idx = self.encountered_types[0].monomorph_idx;
         self.lay_out_memory_for_encountered_types(ctx);
 
-        return mono_idx as i32;
+        return Ok(mono_idx as i32);
     }
 
     //--------------------------------------------------------------------------
@@ -1081,7 +1081,7 @@ impl TypeTable {
     /// Internal function that will detect type loops and check if they're
     /// resolvable. If so then the appropriate union variants will be marked as
     /// "living on heap". If not then a `ParseError` will be returned
-    fn detect_and_resolve_type_loops_for(&mut self, modules: &[Module], ctx: &PassCtx, concrete_type: ConcreteType) -> Result<(), ParseError> {
+    fn detect_and_resolve_type_loops_for(&mut self, modules: &[Module], heap: &Heap, concrete_type: ConcreteType) -> Result<(), ParseError> {
         use DefinedTypeVariant as DTV;
 
         debug_assert!(self.breadcrumbs.is_empty());
@@ -1209,7 +1209,7 @@ impl TypeTable {
         // loop and that union ended up having variants that are not part of
         // a type loop.
         fn type_loop_source_span_and_message<'a>(
-            modules: &'a [Module], ctx: &PassCtx, defined_type: &DefinedType, monomorph_idx: usize, index_in_loop: usize
+            modules: &'a [Module], heap: &Heap, defined_type: &DefinedType, monomorph_idx: usize, index_in_loop: usize
         ) -> (&'a InputSource, InputSpan, String) {
             // Note: because we will discover the type loop the *first* time we
             // instantiate a monomorph with the provided polymorphic arguments
@@ -1223,7 +1223,7 @@ impl TypeTable {
                     unreachable!(), // impossible to have an enum/procedure in a type loop
             };
 
-            let type_name = monomorph_type.display_name(&ctx.heap);
+            let type_name = monomorph_type.display_name(&heap);
             let message = if index_in_loop == 0 {
                 format!(
                     "encountered an infinitely large type for '{}' (which can be fixed by \
@@ -1237,7 +1237,7 @@ impl TypeTable {
                 format!("which depends on the type '{}'", type_name)
             };
 
-            let ast_definition = &ctx.heap[defined_type.ast_definition];
+            let ast_definition = &heap[defined_type.ast_definition];
             let ast_root_id = ast_definition.defined_in();
 
             return (
@@ -1269,7 +1269,7 @@ impl TypeTable {
                 let first_entry = &type_loop.members[0];
                 let first_type = self.lookup.get(&first_entry.definition_id).unwrap();
                 let (first_module, first_span, first_message) = type_loop_source_span_and_message(
-                    modules, ctx, first_type, first_entry.monomorph_idx, 0
+                    modules, heap, first_type, first_entry.monomorph_idx, 0
                 );
                 let mut parse_error = ParseError::new_error_at_span(first_module, first_span, first_message);
 
@@ -1277,7 +1277,7 @@ impl TypeTable {
                     let entry = &type_loop.members[member_idx];
                     let entry_type = self.lookup.get(&first_entry.definition_id).unwrap();
                     let (module, span, message) = type_loop_source_span_and_message(
-                        modules, ctx, entry_type, entry.monomorph_idx, member_idx
+                        modules, heap, entry_type, entry.monomorph_idx, member_idx
                     );
                     parse_error = parse_error.with_info_at_span(module, span, message);
                 }
@@ -1717,6 +1717,9 @@ impl TypeTable {
                         next_embedded: 0,
                     });
                 }
+            },
+            CTP::Function(_, _) | CTP::Component(_, _) => {
+                todo!("storage for 'function pointers'");
             }
         };
 
