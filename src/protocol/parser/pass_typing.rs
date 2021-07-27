@@ -3534,7 +3534,10 @@ impl PassTyping {
         for concrete_part in concrete_type {
             match concrete_part {
                 CTP::Void => parser_type.push(ITP::Void),
-                CTP::Message => parser_type.push(ITP::Message),
+                CTP::Message => {
+                    parser_type.push(ITP::Message);
+                    parser_type.push(ITP::UInt8)
+                },
                 CTP::Bool => parser_type.push(ITP::Bool),
                 CTP::UInt8 => parser_type.push(ITP::UInt8),
                 CTP::UInt16 => parser_type.push(ITP::UInt16),

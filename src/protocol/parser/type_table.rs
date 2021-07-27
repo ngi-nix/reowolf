@@ -927,7 +927,7 @@ impl TypeTable {
 
     /// Builds base component type.
     fn build_base_component_definition(&mut self, modules: &[Module], ctx: &mut PassCtx, definition_id: DefinitionId) -> Result<(), ParseError> {
-        debug_assert!(self.lookup.contains_key(&definition_id), "base component already built");
+        debug_assert!(!self.lookup.contains_key(&definition_id), "base component already built");
 
         let definition = &ctx.heap[definition_id].as_component();
         let root_id = definition.defined_in;
