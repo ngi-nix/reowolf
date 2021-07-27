@@ -50,10 +50,23 @@ pub struct Module {
     pub phase: ModuleCompilationPhase,
 }
 
+// TODO: This is kind of wrong. Because when we're producing bytecode we would
+//       like the bytecode itself to not have the notion of the size of a pointer
+//       type. But until I figure out what we do want I'll just set everything
+//       to a 64-bit architecture.
+pub struct TargetArch {
+    pub array_size_alignment: (usize, usize),
+    pub slice_size_alignment: (usize, usize),
+    pub string_size_alignment: (usize, usize),
+    pub port_size_alignment: (usize, usize),
+    pub pointer_size_alignment: (usize, usize),
+}
+
 pub struct PassCtx<'a> {
     heap: &'a mut Heap,
     symbols: &'a mut SymbolTable,
     pool: &'a mut StringPool,
+    arch: &'a TargetArch,
 }
 
 pub struct Parser {
@@ -73,6 +86,7 @@ pub struct Parser {
     pass_typing: PassTyping,
     // Compiler options
     pub write_ast_to: Option<String>,
+    pub(crate) arch: TargetArch,
 }
 
 impl Parser {
@@ -90,6 +104,13 @@ impl Parser {
             pass_validation: PassValidationLinking::new(),
             pass_typing: PassTyping::new(),
             write_ast_to: None,
+            arch: TargetArch {
+                array_size_alignment: (3*8, 8), // pointer, length, capacity
+                slice_size_alignment: (2*8, 8), // pointer, length
+                string_size_alignment: (3*8, 8), // pointer, length, capacity
+                port_size_alignment: (3*4, 4), // two u32s: connector + port ID
+                pointer_size_alignment: (8, 8),
+            }
         };
 
         parser.symbol_table.insert_scope(None, SymbolScope::Global);
@@ -167,6 +188,7 @@ impl Parser {
             heap: &mut self.heap,
             symbols: &mut self.symbol_table,
             pool: &mut self.string_pool,
+            arch: &self.arch,
         };
 
         // Advance all modules to the phase where all symbols are scanned
@@ -189,21 +211,25 @@ impl Parser {
         for module_idx in 0..self.modules.len() {
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
-                module: &mut self.modules[module_idx],
+                modules: &mut self.modules,
+                module_idx,
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
+                arch: &self.arch,
             };
             self.pass_validation.visit_module(&mut ctx)?;
         }
 
         // Perform typechecking on all modules
         let mut queue = ResolveQueue::new();
-        for module in &mut self.modules {
+        for module_idx in 0..self.modules.len() {
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
-                module,
+                modules: &mut self.modules,
+                module_idx,
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
+                arch: &self.arch,
             };
             PassTyping::queue_module_definitions(&mut ctx, &mut queue);
         };
@@ -211,9 +237,11 @@ impl Parser {
             let top = queue.pop().unwrap();
             let mut ctx = visitor::Ctx{
                 heap: &mut self.heap,
-                module: &mut self.modules[top.root_id.index as usize],
+                modules: &mut self.modules,
+                module_idx: top.root_id.index as usize,
                 symbols: &mut self.symbol_table,
                 types: &mut self.type_table,
+                arch: &self.arch,
             };
             self.pass_typing.handle_module_definition(&mut ctx, &mut queue, top)?;
         }

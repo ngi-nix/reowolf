@@ -559,14 +559,15 @@ impl InferenceType {
 
     /// Performs the conversion of the inference type into a concrete type.
     /// By calling this function you must make sure that no unspecified types
-    /// (e.g. Unknown or IntegerLike) exist in the type.
+    /// (e.g. Unknown or IntegerLike) exist in the type. Will not clear or check
+    /// if the supplied `ConcreteType` is empty, will simply append to the parts
+    /// vector.
     fn write_concrete_type(&self, concrete_type: &mut ConcreteType) {
         use InferenceTypePart as ITP;
         use ConcreteTypePart as CTP;
 
         // Make sure inference type is specified but concrete type is not yet specified
         debug_assert!(!self.parts.is_empty());
-        debug_assert!(concrete_type.parts.is_empty());
         concrete_type.parts.reserve(self.parts.len());
 
         let mut idx = 0;
@@ -807,21 +808,13 @@ impl DefinitionType {
 }
 
 pub(crate) struct ResolveQueueElement {
+    // Note that using the `definition_id` and the `monomorph_idx` one may
+    // query the type table for the full procedure type, thereby retrieving
+    // the polymorphic arguments to the procedure.
     pub(crate) root_id: RootId,
     pub(crate) definition_id: DefinitionId,
-    pub(crate) monomorph_types: Vec<ConcreteType>,
     pub(crate) reserved_monomorph_idx: i32,
 }
-
-impl PartialEq for ResolveQueueElement {
-    fn eq(&self, other: &Self) -> bool {
-        return
-            self.root_id == other.root_id &&
-            self.definition_id == other.definition_id &&
-            self.monomorph_types == other.monomorph_types;
-    }
-}
-impl Eq for ResolveQueueElement {}
 
 pub(crate) type ResolveQueue = Vec<ResolveQueueElement>;
 
@@ -927,24 +920,36 @@ impl PassTyping {
     // TODO: @cleanup Unsure about this, maybe a pattern will arise after
     //  a while.
     pub(crate) fn queue_module_definitions(ctx: &mut Ctx, queue: &mut ResolveQueue) {
-        debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::ValidatedAndLinked);
-        let root_id = ctx.module.root_id;
+        debug_assert_eq!(ctx.module().phase, ModuleCompilationPhase::ValidatedAndLinked);
+        let root_id = ctx.module().root_id;
         let root = &ctx.heap.protocol_descriptions[root_id];
         for definition_id in &root.definitions {
             let definition = &ctx.heap[*definition_id];
 
-            let should_add_to_queue = match definition {
-                Definition::Function(definition) => definition.poly_vars.is_empty(),
-                Definition::Component(definition) => definition.poly_vars.is_empty(),
-                Definition::Enum(_) | Definition::Struct(_) | Definition::Union(_) => false,
+            let first_concrete_part = match definition {
+                Definition::Function(definition) => {
+                    if definition.poly_vars.is_empty() {
+                        Some(ConcreteTypePart::Function(*definition_id, 0))
+                    } else {
+                        None
+                    }
+                }
+                Definition::Component(definition) => {
+                    if definition.poly_vars.is_empty() {
+                        Some(ConcreteTypePart::Component(*definition_id, 0))
+                    } else {
+                        None
+                    }
+                },
+                Definition::Enum(_) | Definition::Struct(_) | Definition::Union(_) => None,
             };
 
-            if should_add_to_queue {
-                let reserved_idx = ctx.types.reserve_procedure_monomorph_index(definition_id, None);
+            if let Some(first_concrete_part) = first_concrete_part {
+                let concrete_type = ConcreteType{ parts: vec![first_concrete_part] };
+                let reserved_idx = ctx.types.reserve_procedure_monomorph_index(definition_id, concrete_type);
                 queue.push(ResolveQueueElement{
                     root_id,
                     definition_id: *definition_id,
-                    monomorph_types: Vec::new(),
                     reserved_monomorph_idx: reserved_idx,
                 })
             }
@@ -954,15 +959,26 @@ impl PassTyping {
     pub(crate) fn handle_module_definition(
         &mut self, ctx: &mut Ctx, queue: &mut ResolveQueue, element: ResolveQueueElement
     ) -> VisitorResult {
-        // Visit the definition
-        debug_assert_eq!(ctx.module.root_id, element.root_id);
         self.reset();
+        debug_assert_eq!(ctx.module().root_id, element.root_id);
         debug_assert!(self.poly_vars.is_empty());
-        self.reserved_idx = element.reserved_monomorph_idx;
-        self.poly_vars = element.monomorph_types;
-        self.visit_definition(ctx, element.definition_id)?;
 
-        // Keep resolving types
+        // Prepare for visiting the definition
+        self.reserved_idx = element.reserved_monomorph_idx;
+
+        let proc_base = ctx.types.get_base_definition(&element.definition_id).unwrap();
+        if proc_base.is_polymorph {
+            let proc_monos = proc_base.definition.procedure_monomorphs();
+            let proc_mono = &(*proc_monos)[element.reserved_monomorph_idx as usize];
+
+            for poly_arg in proc_mono.concrete_type.embedded_iter(0) {
+                self.poly_vars.push(ConcreteType{ parts: Vec::from(poly_arg) });
+            }
+        }
+
+        // Visit the definition, setting up the type resolving process, then
+        // (attempt to) resolve all types
+        self.visit_definition(ctx, element.definition_id)?;
         self.resolve_types(ctx, queue)?;
         Ok(())
     }
@@ -1391,10 +1407,23 @@ impl PassTyping {
 
         // Helper for transferring polymorphic variables to concrete types and
         // checking if they're completely specified
-        fn poly_inference_to_concrete_type(
-            ctx: &Ctx, expr_id: ExpressionId, inference: &Vec<InferenceType>
-        ) -> Result<Vec<ConcreteType>, ParseError> {
-            let mut concrete = Vec::with_capacity(inference.len());
+        fn inference_type_to_concrete_type(
+            ctx: &Ctx, expr_id: ExpressionId, inference: &Vec<InferenceType>,
+            first_concrete_part: ConcreteTypePart,
+        ) -> Result<ConcreteType, ParseError> {
+            // Prepare storage vector
+            let mut num_inference_parts = 0;
+            for inference_type in inference {
+                num_inference_parts += inference_type.parts.len();
+            }
+
+            let mut concrete_type = ConcreteType{
+                parts: Vec::with_capacity(1 + num_inference_parts),
+            };
+            concrete_type.parts.push(first_concrete_part);
+
+            // Go through all polymorphic arguments and add them to the concrete
+            // types.
             for (poly_idx, poly_type) in inference.iter().enumerate() {
                 if !poly_type.is_done {
                     let expr = &ctx.heap[expr_id];
@@ -1410,19 +1439,17 @@ impl PassTyping {
                     };
                     let poly_vars = ctx.heap[definition].poly_vars();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, expr.operation_span(), format!(
+                        &ctx.module().source, expr.operation_span(), format!(
                             "could not fully infer the type of polymorphic variable '{}' of this expression (got '{}')",
                             poly_vars[poly_idx].value.as_str(), poly_type.display_name(&ctx.heap)
                         )
                     ));
                 }
 
-                let mut concrete_type = ConcreteType::default();
                 poly_type.write_concrete_type(&mut concrete_type);
-                concrete.push(concrete_type);
             }
 
-            Ok(concrete)
+            Ok(concrete_type)
         }
 
         // Inference is now done. But we may still have uninferred types. So we
@@ -1437,7 +1464,7 @@ impl PassTyping {
                 } else {
                     let expr = &ctx.heap[infer_expr.expr_id];
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, expr.full_span(), format!(
+                        &ctx.module().source, expr.full_span(), format!(
                             "could not fully infer the type of this expression (got '{}')",
                             expr_type.display_name(&ctx.heap)
                         )
@@ -1458,27 +1485,34 @@ impl PassTyping {
             // storage of the struct type whose field it is selecting.
             match &ctx.heap[extra_data.expr_id] {
                 Expression::Call(expr) => {
-                    if expr.method != Method::UserFunction && expr.method != Method::UserComponent {
+                    // Check if it is not a builtin function. If not, then
+                    // construct the first part of the concrete type.
+                    let first_concrete_part = if expr.method == Method::UserFunction {
+                        ConcreteTypePart::Function(expr.definition, extra_data.poly_vars.len() as u32)
+                    } else if expr.method == Method::UserComponent {
+                        ConcreteTypePart::Component(expr.definition, extra_data.poly_vars.len() as u32)
+                    } else {
                         // Builtin function
                         continue;
-                    }
+                    };
 
                     let definition_id = expr.definition;
-                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
+                    let concrete_type = inference_type_to_concrete_type(
+                        ctx, extra_data.expr_id, &extra_data.poly_vars, first_concrete_part
+                    )?;
 
-                    match ctx.types.get_procedure_monomorph_index(&definition_id, &poly_types) {
+                    match ctx.types.get_procedure_monomorph_index(&definition_id, &concrete_type) {
                         Some(reserved_idx) => {
                             // Already typechecked, or already put into the resolve queue
                             infer_expr.field_or_monomorph_idx = reserved_idx;
                         },
                         None => {
                             // Not typechecked yet, so add an entry in the queue
-                            let reserved_idx = ctx.types.reserve_procedure_monomorph_index(&definition_id, Some(poly_types.clone()));
+                            let reserved_idx = ctx.types.reserve_procedure_monomorph_index(&definition_id, concrete_type);
                             infer_expr.field_or_monomorph_idx = reserved_idx;
                             queue.push(ResolveQueueElement{
                                 root_id: ctx.heap[definition_id].defined_in(),
                                 definition_id,
-                                monomorph_types: poly_types,
                                 reserved_monomorph_idx: reserved_idx,
                             });
                         }
@@ -1491,9 +1525,11 @@ impl PassTyping {
                         Literal::Struct(lit) => lit.definition,
                         _ => unreachable!(),
                     };
-
-                    let poly_types = poly_inference_to_concrete_type(ctx, extra_data.expr_id, &extra_data.poly_vars)?;
-                    let mono_index = ctx.types.add_data_monomorph(&definition_id, poly_types);
+                    let first_concrete_part = ConcreteTypePart::Instance(definition_id, extra_data.poly_vars.len() as u32);
+                    let concrete_type = inference_type_to_concrete_type(
+                        ctx, extra_data.expr_id, &extra_data.poly_vars, first_concrete_part
+                    )?;
+                    let mono_index = ctx.types.add_data_monomorph(ctx.modules, ctx.heap, ctx.arch, definition_id, concrete_type)?;
                     infer_expr.field_or_monomorph_idx = mono_index;
                 },
                 Expression::Select(_) => {
@@ -1520,7 +1556,6 @@ impl PassTyping {
         };
 
         let target = ctx.types.get_procedure_expression_data_mut(&definition_id, self.reserved_idx);
-        debug_assert!(target.poly_args == self.poly_vars);
         debug_assert!(target.expr_data.is_empty()); // makes sure we never queue something twice
 
         target.expr_data.reserve(self.expr_types.len());
@@ -1993,7 +2028,7 @@ impl PassTyping {
                         struct_def
                     } else {
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, select_expr.field_name.span, format!(
+                            &ctx.module().source, select_expr.field_name.span, format!(
                                 "Can only apply field access to structs, got a subject of type '{}'",
                                 subject_type.display_name(&ctx.heap)
                             )
@@ -2015,7 +2050,7 @@ impl PassTyping {
                     if struct_def_id.is_none() {
                         let ast_struct_def = ctx.heap[type_def.ast_definition].as_struct();
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, select_expr.field_name.span, format!(
+                            &ctx.module().source, select_expr.field_name.span, format!(
                                 "this field does not exist on the struct '{}'",
                                 ast_struct_def.identifier.value.as_str()
                             )
@@ -2033,7 +2068,7 @@ impl PassTyping {
                 },
                 Err(()) => {
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, select_expr.field_name.span, format!(
+                        &ctx.module().source, select_expr.field_name.span, format!(
                             "Can only apply field access to structs, got a subject of type '{}'",
                             subject_type.display_name(&ctx.heap)
                         )
@@ -2459,9 +2494,9 @@ impl PassTyping {
             let cast_expr = &ctx.heap[id];
             let subject_expr = &ctx.heap[cast_expr.subject];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, cast_expr.full_span, "invalid casting operation"
+                &ctx.module().source, cast_expr.full_span, "invalid casting operation"
             ).with_info_at_span(
-                &ctx.module.source, subject_expr.full_span(), format!(
+                &ctx.module().source, subject_expr.full_span(), format!(
                     "cannot cast the argument type '{}' to the cast type '{}'",
                     subject_type.display_name(&ctx.heap),
                     expr_type.display_name(&ctx.heap)
@@ -2609,12 +2644,12 @@ impl PassTyping {
         if infer_res == DualInferenceResult::Incompatible {
             let var_decl = &ctx.heap[var_id];
             return Err(ParseError::new_error_at_span(
-                &ctx.module.source, var_decl.identifier.span, format!(
+                &ctx.module().source, var_decl.identifier.span, format!(
                     "Conflicting types for this variable, previously assigned the type '{}'",
                     var_data.var_type.display_name(&ctx.heap)
                 )
             ).with_info_at_span(
-                &ctx.module.source, var_expr.identifier.span, format!(
+                &ctx.module().source, var_expr.identifier.span, format!(
                     "But inferred to have incompatible type '{}' here",
                     expr_type.display_name(&ctx.heap)
                 )
@@ -2664,12 +2699,12 @@ impl PassTyping {
                         let link_decl = &ctx.heap[linked_id];
 
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, var_decl.identifier.span, format!(
+                            &ctx.module().source, var_decl.identifier.span, format!(
                                 "Conflicting types for this variable, assigned the type '{}'",
                                 var_data.var_type.display_name(&ctx.heap)
                             )
                         ).with_info_at_span(
-                            &ctx.module.source, link_decl.identifier.span, format!(
+                            &ctx.module().source, link_decl.identifier.span, format!(
                                 "Because it is incompatible with this variable, assigned the type '{}'",
                                 link_data.var_type.display_name(&ctx.heap)
                             )
@@ -2828,10 +2863,10 @@ impl PassTyping {
             ) };
 
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, outer_span,
+                &ctx.module().source, outer_span,
                 "failed to fully resolve the types of this expression"
             ).with_info_at_span(
-                &ctx.module.source, span, format!(
+                &ctx.module().source, span, format!(
                     "because the {} signature has been resolved to '{}', but the expression has been resolved to '{}'",
                     span_name, signature_display_type, expression_display_type
                 )
@@ -3499,7 +3534,10 @@ impl PassTyping {
         for concrete_part in concrete_type {
             match concrete_part {
                 CTP::Void => parser_type.push(ITP::Void),
-                CTP::Message => parser_type.push(ITP::Message),
+                CTP::Message => {
+                    parser_type.push(ITP::Message);
+                    parser_type.push(ITP::UInt8)
+                },
                 CTP::Bool => parser_type.push(ITP::Bool),
                 CTP::UInt8 => parser_type.push(ITP::UInt8),
                 CTP::UInt16 => parser_type.push(ITP::UInt16),
@@ -3519,6 +3557,8 @@ impl PassTyping {
                 CTP::Input => parser_type.push(ITP::Input),
                 CTP::Output => parser_type.push(ITP::Output),
                 CTP::Instance(id, num) => parser_type.push(ITP::Instance(*id, *num)),
+                CTP::Function(_, _) => unreachable!("function type during concrete to inference type conversion"),
+                CTP::Component(_, _) => unreachable!("component type during concrete to inference type conversion"),
             }
         }
     }
@@ -3540,12 +3580,12 @@ impl PassTyping {
         let arg_type = &self.expr_types[arg_expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
-            &ctx.module.source, expr.operation_span(), format!(
+            &ctx.module().source, expr.operation_span(), format!(
                 "incompatible types: this expression expected a '{}'",
                 expr_type.display_name(&ctx.heap)
             )
         ).with_info_at_span(
-            &ctx.module.source, arg_expr.full_span(), format!(
+            &ctx.module().source, arg_expr.full_span(), format!(
                 "but this expression yields a '{}'",
                 arg_type.display_name(&ctx.heap)
             )
@@ -3566,15 +3606,15 @@ impl PassTyping {
         let arg2_type = &self.expr_types[arg2_idx as usize].expr_type;
 
         return ParseError::new_error_str_at_span(
-            &ctx.module.source, expr.operation_span(),
+            &ctx.module().source, expr.operation_span(),
             "incompatible types: cannot apply this expression"
         ).with_info_at_span(
-            &ctx.module.source, arg1.full_span(), format!(
+            &ctx.module().source, arg1.full_span(), format!(
                 "Because this expression has type '{}'",
                 arg1_type.display_name(&ctx.heap)
             )
         ).with_info_at_span(
-            &ctx.module.source, arg2.full_span(), format!(
+            &ctx.module().source, arg2.full_span(), format!(
                 "But this expression has type '{}'",
                 arg2_type.display_name(&ctx.heap)
             )
@@ -3589,7 +3629,7 @@ impl PassTyping {
         let expr_type = &self.expr_types[expr_idx as usize].expr_type;
 
         return ParseError::new_error_at_span(
-            &ctx.module.source, expr.full_span(), format!(
+            &ctx.module().source, expr.full_span(), format!(
                 "incompatible types: got a '{}' but expected a '{}'",
                 expr_type.display_name(&ctx.heap), 
                 InferenceType::partial_display_name(&ctx.heap, template)
@@ -3665,7 +3705,7 @@ impl PassTyping {
                 Expression::Call(expr) => {
                     let (poly_var, func_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.func_span, format!(
+                        &ctx.module().source, expr.func_span, format!(
                             "Conflicting type for polymorphic variable '{}' of '{}'",
                             poly_var, func_name
                         )
@@ -3674,7 +3714,7 @@ impl PassTyping {
                 Expression::Literal(expr) => {
                     let (poly_var, type_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.span, format!(
+                        &ctx.module().source, expr.span, format!(
                             "Conflicting type for polymorphic variable '{}' of instantiation of '{}'",
                             poly_var, type_name
                         )
@@ -3683,7 +3723,7 @@ impl PassTyping {
                 Expression::Select(expr) => {
                     let (poly_var, struct_name) = get_poly_var_and_definition_name(ctx, poly_var_idx, poly_data.definition_id);
                     return ParseError::new_error_at_span(
-                        &ctx.module.source, expr.full_span, format!(
+                        &ctx.module().source, expr.full_span, format!(
                             "Conflicting type for polymorphic variable '{}' while accessing field '{}' of '{}'",
                             poly_var, expr.field_name.value.as_str(), struct_name
                         )
@@ -3729,7 +3769,7 @@ impl PassTyping {
         ) {
             return construct_main_error(ctx, poly_data, poly_idx, expr)
                 .with_info_at_span(
-                    &ctx.module.source, expr.full_span(), format!(
+                    &ctx.module().source, expr.full_span(), format!(
                         "The {} inferred the conflicting types '{}' and '{}'",
                         expr_return_name,
                         InferenceType::partial_display_name(&ctx.heap, section_a),
@@ -3751,7 +3791,7 @@ impl PassTyping {
                         // Same argument
                         let arg = &ctx.heap[expr_args[arg_a_idx]];
                         return error.with_info_at_span(
-                            &ctx.module.source, arg.full_span(), format!(
+                            &ctx.module().source, arg.full_span(), format!(
                                 "This argument inferred the conflicting types '{}' and '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a),
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
@@ -3761,12 +3801,12 @@ impl PassTyping {
                         let arg_a = &ctx.heap[expr_args[arg_a_idx]];
                         let arg_b = &ctx.heap[expr_args[arg_b_idx]];
                         return error.with_info_at_span(
-                            &ctx.module.source, arg_a.full_span(), format!(
+                            &ctx.module().source, arg_a.full_span(), format!(
                                 "This argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_a)
                             )
                         ).with_info_at_span(
-                            &ctx.module.source, arg_b.full_span(), format!(
+                            &ctx.module().source, arg_b.full_span(), format!(
                                 "While this argument inferred it to '{}'",
                                 InferenceType::partial_display_name(&ctx.heap, section_b)
                             )
@@ -3780,13 +3820,13 @@ impl PassTyping {
                 let arg = &ctx.heap[expr_args[arg_a_idx]];
                 return construct_main_error(ctx, poly_data, poly_idx, expr)
                     .with_info_at_span(
-                        &ctx.module.source, arg.full_span(), format!(
+                        &ctx.module().source, arg.full_span(), format!(
                             "This argument inferred it to '{}'",
                             InferenceType::partial_display_name(&ctx.heap, section_arg)
                         )
                     )
                     .with_info_at_span(
-                        &ctx.module.source, expr.full_span(), format!(
+                        &ctx.module().source, expr.full_span(), format!(
                             "While the {} inferred it to '{}'",
                             expr_return_name,
                             InferenceType::partial_display_name(&ctx.heap, section_ret)
@@ -3802,7 +3842,7 @@ impl PassTyping {
                 let arg = &ctx.heap[expr_args[arg_idx]];
                 return construct_main_error(ctx, poly_data, poly_idx, expr)
                     .with_info_at_span(
-                        &ctx.module.source, arg.full_span(), format!(
+                        &ctx.module().source, arg.full_span(), format!(
                             "The polymorphic variable has type '{}' (which might have been partially inferred) while the argument inferred it to '{}'",
                             InferenceType::partial_display_name(&ctx.heap, poly_section),
                             InferenceType::partial_display_name(&ctx.heap, arg_section)
@@ -3814,7 +3854,7 @@ impl PassTyping {
         if let Some((poly_idx, poly_section, ret_section)) = has_explicit_poly_mismatch(&poly_data.poly_vars, &poly_data.returned) {
             return construct_main_error(ctx, poly_data, poly_idx, expr)
                 .with_info_at_span(
-                    &ctx.module.source, expr.full_span(), format!(
+                    &ctx.module().source, expr.full_span(), format!(
                         "The polymorphic variable has type '{}' (which might have been partially inferred) while the {} inferred it to '{}'",
                         InferenceType::partial_display_name(&ctx.heap, poly_section),
                         expr_return_name,

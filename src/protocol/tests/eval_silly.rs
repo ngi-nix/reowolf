@@ -135,14 +135,14 @@ fn test_slicing_magic() {
         f.call_ok(Some(Value::Bool(true)));
     }).for_struct("Holder", |s| { s
         .assert_num_monomorphs(8)
-        .assert_has_monomorph("u8")
-        .assert_has_monomorph("u16")
-        .assert_has_monomorph("u32")
-        .assert_has_monomorph("u64")
-        .assert_has_monomorph("s8")
-        .assert_has_monomorph("s16")
-        .assert_has_monomorph("s32")
-        .assert_has_monomorph("s64");
+        .assert_has_monomorph("Holder<u8>")
+        .assert_has_monomorph("Holder<u16>")
+        .assert_has_monomorph("Holder<u32>")
+        .assert_has_monomorph("Holder<u64>")
+        .assert_has_monomorph("Holder<s8>")
+        .assert_has_monomorph("Holder<s16>")
+        .assert_has_monomorph("Holder<s32>")
+        .assert_has_monomorph("Holder<s64>");
     });
 }
 

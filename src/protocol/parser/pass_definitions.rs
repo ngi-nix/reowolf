@@ -222,10 +222,10 @@ impl PassDefinitions {
                     &mut types_section, "an embedded type", Some(&mut close_pos)
                 )?;
                 let value = if has_embedded {
-                    UnionVariantValue::Embedded(types_section.into_vec())
+                    types_section.into_vec()
                 } else {
                     types_section.forget();
-                    UnionVariantValue::None
+                    Vec::new()
                 };
 
                 Ok(UnionVariantDefinition{

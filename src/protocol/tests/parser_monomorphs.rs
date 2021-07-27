@@ -11,7 +11,8 @@ fn test_struct_monomorphs() {
         "no polymorph",
         "struct Integer{ s32 field }"
     ).for_struct("Integer", |s| { s
-        .assert_num_monomorphs(0);
+        .assert_num_monomorphs(1)
+        .assert_has_monomorph("Integer");
     });
 
     Tester::new_single_source_expect_ok(
@@ -28,11 +29,11 @@ fn test_struct_monomorphs() {
         }
         "
     ).for_struct("Number", |s| { s
-        .assert_has_monomorph("s8")
-        .assert_has_monomorph("s16")
-        .assert_has_monomorph("s32")
-        .assert_has_monomorph("s64")
+        .assert_has_monomorph("Number<s8>")
         .assert_has_monomorph("Number<s16>")
+        .assert_has_monomorph("Number<s32>")
+        .assert_has_monomorph("Number<s64>")
+        .assert_has_monomorph("Number<Number<s16>>")
         .assert_num_monomorphs(5);
     }).for_function("instantiator", |f| { f
         .for_variable("a", |v| {v.assert_concrete_type("Number<s8>");} )
@@ -49,11 +50,12 @@ fn test_enum_monomorphs() {
         func do_it() -> s32 { auto a = Answer::Yes; return 0; }
         "
     ).for_enum("Answer", |e| { e
-        .assert_num_monomorphs(0);
+        .assert_num_monomorphs(1)
+        .assert_has_monomorph("Answer");
     });
 
     // Note for reader: because the enum doesn't actually use the polymorphic
-    // variable, we expect to have 0 polymorphs: the type only has to be laid
+    // variable, we expect to have 1 monomorph: the type only has to be laid
     // out once.
     Tester::new_single_source_expect_ok(
         "single polymorph",
@@ -68,7 +70,8 @@ fn test_enum_monomorphs() {
         }
         "
     ).for_enum("Answer", |e| { e
-        .assert_num_monomorphs(0);
+        .assert_num_monomorphs(1)
+        .assert_has_monomorph("Answer<s8>");
     });
 }
 
@@ -81,7 +84,8 @@ fn test_union_monomorphs() {
         func do_it() -> s32 { auto a = Trinary::Value(true); return 0; }
         "
     ).for_union("Trinary", |e| { e
-        .assert_num_monomorphs(0);
+        .assert_num_monomorphs(1)
+        .assert_has_monomorph("Trinary");
     });
 
     // TODO: Does this do what we want? Or do we expect the embedded monomorph
@@ -100,11 +104,12 @@ fn test_union_monomorphs() {
         }
         "
     ).for_union("Result", |e| { e
-        .assert_num_monomorphs(4)
-        .assert_has_monomorph("s8;bool")
-        .assert_has_monomorph("bool;s8")
-        .assert_has_monomorph("Result<s8,s32>;Result<s16,s64>")
-        .assert_has_monomorph("s16;s64");
+        .assert_num_monomorphs(5)
+        .assert_has_monomorph("Result<s8,bool>")
+        .assert_has_monomorph("Result<bool,s8>")
+        .assert_has_monomorph("Result<Result<s8,s32>,Result<s16,s64>>")
+        .assert_has_monomorph("Result<s8,s32>")
+        .assert_has_monomorph("Result<s16,s64>");
     }).for_function("instantiator", |f| { f
         .for_variable("d", |v| { v
             .assert_parser_type("auto")

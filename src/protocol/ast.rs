@@ -494,7 +494,28 @@ pub enum ConcreteTypePart {
     Input,
     Output,
     // User defined type with any number of nested types
-    Instance(DefinitionId, u32),
+    Instance(DefinitionId, u32),    // instance of data type
+    Function(DefinitionId, u32),    // instance of function
+    Component(DefinitionId, u32),   // instance of a connector
+}
+
+impl ConcreteTypePart {
+    fn num_embedded(&self) -> u32 {
+        use ConcreteTypePart::*;
+
+        match self {
+            Void | Message | Bool |
+            UInt8 | UInt16 | UInt32 | UInt64 |
+            SInt8 | SInt16 | SInt32 | SInt64 |
+            Character | String =>
+                0,
+            Array | Slice | Input | Output =>
+                1,
+            Instance(_, num_embedded) => *num_embedded,
+            Function(_, num_embedded) => *num_embedded,
+            Component(_, num_embedded) => *num_embedded,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -505,6 +526,139 @@ pub struct ConcreteType {
 impl Default for ConcreteType {
     fn default() -> Self {
         Self{ parts: Vec::new() }
+    }
+}
+
+impl ConcreteType {
+    /// Returns an iterator over the subtrees that are type arguments (e.g. an
+    /// array element's type, or a polymorphic type's arguments) to the
+    /// provided parent type (specified by its index in the `parts` array).
+    pub(crate) fn embedded_iter<'a>(&'a self, parent_part_idx: usize) -> ConcreteTypeIter<'a> {
+        let num_embedded = self.parts[parent_part_idx].num_embedded();
+        return ConcreteTypeIter{
+            concrete: self,
+            idx_embedded: 0,
+            num_embedded,
+            part_idx: parent_part_idx + 1,
+        }
+    }
+
+    /// Given the starting position of a type tree, determine the exclusive
+    /// ending index.
+    pub(crate) fn subtree_end_idx(&self, start_idx: usize) -> usize {
+        let mut depth = 1;
+        let num_parts = self.parts.len();
+        debug_assert!(start_idx < num_parts);
+
+        for part_idx in start_idx..self.parts.len() {
+            let depth_change = self.parts[part_idx].num_embedded() as i32 - 1;
+            depth += depth_change;
+            debug_assert!(depth >= 0);
+
+            if depth == 0 {
+                return part_idx + 1;
+            }
+        }
+
+        debug_assert!(false, "incorrectly constructed ConcreteType instance");
+        return 0;
+    }
+
+    /// Construct a human-readable name for the type. Because this performs
+    /// a string allocation don't use it for anything else then displaying the
+    /// type to the user.
+    pub(crate) fn display_name(&self, heap: &Heap) -> String {
+        fn display_part(parts: &[ConcreteTypePart], heap: &Heap, mut idx: usize, target: &mut String) -> usize {
+            use ConcreteTypePart as CTP;
+            use crate::protocol::parser::token_parsing::*;
+
+            let cur_idx = idx;
+            idx += 1; // increment by 1, because it always happens
+
+            match parts[cur_idx] {
+                CTP::Void => { target.push_str("void"); },
+                CTP::Message => { target.push_str(KW_TYPE_MESSAGE_STR); },
+                CTP::Bool => { target.push_str(KW_TYPE_BOOL_STR); },
+                CTP::UInt8 => { target.push_str(KW_TYPE_UINT8_STR); },
+                CTP::UInt16 => { target.push_str(KW_TYPE_UINT16_STR); },
+                CTP::UInt32 => { target.push_str(KW_TYPE_UINT32_STR); },
+                CTP::UInt64 => { target.push_str(KW_TYPE_UINT64_STR); },
+                CTP::SInt8 => { target.push_str(KW_TYPE_SINT8_STR); },
+                CTP::SInt16 => { target.push_str(KW_TYPE_SINT16_STR); },
+                CTP::SInt32 => { target.push_str(KW_TYPE_SINT32_STR); },
+                CTP::SInt64 => { target.push_str(KW_TYPE_SINT64_STR); },
+                CTP::Character => { target.push_str(KW_TYPE_CHAR_STR); },
+                CTP::String => { target.push_str(KW_TYPE_STRING_STR); },
+                CTP::Array | CTP::Slice => {
+                    idx = display_part(parts, heap, idx, target);
+                    target.push_str("[]");
+                },
+                CTP::Input => {
+                    target.push_str(KW_TYPE_IN_PORT_STR);
+                    target.push('<');
+                    idx = display_part(parts, heap, idx, target);
+                    target.push('>');
+                },
+                CTP::Output => {
+                    target.push_str(KW_TYPE_OUT_PORT_STR);
+                    target.push('<');
+                    idx = display_part(parts, heap, idx, target);
+                    target.push('>');
+                },
+                CTP::Instance(definition_id, num_poly_args) |
+                CTP::Function(definition_id, num_poly_args) |
+                CTP::Component(definition_id, num_poly_args) => {
+                    let definition = &heap[definition_id];
+                    target.push_str(definition.identifier().value.as_str());
+
+                    if num_poly_args != 0 {
+                        target.push('<');
+                        for poly_arg_idx in 0..num_poly_args {
+                            if poly_arg_idx != 0 {
+                                target.push(',');
+                                idx = display_part(parts, heap, idx, target);
+                            }
+                        }
+                        target.push('>');
+                    }
+                }
+            }
+
+            idx
+        }
+
+        let mut name = String::with_capacity(128);
+        let _final_idx = display_part(&self.parts, heap, 0, &mut name);
+        debug_assert_eq!(_final_idx, self.parts.len());
+
+        return name;
+    }
+}
+
+#[derive(Debug)]
+pub struct ConcreteTypeIter<'a> {
+    concrete: &'a ConcreteType,
+    idx_embedded: u32,
+    num_embedded: u32,
+    part_idx: usize,
+}
+
+impl<'a> Iterator for ConcreteTypeIter<'a> {
+    type Item = &'a [ConcreteTypePart];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx_embedded == self.num_embedded {
+            return None;
+        }
+
+        // Retrieve the subtree of interest
+        let start_idx = self.part_idx;
+        let end_idx = self.concrete.subtree_end_idx(start_idx);
+
+        self.idx_embedded += 1;
+        self.part_idx = end_idx;
+
+        return Some(&self.concrete.parts[start_idx..end_idx]);
     }
 }
 
@@ -733,7 +887,7 @@ impl StructDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum EnumVariantValue {
     None,
     Integer(i64),
@@ -767,16 +921,10 @@ impl EnumDefinition {
 }
 
 #[derive(Debug, Clone)]
-pub enum UnionVariantValue {
-    None,
-    Embedded(Vec<ParserType>),
-}
-
-#[derive(Debug, Clone)]
 pub struct UnionVariantDefinition {
     pub span: InputSpan,
     pub identifier: Identifier,
-    pub value: UnionVariantValue,
+    pub value: Vec<ParserType>, // if empty, then union variant does not contain any embedded types
 }
 
 #[derive(Debug, Clone)]
