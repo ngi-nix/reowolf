@@ -132,9 +132,9 @@ macro_rules! assign_and_replace_next_stmt {
 
 impl Visitor for PassValidationLinking {
     fn visit_module(&mut self, ctx: &mut Ctx) -> VisitorResult {
-        debug_assert_eq!(ctx.module.phase, ModuleCompilationPhase::TypesAddedToTable);
+        debug_assert_eq!(ctx.module().phase, ModuleCompilationPhase::TypesAddedToTable);
 
-        let root = &ctx.heap[ctx.module.root_id];
+        let root = &ctx.heap[ctx.module().root_id];
         let section = self.definition_buffer.start_section_initialized(&root.definitions);
         for definition_idx in 0..section.len() {
             let definition_id = section[definition_idx];
@@ -142,7 +142,7 @@ impl Visitor for PassValidationLinking {
         }
         section.forget();
 
-        ctx.module.phase = ModuleCompilationPhase::ValidatedAndLinked;
+        ctx.module_mut().phase = ModuleCompilationPhase::ValidatedAndLinked;
         Ok(())
     }
     //--------------------------------------------------------------------------
@@ -343,15 +343,15 @@ impl Visitor for PassValidationLinking {
             // Nested synchronous statement
             let old_sync_span = ctx.heap[self.in_sync].span;
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, cur_sync_span, "Illegal nested synchronous statement"
+                &ctx.module().source, cur_sync_span, "Illegal nested synchronous statement"
             ).with_info_str_at_span(
-                &ctx.module.source, old_sync_span, "It is nested in this synchronous statement"
+                &ctx.module().source, old_sync_span, "It is nested in this synchronous statement"
             ));
         }
 
         if !self.def_type.is_primitive() {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, cur_sync_span,
+                &ctx.module().source, cur_sync_span,
                 "synchronous statements may only be used in primitive components"
             ));
         }
@@ -375,7 +375,7 @@ impl Visitor for PassValidationLinking {
         let stmt = &ctx.heap[id];
         if !self.def_type.is_function() {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, stmt.span,
+                &ctx.module().source, stmt.span,
                 "return statements may only appear in function bodies"
             ));
         }
@@ -404,9 +404,9 @@ impl Visitor for PassValidationLinking {
             let goto_stmt = &ctx.heap[id];
             let sync_stmt = &ctx.heap[self.in_sync];
             return Err(
-                ParseError::new_error_str_at_span(&ctx.module.source, goto_stmt.span, "goto may not escape the surrounding synchronous block")
-                .with_info_str_at_span(&ctx.module.source, target.label.span, "this is the target of the goto statement")
-                .with_info_str_at_span(&ctx.module.source, sync_stmt.span, "which will jump past this statement")
+                ParseError::new_error_str_at_span(&ctx.module().source, goto_stmt.span, "goto may not escape the surrounding synchronous block")
+                .with_info_str_at_span(&ctx.module().source, target.label.span, "this is the target of the goto statement")
+                .with_info_str_at_span(&ctx.module().source, sync_stmt.span, "which will jump past this statement")
             );
         }
 
@@ -420,7 +420,7 @@ impl Visitor for PassValidationLinking {
         if !self.def_type.is_composite() {
             let new_stmt = &ctx.heap[id];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, new_stmt.span,
+                &ctx.module().source, new_stmt.span,
                 "instantiating components may only be done in composite components"
             ));
         }
@@ -465,10 +465,13 @@ impl Visitor for PassValidationLinking {
         match self.expr_parent {
             // Look at us: lying through our teeth while providing error messages.
             ExpressionParent::ExpressionStmt(_) => {},
-            _ => return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, assignment_expr.full_span,
-                "assignments are statements, and cannot be used in expressions"
-            )),
+            _ => {
+                let assignment_span = assignment_expr.full_span;
+                return Err(ParseError::new_error_str_at_span(
+                    &ctx.module().source, assignment_span,
+                    "assignments are statements, and cannot be used in expressions"
+                ))
+            },
         }
 
         let left_expr_id = assignment_expr.left;
@@ -494,14 +497,14 @@ impl Visitor for PassValidationLinking {
         // Check for valid context of binding expression
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a binding expression"
+                &ctx.module().source, span, "cannot assign to the result from a binding expression"
             ));
         }
 
         if self.in_test_expr.is_invalid() {
             let binding_expr = &ctx.heap[id];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, binding_expr.full_span,
+                &ctx.module().source, binding_expr.full_span,
                 "binding expressions can only be used inside the testing expression of 'if' and 'while' statements"
             ));
         }
@@ -510,10 +513,10 @@ impl Visitor for PassValidationLinking {
             let binding_expr = &ctx.heap[id];
             let previous_expr = &ctx.heap[self.in_binding_expr];
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, binding_expr.full_span,
+                &ctx.module().source, binding_expr.full_span,
                 "nested binding expressions are not allowed"
             ).with_info_str_at_span(
-                &ctx.module.source, previous_expr.operator_span,
+                &ctx.module().source, previous_expr.operator_span,
                 "the outer binding expression is found here"
             ));
         }
@@ -551,10 +554,10 @@ impl Visitor for PassValidationLinking {
                 let binding_expr = &ctx.heap[id];
                 let parent_expr = &ctx.heap[seeking_parent.as_expression()];
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, binding_expr.full_span,
+                    &ctx.module().source, binding_expr.full_span,
                     "only the logical-and operator (&&) may be applied to binding expressions"
                 ).with_info_str_at_span(
-                    &ctx.module.source, parent_expr.operation_span(),
+                    &ctx.module().source, parent_expr.operation_span(),
                     "this was the disallowed operation applied to the result from a binding expression"
                 ));
             }
@@ -584,7 +587,7 @@ impl Visitor for PassValidationLinking {
             _ => {
                 let binding_expr = &ctx.heap[id];
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, binding_expr.operator_span,
+                    &ctx.module().source, binding_expr.operator_span,
                     "the left hand side of a binding expression may only be a variable or a literal expression"
                 ));
             },
@@ -610,7 +613,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a conditional expression"
+                &ctx.module().source, span, "cannot assign to the result from a conditional expression"
             ))
         }
 
@@ -640,7 +643,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a binary expression"
+                &ctx.module().source, span, "cannot assign to the result from a binary expression"
             ))
         }
 
@@ -667,7 +670,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a unary expression"
+                &ctx.module().source, span, "cannot assign to the result from a unary expression"
             ))
         }
 
@@ -715,7 +718,7 @@ impl Visitor for PassValidationLinking {
         if let Some(span) = self.must_be_assignable {
             // TODO: @Slicing
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "assignment to slices should be valid in the final language, but is currently not implemented"
+                &ctx.module().source, span, "assignment to slices should be valid in the final language, but is currently not implemented"
             ));
         }
 
@@ -768,7 +771,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to a literal expression"
+                &ctx.module().source, span, "cannot assign to a literal expression"
             ))
         }
 
@@ -796,7 +799,7 @@ impl Visitor for PassValidationLinking {
                         let literal = ctx.heap[id].value.as_struct();
                         let ast_definition = &ctx.heap[literal.definition];
                         return Err(ParseError::new_error_at_span(
-                            &ctx.module.source, field_span, format!(
+                            &ctx.module().source, field_span, format!(
                                 "This field does not exist on the struct '{}'",
                                 ast_definition.identifier().value.as_str()
                             )
@@ -806,8 +809,9 @@ impl Visitor for PassValidationLinking {
 
                     // Check if specified more than once
                     if specified[field.field_idx] {
+                        let field_span = field.identifier.span;
                         return Err(ParseError::new_error_str_at_span(
-                            &ctx.module.source, field.identifier.span,
+                            &ctx.module().source, field_span,
                             "This field is specified more than once"
                         ));
                     }
@@ -835,8 +839,9 @@ impl Visitor for PassValidationLinking {
                         format!("not all fields are specified, [{}] are missing", not_specified)
                     };
 
+                    let literal_span = literal.parser_type.full_span;
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.full_span, msg
+                        &ctx.module().source, literal_span, msg
                     ));
                 }
 
@@ -868,7 +873,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_enum();
                     let ast_definition = ctx.heap[literal.definition].as_enum();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.full_span, format!(
+                        &ctx.module().source, literal.parser_type.full_span, format!(
                             "the variant '{}' does not exist on the enum '{}'",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
                         )
@@ -889,7 +894,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.full_span, format!(
+                        &ctx.module().source, literal.parser_type.full_span, format!(
                             "the variant '{}' does not exist on the union '{}'",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str()
                         )
@@ -905,7 +910,7 @@ impl Visitor for PassValidationLinking {
                     let literal = ctx.heap[id].value.as_union();
                     let ast_definition = ctx.heap[literal.definition].as_union();
                     return Err(ParseError::new_error_at_span(
-                        &ctx.module.source, literal.parser_type.full_span, format!(
+                        &ctx.module().source, literal.parser_type.full_span, format!(
                             "The variant '{}' of union '{}' expects {} embedded values, but {} were specified",
                             literal.variant.value.as_str(), ast_definition.identifier.value.as_str(),
                             union_variant.embedded.len(), literal.values.len()
@@ -953,7 +958,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a cast expression"
+                &ctx.module().source, span, "cannot assign to the result from a cast expression"
             ))
         }
 
@@ -977,7 +982,7 @@ impl Visitor for PassValidationLinking {
 
         if let Some(span) = self.must_be_assignable {
             return Err(ParseError::new_error_str_at_span(
-                &ctx.module.source, span, "cannot assign to the result from a call expression"
+                &ctx.module().source, span, "cannot assign to the result from a call expression"
             ))
         }
 
@@ -987,42 +992,48 @@ impl Visitor for PassValidationLinking {
         match &mut call_expr.method {
             Method::Get => {
                 if !self.def_type.is_primitive() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'get' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'get' may only occur inside synchronous blocks"
                     ));
                 }
             },
             Method::Put => {
                 if !self.def_type.is_primitive() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'put' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'put' may only occur inside synchronous blocks"
                     ));
                 }
             },
             Method::Fires => {
                 if !self.def_type.is_primitive() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'fires' may only occur in primitive component definitions"
                     ));
                 }
                 if self.in_sync.is_invalid() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "a call to 'fires' may only occur inside synchronous blocks"
                     ));
                 }
@@ -1031,14 +1042,16 @@ impl Visitor for PassValidationLinking {
             Method::Length => {},
             Method::Assert => {
                 if self.def_type.is_function() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "assert statement may only occur in components"
                     ));
                 }
                 if self.in_sync.is_invalid() {
+                    let call_span = call_expr.func_span;
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, call_expr.func_span,
+                        &ctx.module().source, call_span,
                         "assert statements may only occur inside synchronous blocks"
                     ));
                 }
@@ -1051,15 +1064,17 @@ impl Visitor for PassValidationLinking {
 
         if expected_wrapping_new_stmt {
             if !self.expr_parent.is_new() {
+                let call_span = call_expr.func_span;
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, call_expr.func_span,
+                    &ctx.module().source, call_span,
                     "cannot call a component, it can only be instantiated by using 'new'"
                 ));
             }
         } else {
             if self.expr_parent.is_new() {
+                let call_span = call_expr.func_span;
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, call_expr.func_span,
+                    &ctx.module().source, call_span,
                     "only components can be instantiated, this is a function"
                 ));
             }
@@ -1076,8 +1091,9 @@ impl Visitor for PassValidationLinking {
         let num_provided_args = call_expr.arguments.len();
         if num_provided_args != num_expected_args {
             let argument_text = if num_expected_args == 1 { "argument" } else { "arguments" };
+            let call_span = call_expr.full_span;
             return Err(ParseError::new_error_at_span(
-                &ctx.module.source, call_expr.full_span, format!(
+                &ctx.module().source, call_span, format!(
                     "expected {} {}, but {} were provided",
                     num_expected_args, argument_text, num_provided_args
                 )
@@ -1118,7 +1134,7 @@ impl Visitor for PassValidationLinking {
                 // then this may be the thing we're binding to.
                 if self.in_binding_expr.is_invalid() || !self.in_binding_expr_lhs {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, var_expr.identifier.span, "unresolved variable"
+                        &ctx.module().source, var_expr.identifier.span, "unresolved variable"
                     ));
                 }
 
@@ -1158,10 +1174,10 @@ impl Visitor for PassValidationLinking {
                 if !is_valid_binding {
                     let binding_expr = &ctx.heap[self.in_binding_expr];
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, var_expr.identifier.span,
+                        &ctx.module().source, var_expr.identifier.span,
                         "illegal location for binding variable: binding variables may only be nested under a binding expression, or a struct, union or array literal"
                     ).with_info_at_span(
-                        &ctx.module.source, binding_expr.operator_span, format!(
+                        &ctx.module().source, binding_expr.operator_span, format!(
                             "'{}' was interpreted as a binding variable because the variable is not declared and it is nested under this binding expression",
                             var_expr.identifier.value.as_str()
                         )
@@ -1416,9 +1432,9 @@ impl PassValidationLinking {
                     if local.identifier == parameter.identifier {
                         return Err(
                             ParseError::new_error_str_at_span(
-                                &ctx.module.source, local.identifier.span, "Local variable name conflicts with parameter"
+                                &ctx.module().source, local.identifier.span, "Local variable name conflicts with parameter"
                             ).with_info_str_at_span(
-                                &ctx.module.source, parameter.identifier.span, "Parameter definition is found here"
+                                &ctx.module().source, parameter.identifier.span, "Parameter definition is found here"
                             )
                         );
                     }
@@ -1442,9 +1458,9 @@ impl PassValidationLinking {
                     // Collision within this scope
                     return Err(
                         ParseError::new_error_str_at_span(
-                            &ctx.module.source, local.identifier.span, "Local variable name conflicts with another variable"
+                            &ctx.module().source, local.identifier.span, "Local variable name conflicts with another variable"
                         ).with_info_str_at_span(
-                            &ctx.module.source, other_local.identifier.span, "Previous variable is found here"
+                            &ctx.module().source, other_local.identifier.span, "Previous variable is found here"
                         )
                     );
                 }
@@ -1467,10 +1483,10 @@ impl PassValidationLinking {
             let ident = &ctx.heap[id].identifier;
             if let Some(symbol) = ctx.symbols.get_symbol_by_name(cur_scope, &ident.value.as_bytes()) {
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, ident.span,
+                    &ctx.module().source, ident.span,
                     "local variable declaration conflicts with symbol"
                 ).with_info_str_at_span(
-                    &ctx.module.source, symbol.variant.span_of_introduction(&ctx.heap), "the conflicting symbol is introduced here"
+                    &ctx.module().source, symbol.variant.span_of_introduction(&ctx.heap), "the conflicting symbol is introduced here"
                 ));
             }
         }
@@ -1488,9 +1504,9 @@ impl PassValidationLinking {
                 // Collision
                 return Err(
                     ParseError::new_error_str_at_span(
-                        &ctx.module.source, local.identifier.span, "Local variable name conflicts with another variable"
+                        &ctx.module().source, local.identifier.span, "Local variable name conflicts with another variable"
                     ).with_info_str_at_span(
-                        &ctx.module.source, other_local.identifier.span, "Previous variable is found here"
+                        &ctx.module().source, other_local.identifier.span, "Previous variable is found here"
                     )
                 );
             }
@@ -1572,9 +1588,9 @@ impl PassValidationLinking {
                 if other_label.label == label.label {
                     // Collision
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, label.label.span, "label name is used more than once"
+                        &ctx.module().source, label.label.span, "label name is used more than once"
                     ).with_info_str_at_span(
-                        &ctx.module.source, other_label.label.span, "the other label is found here"
+                        &ctx.module().source, other_label.label.span, "the other label is found here"
                     ));
                 }
             }
@@ -1615,9 +1631,9 @@ impl PassValidationLinking {
                         let local = &ctx.heap[*local_id];
                         if local.relative_pos_in_block > relative_scope_pos && local.relative_pos_in_block < label.relative_pos_in_block {
                             return Err(
-                                ParseError::new_error_str_at_span(&ctx.module.source, identifier.span, "this target label skips over a variable declaration")
-                                .with_info_str_at_span(&ctx.module.source, label.label.span, "because it jumps to this label")
-                                .with_info_str_at_span(&ctx.module.source, local.identifier.span, "which skips over this variable")
+                                ParseError::new_error_str_at_span(&ctx.module().source, identifier.span, "this target label skips over a variable declaration")
+                                .with_info_str_at_span(&ctx.module().source, label.label.span, "because it jumps to this label")
+                                .with_info_str_at_span(&ctx.module().source, local.identifier.span, "which skips over this variable")
                             );
                         }
                     }
@@ -1628,7 +1644,7 @@ impl PassValidationLinking {
             scope = &block.scope_node.parent;
             if !scope.is_block() {
                 return Err(ParseError::new_error_str_at_span(
-                    &ctx.module.source, identifier.span, "could not find this label"
+                    &ctx.module().source, identifier.span, "could not find this label"
                 ));
             }
 
@@ -1673,18 +1689,18 @@ impl PassValidationLinking {
                     // present underneath this particular labeled while statement
                     if !self.has_parent_while_scope(ctx, target_stmt.this) {
                         return Err(ParseError::new_error_str_at_span(
-                            &ctx.module.source, label.span, "break statement is not nested under the target label's while statement"
+                            &ctx.module().source, label.span, "break statement is not nested under the target label's while statement"
                         ).with_info_str_at_span(
-                            &ctx.module.source, target.label.span, "the targeted label is found here"
+                            &ctx.module().source, target.label.span, "the targeted label is found here"
                         ));
                     }
 
                     target_stmt.this
                 } else {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, label.span, "incorrect break target label, it must target a while loop"
+                        &ctx.module().source, label.span, "incorrect break target label, it must target a while loop"
                     ).with_info_str_at_span(
-                        &ctx.module.source, target.label.span, "The targeted label is found here"
+                        &ctx.module().source, target.label.span, "The targeted label is found here"
                     ));
                 }
             },
@@ -1693,7 +1709,7 @@ impl PassValidationLinking {
                 // nested within that while statement
                 if self.in_while.is_invalid() {
                     return Err(ParseError::new_error_str_at_span(
-                        &ctx.module.source, span, "Break statement is not nested under a while loop"
+                        &ctx.module().source, span, "Break statement is not nested under a while loop"
                     ));
                 }
 
@@ -1711,9 +1727,9 @@ impl PassValidationLinking {
                 debug_assert!(!self.in_sync.is_invalid());
                 let sync_stmt = &ctx.heap[self.in_sync];
                 return Err(
-                    ParseError::new_error_str_at_span(&ctx.module.source, span, "break may not escape the surrounding synchronous block")
-                        .with_info_str_at_span(&ctx.module.source, target_while.span, "the break escapes out of this loop")
-                        .with_info_str_at_span(&ctx.module.source, sync_stmt.span, "And would therefore escape this synchronous block")
+                    ParseError::new_error_str_at_span(&ctx.module().source, span, "break may not escape the surrounding synchronous block")
+                        .with_info_str_at_span(&ctx.module().source, target_while.span, "the break escapes out of this loop")
+                        .with_info_str_at_span(&ctx.module().source, sync_stmt.span, "And would therefore escape this synchronous block")
                 );
             }
         }

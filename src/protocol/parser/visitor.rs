@@ -14,11 +14,25 @@ pub(crate) const STMT_BUFFER_INIT_CAPACITY: usize = 256;
 pub(crate) const EXPR_BUFFER_INIT_CAPACITY: usize = 256;
 
 /// General context structure that is used while traversing the AST.
+/// TODO: Revise, visitor abstraction is starting to get in the way of programming
 pub(crate) struct Ctx<'p> {
     pub heap: &'p mut Heap,
-    pub module: &'p mut Module,
+    pub modules: &'p mut [Module],
+    pub module_idx: usize, // currently considered module
     pub symbols: &'p mut SymbolTable,
     pub types: &'p mut TypeTable,
+    pub arch: &'p crate::protocol::TargetArch,
+}
+
+impl<'p> Ctx<'p> {
+    /// Returns module `modules[module_idx]`
+    pub(crate) fn module(&self) -> &Module {
+        &self.modules[self.module_idx]
+    }
+
+    pub(crate) fn module_mut(&mut self) -> &mut Module {
+        &mut self.modules[self.module_idx]
+    }
 }
 
 /// Visitor is a generic trait that will fully walk the AST. The default
@@ -29,9 +43,10 @@ pub(crate) trait Visitor {
     // Entry point
     fn visit_module(&mut self, ctx: &mut Ctx) -> VisitorResult {
         let mut def_index = 0;
+        let module_root_id = ctx.modules[ctx.module_idx].root_id;
         loop {
             let definition_id = {
-                let root = &ctx.heap[ctx.module.root_id];
+                let root = &ctx.heap[module_root_id];
                 if def_index >= root.definitions.len() {
                     return Ok(())
                 }

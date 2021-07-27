@@ -5,7 +5,7 @@ use crate::protocol::{
     input_source::*,
     parser::{
         Parser,
-        type_table::{TypeTable, DefinedTypeVariant},
+        type_table::*,
         symbol_table::SymbolTable,
         token_parsing::*,
     },
@@ -149,13 +149,17 @@ impl AstOkTester {
     pub(crate) fn for_struct<F: Fn(StructTester)>(self, name: &str, f: F) -> Self {
         let mut found = false;
         for definition in self.heap.definitions.iter() {
-            if let Definition::Struct(definition) = definition {
-                if definition.identifier.value.as_str() != name {
+            if let Definition::Struct(ast_definition) = definition {
+                if ast_definition.identifier.value.as_str() != name {
                     continue;
                 }
 
                 // Found struct with the same name
-                let tester = StructTester::new(self.ctx(), definition);
+                let definition_id = ast_definition.this.upcast();
+                let type_entry = self.types.get_base_definition(&definition_id).unwrap();
+                let type_definition = type_entry.definition.as_struct();
+
+                let tester = StructTester::new(self.ctx(), ast_definition, type_definition);
                 f(tester);
                 found = true;
                 break
@@ -201,7 +205,9 @@ impl AstOkTester {
                 }
 
                 // Found union with the same name
-                let tester = UnionTester::new(self.ctx(), definition);
+                let definition_id = definition.this.upcast();
+                let base_type = self.types.get_base_definition(&definition_id).unwrap();
+                let tester = UnionTester::new(self.ctx(), definition, &base_type.definition.as_union());
                 f(tester);
                 found = true;
                 break;
@@ -257,25 +263,26 @@ impl AstOkTester {
 
 pub(crate) struct StructTester<'a> {
     ctx: TestCtx<'a>,
-    def: &'a StructDefinition,
+    ast_def: &'a StructDefinition,
+    type_def: &'a StructType,
 }
 
 impl<'a> StructTester<'a> {
-    fn new(ctx: TestCtx<'a>, def: &'a StructDefinition) -> Self {
-        Self{ ctx, def }
+    fn new(ctx: TestCtx<'a>, ast_def: &'a StructDefinition, type_def: &'a StructType) -> Self {
+        Self{ ctx, ast_def, type_def }
     }
 
     pub(crate) fn assert_num_fields(self, num: usize) -> Self {
         assert_eq!(
-            num, self.def.fields.len(),
+            num, self.ast_def.fields.len(),
             "[{}] Expected {} struct fields, but found {} for {}",
-            self.ctx.test_name, num, self.def.fields.len(), self.assert_postfix()
+            self.ctx.test_name, num, self.ast_def.fields.len(), self.assert_postfix()
         );
         self
     }
 
     pub(crate) fn assert_num_monomorphs(self, num: usize) -> Self {
-        let (is_equal, num_encountered) = has_equal_num_monomorphs(self.ctx, num, self.def.this.upcast());
+        let (is_equal, num_encountered) = has_equal_num_monomorphs(self.ctx, num, self.ast_def.this.upcast());
         assert!(
             is_equal, "[{}] Expected {} monomorphs, but got {} for {}",
             self.ctx.test_name, num, num_encountered, self.assert_postfix()
@@ -283,20 +290,32 @@ impl<'a> StructTester<'a> {
         self
     }
 
-    /// Asserts that a monomorph exist, separate polymorphic variable types by
-    /// a semicolon.
     pub(crate) fn assert_has_monomorph(self, serialized_monomorph: &str) -> Self {
-        let (has_monomorph, serialized) = has_monomorph(self.ctx, self.def.this.upcast(), serialized_monomorph);
+        let (has_monomorph, serialized) = has_monomorph(self.ctx, self.ast_def.this.upcast(), serialized_monomorph);
         assert!(
-            has_monomorph, "[{}] Expected to find monomorph {}, but got {} for {}",
+            has_monomorph.is_some(), "[{}] Expected to find monomorph {}, but got {} for {}",
             self.ctx.test_name, serialized_monomorph, &serialized, self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_size_alignment(mut self, monomorph: &str, size: usize, alignment: usize) -> Self {
+        self = self.assert_has_monomorph(monomorph);
+        let (mono_idx, _) = has_monomorph(self.ctx, self.ast_def.this.upcast(), monomorph);
+        let mono_idx = mono_idx.unwrap();
+
+        let mono = &self.type_def.monomorphs[mono_idx];
+        assert!(
+            mono.size == size && mono.alignment == alignment,
+            "[{}] Expected (size,alignment) of ({}, {}), but got ({}, {}) for {}",
+            self.ctx.test_name, size, alignment, mono.size, mono.alignment, self.assert_postfix()
         );
         self
     }
 
     pub(crate) fn for_field<F: Fn(StructFieldTester)>(self, name: &str, f: F) -> Self {
         // Find field with specified name
-        for field in &self.def.fields {
+        for field in &self.ast_def.fields {
             if field.field.value.as_str() == name {
                 let tester = StructFieldTester::new(self.ctx, field);
                 f(tester);
@@ -314,9 +333,9 @@ impl<'a> StructTester<'a> {
     fn assert_postfix(&self) -> String {
         let mut v = String::new();
         v.push_str("Struct{ name: ");
-        v.push_str(self.def.identifier.value.as_str());
+        v.push_str(self.ast_def.identifier.value.as_str());
         v.push_str(", fields: [");
-        for (field_idx, field) in self.def.fields.iter().enumerate() {
+        for (field_idx, field) in self.ast_def.fields.iter().enumerate() {
             if field_idx != 0 { v.push_str(", "); }
             v.push_str(field.field.value.as_str());
         }
@@ -384,7 +403,7 @@ impl<'a> EnumTester<'a> {
     pub(crate) fn assert_has_monomorph(self, serialized_monomorph: &str) -> Self {
         let (has_monomorph, serialized) = has_monomorph(self.ctx, self.def.this.upcast(), serialized_monomorph);
         assert!(
-            has_monomorph, "[{}] Expected to find monomorph {}, but got {} for {}",
+            has_monomorph.is_some(), "[{}] Expected to find monomorph {}, but got {} for {}",
             self.ctx.test_name, serialized_monomorph, serialized, self.assert_postfix()
         );
         self
@@ -406,25 +425,26 @@ impl<'a> EnumTester<'a> {
 
 pub(crate) struct UnionTester<'a> {
     ctx: TestCtx<'a>,
-    def: &'a UnionDefinition,
+    ast_def: &'a UnionDefinition,
+    type_def: &'a UnionType,
 }
 
 impl<'a> UnionTester<'a> {
-    fn new(ctx: TestCtx<'a>, def: &'a UnionDefinition) -> Self {
-        Self{ ctx, def }
+    fn new(ctx: TestCtx<'a>, ast_def: &'a UnionDefinition, type_def: &'a UnionType) -> Self {
+        Self{ ctx, ast_def, type_def }
     }
 
     pub(crate) fn assert_num_variants(self, num: usize) -> Self {
         assert_eq!(
-            num, self.def.variants.len(),
+            num, self.ast_def.variants.len(),
             "[{}] Expected {} union variants, but found {} for {}",
-            self.ctx.test_name, num, self.def.variants.len(), self.assert_postfix()
+            self.ctx.test_name, num, self.ast_def.variants.len(), self.assert_postfix()
         );
         self
     }
 
     pub(crate) fn assert_num_monomorphs(self, num: usize) -> Self {
-        let (is_equal, num_encountered) = has_equal_num_monomorphs(self.ctx, num, self.def.this.upcast());
+        let (is_equal, num_encountered) = has_equal_num_monomorphs(self.ctx, num, self.ast_def.this.upcast());
         assert!(
             is_equal, "[{}] Expected {} monomorphs, but got {} for {}",
             self.ctx.test_name, num, num_encountered, self.assert_postfix()
@@ -433,10 +453,30 @@ impl<'a> UnionTester<'a> {
     }
 
     pub(crate) fn assert_has_monomorph(self, serialized_monomorph: &str) -> Self {
-        let (has_monomorph, serialized) = has_monomorph(self.ctx, self.def.this.upcast(), serialized_monomorph);
+        let (has_monomorph, serialized) = has_monomorph(self.ctx, self.ast_def.this.upcast(), serialized_monomorph);
         assert!(
-            has_monomorph, "[{}] Expected to find monomorph {}, but got {} for {}",
+            has_monomorph.is_some(), "[{}] Expected to find monomorph {}, but got {} for {}",
             self.ctx.test_name, serialized_monomorph, serialized, self.assert_postfix()
+        );
+        self
+    }
+
+    pub(crate) fn assert_size_alignment(
+        mut self, serialized_monomorph: &str,
+        stack_size: usize, stack_alignment: usize, heap_size: usize, heap_alignment: usize
+    ) -> Self {
+        self = self.assert_has_monomorph(serialized_monomorph);
+        let (mono_idx, _) = has_monomorph(self.ctx, self.ast_def.this.upcast(), serialized_monomorph);
+        let mono_idx = mono_idx.unwrap();
+        let mono = &self.type_def.monomorphs[mono_idx];
+        assert!(
+            stack_size == mono.stack_size && stack_alignment == mono.stack_alignment &&
+                heap_size == mono.heap_size && heap_alignment == mono.heap_alignment,
+            "[{}] Expected (stack | heap) (size, alignment) of ({}, {} | {}, {}), but got ({}, {} | {}, {}) for {}",
+            self.ctx.test_name,
+            stack_size, stack_alignment, heap_size, heap_alignment,
+            mono.stack_size, mono.stack_alignment, mono.heap_size, mono.heap_alignment,
+            self.assert_postfix()
         );
         self
     }
@@ -444,9 +484,9 @@ impl<'a> UnionTester<'a> {
     fn assert_postfix(&self) -> String {
         let mut v = String::new();
         v.push_str("Union{ name: ");
-        v.push_str(self.def.identifier.value.as_str());
+        v.push_str(self.ast_def.identifier.value.as_str());
         v.push_str(", variants: [");
-        for (variant_idx, variant) in self.def.variants.iter().enumerate() {
+        for (variant_idx, variant) in self.ast_def.variants.iter().enumerate() {
             if variant_idx != 0 { v.push_str(", "); }
             v.push_str(variant.identifier.value.as_str());
         }
@@ -868,56 +908,51 @@ fn has_equal_num_monomorphs(ctx: TestCtx, num: usize, definition_id: DefinitionI
     (num_on_type == num, num_on_type)
 }
 
-fn has_monomorph(ctx: TestCtx, definition_id: DefinitionId, serialized_monomorph: &str) -> (bool, String) {
+fn has_monomorph(ctx: TestCtx, definition_id: DefinitionId, serialized_monomorph: &str) -> (Option<usize>, String) {
     use DefinedTypeVariant::*;
 
     let type_def = ctx.types.get_base_definition(&definition_id).unwrap();
 
     // Note: full_buffer is just for error reporting
     let mut full_buffer = String::new();
-    let mut has_match = false;
-
-    let serialize_monomorph = |monomorph: &Vec<ConcreteType>| -> String {
-        let mut buffer = String::new();
-        for (element_idx, element) in monomorph.iter().enumerate() {
-            if element_idx != 0 {
-                buffer.push(';');
-            }
-            serialize_concrete_type(&mut buffer, ctx.heap, definition_id, element);
-        }
-
-        buffer
-    };
+    let mut has_match = None;
 
     full_buffer.push('[');
-    let mut append_to_full_buffer = |buffer: String| {
+    let mut append_to_full_buffer = |concrete_type: &ConcreteType, mono_idx: usize| {
         if full_buffer.len() != 1 {
             full_buffer.push_str(", ");
         }
         full_buffer.push('"');
-        full_buffer.push_str(&buffer);
+
+        let first_idx = full_buffer.len();
+        serialize_concrete_type(&mut full_buffer, ctx.heap, definition_id, concrete_type);
+        if &full_buffer[first_idx..] == serialized_monomorph {
+            has_match = Some(mono_idx);
+        }
+
         full_buffer.push('"');
     };
 
     match &type_def.definition {
-        Enum(_) | Union(_) | Struct(_) => {
-            let monomorphs = type_def.definition.data_monomorphs();
-            for monomorph in monomorphs.iter() {
-                let buffer = serialize_monomorph(&monomorph.poly_args);
-                if buffer == serialized_monomorph {
-                    has_match = true;
-                }
-                append_to_full_buffer(buffer);
+        Enum(definition) => {
+            for (mono_idx, mono) in definition.monomorphs.iter().enumerate() {
+                append_to_full_buffer(&mono.concrete_type, mono_idx);
+            }
+        },
+        Union(definition) => {
+            for (mono_idx, mono) in definition.monomorphs.iter().enumerate() {
+                append_to_full_buffer(&mono.concrete_type, mono_idx);
+            }
+        },
+        Struct(definition) => {
+            for (mono_idx, mono) in definition.monomorphs.iter().enumerate() {
+                append_to_full_buffer(&mono.concrete_type, mono_idx);
             }
         },
         Function(_) | Component(_) => {
             let monomorphs = type_def.definition.procedure_monomorphs();
-            for monomorph in monomorphs.iter() {
-                let buffer = serialize_monomorph(&monomorph.poly_args);
-                if buffer == serialized_monomorph {
-                    has_match = true;
-                }
-                append_to_full_buffer(buffer);
+            for (mono_idx, mono) in monomorphs.iter().enumerate() {
+                append_to_full_buffer(&mono.concrete_type, mono_idx);
             }
         }
     }
@@ -1051,7 +1086,9 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
                 idx = serialize_recursive(buffer, heap, poly_vars, concrete, idx + 1);
                 buffer.push('>');
             },
-            CTP::Instance(definition_id, num_sub) => {
+            CTP::Instance(definition_id, num_sub) |
+            CTP::Function(definition_id, num_sub) |
+            CTP::Component(definition_id, num_sub) => {
                 let definition_name = heap[*definition_id].identifier();
                 buffer.push_str(definition_name.value.as_str());
                 if *num_sub != 0 {
@@ -1062,7 +1099,7 @@ fn serialize_concrete_type(buffer: &mut String, heap: &Heap, def: DefinitionId, 
                     }
                     buffer.push('>');
                 }
-            }
+            },
         }
 
         idx

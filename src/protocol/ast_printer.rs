@@ -919,7 +919,9 @@ fn write_concrete_type(target: &mut String, heap: &Heap, def_id: DefinitionId, t
                     idx = write_concrete_part(target, heap, def_id, t, idx + 1);
                 }
                 target.push('>');
-            }
+            },
+            CTP::Function(_, _) => todo!("AST printer for ConcreteTypePart::Function"),
+            CTP::Component(_, _) => todo!("AST printer for ConcreteTypePart::Component"),
         }
 
         idx + 1
