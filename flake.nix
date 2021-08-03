@@ -21,9 +21,10 @@
 
           src = builtins.path { path = ./.; name = pname; };
 
-          cargoPatches = [ ./add-Cargo.lock.patch ];
-
-          cargoSha256 = "sha256-PgqcsvbnyseGTpwgemnE+ZsV361DJKe+4ldP5AjMDFc=";
+          cargoLock = { lockFile = ./Cargo.clib.lock; };
+          postPatch = ''
+            cp ${./Cargo.clib.lock} Cargo.lock
+          '';
 
           outputs = [ "out" "headers" ];
 
