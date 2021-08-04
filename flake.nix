@@ -8,7 +8,7 @@
       pname = "reowolf";
       version = "1.1.0";
 
-      supportedSystems = [ "x86_64-linux" ];
+      supportedSystems = [ "x86_64-linux" "i686-linux" "aarch64-linux" ];
 
       forAllSystems = f: nixpkgs.lib.genAttrs supportedSystems (system: f system);
 
